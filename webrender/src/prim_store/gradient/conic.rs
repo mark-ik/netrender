@@ -12,8 +12,8 @@ use euclid::vec2;
 use api::{ColorF, ExtendMode, GradientStop, PremultipliedColorF};
 use api::units::*;
 use crate::gpu_types::ImageBrushPrimitiveData;
+use crate::pattern::gradient::{conic_gradient_pattern};
 use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState, PatternKind, PatternShaderInput, PatternTextureInput};
-use crate::prim_store::gradient::{gpu_gradient_stops_blocks, write_gpu_gradient_stops_tree, GradientKind};
 use crate::scene_building::IsVisible;
 use crate::frame_builder::FrameBuildingState;
 use crate::intern::{Internable, InternDebug, Handle as InternHandle};
@@ -123,7 +123,9 @@ impl PatternBuilder for ConicGradientTemplate {
             conic_gradient_pattern(
                 center,
                 no_scale,
-                &self.params,
+                self.params.angle,
+                self.params.start_offset,
+                self.params.end_offset,
                 self.extend_mode,
                 &self.stops,
                 state.frame_gpu_data,
@@ -477,43 +479,6 @@ pub fn conic_gradient_pattern_with_table(
         shader_input: PatternShaderInput(
             gradient_address.as_int(),
             stops_address.as_int(),
-        ),
-        texture_input: PatternTextureInput::default(),
-        base_color: ColorF::WHITE,
-        is_opaque,
-    }
-}
-
-pub fn conic_gradient_pattern(
-    center: LayoutPoint,
-    scale: DeviceVector2D,
-    params: &ConicGradientParams,
-    extend_mode: ExtendMode,
-    stops: &[GradientStop],
-    gpu_buffer_builder: &mut GpuBufferBuilder
-) -> Pattern {
-    let num_blocks = 2 + gpu_gradient_stops_blocks(stops.len());
-    let mut writer = gpu_buffer_builder.f32.write_blocks(num_blocks);
-    writer.push_one([
-        center.x,
-        center.y,
-        scale.x,
-        scale.y,
-    ]);
-    writer.push_one([
-        params.start_offset,
-        params.end_offset,
-        params.angle,
-        0.0,
-    ]);
-    let is_opaque = write_gpu_gradient_stops_tree(stops, GradientKind::Conic, extend_mode, &mut writer);
-    let gradient_address = writer.finish();
-
-    Pattern {
-        kind: PatternKind::Gradient,
-        shader_input: PatternShaderInput(
-            gradient_address.as_int(),
-            0,
         ),
         texture_input: PatternTextureInput::default(),
         base_color: ColorF::WHITE,
