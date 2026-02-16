@@ -235,11 +235,7 @@ impl RenderTarget {
             used_rect,
             resolve_ops: memory.new_vec(),
             clear_color: Some(ColorF::TRANSPARENT),
-            prim_instances: [
-                FastHashMap::default(),
-                FastHashMap::default(),
-                FastHashMap::default(),
-            ],
+            prim_instances: [FastHashMap::default(), FastHashMap::default(), FastHashMap::default(), FastHashMap::default(), FastHashMap::default()],
             prim_instances_with_scissor: FastHashMap::default(),
             clip_masks: ClipMaskInstanceList::new(memory),
             clip_batcher: ClipBatcher::new(gpu_supports_fast_clears, memory),
@@ -975,3 +971,4 @@ fn add_image_clip_task_to_batch(
         }
     );
 }
+

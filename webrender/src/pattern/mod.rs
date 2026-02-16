@@ -22,13 +22,15 @@ use crate::transform::TransformPalette;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PatternKind {
     ColorOrTexture = 0,
-    Gradient = 1,
+    RadialGradient = 1,
+    ConicGradient = 2,
+    Gradient = 3,
 
-    Mask = 2,
+    Mask = 4,
     // When adding patterns, don't forget to update the NUM_PATTERNS constant.
 }
 
-pub const NUM_PATTERNS: u32 = 3;
+pub const NUM_PATTERNS: u32 = 5;
 
 impl PatternKind {
     pub fn from_u32(val: u32) -> Self {
