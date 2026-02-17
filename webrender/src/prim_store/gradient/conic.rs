@@ -13,7 +13,7 @@ use api::{ColorF, ExtendMode, GradientStop, PremultipliedColorF};
 use api::units::*;
 use crate::gpu_types::ImageBrushPrimitiveData;
 use crate::pattern::gradient::{conic_gradient_pattern};
-use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState, PatternKind, PatternShaderInput, PatternTextureInput};
+use crate::pattern::{Pattern, PatternBuilder, PatternBuilderContext, PatternBuilderState};
 use crate::scene_building::IsVisible;
 use crate::frame_builder::FrameBuildingState;
 use crate::intern::{Internable, InternDebug, Handle as InternHandle};
@@ -25,7 +25,7 @@ use crate::prim_store::{NinePatchDescriptor, PointKey, SizeKey, InternablePrimit
 use crate::render_task::{RenderTask, RenderTaskKind};
 use crate::render_task_graph::RenderTaskId;
 use crate::render_task_cache::{RenderTaskCacheKeyKind, RenderTaskCacheKey, RenderTaskParent};
-use crate::renderer::{GpuBufferAddress, GpuBufferBuilder};
+use crate::renderer::GpuBufferAddress;
 
 use std::{hash, ops::{Deref, DerefMut}};
 use super::{stops_and_min_alpha, GradientStopKey, GradientGpuBlockBuilder};
@@ -107,7 +107,7 @@ impl PatternBuilder for ConicGradientTemplate {
     fn build(
         &self,
         _sub_rect: Option<DeviceRect>,
-        ctx: &PatternBuilderContext,
+        _ctx: &PatternBuilderContext,
         state: &mut PatternBuilderState,
     ) -> Pattern {
         // The scaling parameter is used to compensate for when we reduce the size
@@ -119,27 +119,16 @@ impl PatternBuilder for ConicGradientTemplate {
         // coordinates (relative to the primitive's spatial node).
         let center = self.center + self.common.prim_rect.min.to_vector();
 
-        if ctx.fb_config.precise_conic_gradients {
-            conic_gradient_pattern(
-                center,
-                no_scale,
-                self.params.angle,
-                self.params.start_offset,
-                self.params.end_offset,
-                self.extend_mode,
-                &self.stops,
-                state.frame_gpu_data,
-            )
-        } else {
-            conic_gradient_pattern_with_table(
-                center,
-                no_scale,
-                &self.params,
-                self.extend_mode,
-                &self.stops,
-                state.frame_gpu_data,
-            )
-        }
+        conic_gradient_pattern(
+            center,
+            no_scale,
+            self.params.angle,
+            self.params.start_offset,
+            self.params.end_offset,
+            self.extend_mode,
+            &self.stops,
+            state.frame_gpu_data,
+        )
     }
 
     fn get_base_color(
@@ -441,47 +430,4 @@ pub struct ConicGradientCacheKey {
     pub angle: FloatKey,
     pub extend_mode: ExtendMode,
     pub stops: Vec<GradientStopKey>,
-}
-
-pub fn conic_gradient_pattern_with_table(
-    center: LayoutPoint,
-    scale: DeviceVector2D,
-    params: &ConicGradientParams,
-    extend_mode: ExtendMode,
-    stops: &[GradientStop],
-    gpu_buffer_builder: &mut GpuBufferBuilder
-) -> Pattern {
-    let mut writer = gpu_buffer_builder.f32.write_blocks(2);
-    writer.push_one([
-        center.x,
-        center.y,
-        scale.x,
-        scale.y,
-    ]);
-    writer.push_one([
-        params.start_offset,
-        params.end_offset,
-        params.angle,
-        if extend_mode == ExtendMode::Repeat { 1.0 } else { 0.0 }
-    ]);
-    let gradient_address = writer.finish();
-
-    let stops_address = GradientGpuBlockBuilder::build(
-        false,
-        &mut gpu_buffer_builder.f32,
-        &stops,
-    );
-
-    let is_opaque = stops.iter().all(|stop| stop.color.a >= 1.0);
-
-    Pattern {
-        kind: PatternKind::ConicGradient,
-        shader_input: PatternShaderInput(
-            gradient_address.as_int(),
-            stops_address.as_int(),
-        ),
-        texture_input: PatternTextureInput::default(),
-        base_color: ColorF::WHITE,
-        is_opaque,
-    }
 }

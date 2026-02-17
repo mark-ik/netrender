@@ -72,8 +72,6 @@ pub struct FrameBuilderConfig {
     pub max_shared_surface_size: i32,
     pub enable_dithering: bool,
     pub precise_linear_gradients: bool,
-    pub precise_radial_gradients: bool,
-    pub precise_conic_gradients: bool,
 }
 
 /// A set of default / global resources that are re-built each frame.
