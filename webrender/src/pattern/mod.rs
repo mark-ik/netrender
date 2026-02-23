@@ -6,6 +6,7 @@ pub mod gradient;
 pub mod box_shadow;
 pub mod repeat;
 
+use api::units::LayoutVector2D;
 use api::{ColorF, units::DeviceRect};
 
 use crate::clip::{ClipIntern, ClipStore};
@@ -93,9 +94,10 @@ pub struct PatternBuilderState<'a> {
 pub trait PatternBuilder {
     fn build(
         &self,
-        _sub_rect: Option<DeviceRect>,
-        _ctx: &PatternBuilderContext,
-        _state: &mut PatternBuilderState,
+        sub_rect: Option<DeviceRect>,
+        offset: LayoutVector2D,
+        ctx: &PatternBuilderContext,
+        state: &mut PatternBuilderState,
     ) -> Pattern;
 
     fn get_base_color(

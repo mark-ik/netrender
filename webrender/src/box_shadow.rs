@@ -57,9 +57,13 @@ impl PatternBuilder for BoxShadowTemplate {
     fn build(
         &self,
         sub_rect: Option<DeviceRect>,
+        _offset: LayoutVector2D,
         ctx: &PatternBuilderContext,
         state: &mut PatternBuilderState,
     ) -> crate::pattern::Pattern {
+        // The offset should only be used with repeatable patterns, and box-shadow
+        // isn't one of them.
+        debug_assert!(_offset.x == 0.0 && _offset.y == 0.0);
         crate::pattern::box_shadow::box_shadow_pattern(
             &self.kind.outer_shadow_rect,
             self.kind.blur_radius,

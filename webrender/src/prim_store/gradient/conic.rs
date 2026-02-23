@@ -107,6 +107,7 @@ impl PatternBuilder for ConicGradientTemplate {
     fn build(
         &self,
         _sub_rect: Option<DeviceRect>,
+        offset: LayoutVector2D,
         _ctx: &PatternBuilderContext,
         state: &mut PatternBuilderState,
     ) -> Pattern {
@@ -117,7 +118,7 @@ impl PatternBuilder for ConicGradientTemplate {
         // ConicGradientTemplate stores the center point relative to the primitive
         // origin, but the shader works with start/end points in "proper" layout
         // coordinates (relative to the primitive's spatial node).
-        let center = self.center + self.common.prim_rect.min.to_vector();
+        let center = self.center + self.common.prim_rect.min.to_vector() + offset;
 
         conic_gradient_pattern(
             center,

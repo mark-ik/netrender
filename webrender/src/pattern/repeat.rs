@@ -50,6 +50,7 @@ impl PatternBuilder for RepeatedPattern {
     fn build(
         &self,
         _sub_rect: Option<DeviceRect>,
+        _offset: LayoutVector2D,
         _ctx: &PatternBuilderContext,
         state: &mut PatternBuilderState,
     ) -> Pattern {

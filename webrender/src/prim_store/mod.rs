@@ -570,6 +570,7 @@ impl PatternBuilder for PrimitiveTemplate {
     fn build(
         &self,
         _sub_rect: Option<DeviceRect>,
+        _offset: LayoutVector2D,
         ctx: &PatternBuilderContext,
         _state: &mut PatternBuilderState,
     ) -> crate::pattern::Pattern {

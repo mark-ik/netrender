@@ -116,6 +116,7 @@ pub fn prepare_quad(
     let shared_pattern = if pattern_builder.use_shared_pattern() {
         Some(pattern_builder.build(
             None,
+            LayoutVector2D::zero(),
             &pattern_ctx,
             &mut PatternBuilderState {
                 frame_gpu_data: frame_state.frame_gpu_data,
@@ -156,6 +157,7 @@ pub fn prepare_quad(
         pattern_builder,
         shared_pattern.as_ref(),
         local_rect,
+        LayoutVector2D::zero(),
         aligned_aa_edges,
         transfomed_aa_edges,
         prim_instance_index,
@@ -206,6 +208,7 @@ pub fn prepare_repeatable_quad(
     let shared_pattern = if pattern_builder.use_shared_pattern() {
         Some(pattern_builder.build(
             None,
+            LayoutVector2D::zero(),
             &pattern_ctx,
             &mut PatternBuilderState {
                 frame_gpu_data: frame_state.frame_gpu_data,
@@ -253,6 +256,7 @@ pub fn prepare_repeatable_quad(
             pattern_builder,
             shared_pattern.as_ref(),
             local_rect,
+            LayoutVector2D::zero(),
             aligned_aa_edges,
             transfomed_aa_edges,
             prim_instance_index,
@@ -309,6 +313,7 @@ pub fn prepare_repeatable_quad(
                 let base_pattern = shared_pattern.unwrap_or_else(||{
                     pattern_builder.build(
                         None,
+                        LayoutVector2D::zero(),
                         &pattern_ctx,
                         &mut pattern_state,
                     )
@@ -346,7 +351,12 @@ pub fn prepare_repeatable_quad(
             src_is_opaque: opaque,
         };
 
-        let shared_pattern = repetitions.build(None, &pattern_ctx, &mut pattern_state);
+        let shared_pattern = repetitions.build(
+            None,
+            LayoutVector2D::zero(),
+            &pattern_ctx,
+            &mut pattern_state,
+        );
 
         // Note: caching is disabled when using the repeating shader.
         // The cache key would need more information about the repetition.
@@ -355,6 +365,7 @@ pub fn prepare_repeatable_quad(
             &repetitions,
             Some(&shared_pattern),
             local_rect,
+            LayoutVector2D::zero(),
             aligned_aa_edges,
             transfomed_aa_edges,
             prim_instance_index,
@@ -388,11 +399,29 @@ pub fn prepare_repeatable_quad(
     let repetitions = crate::image_tiling::repetitions(&local_rect, &visible_rect, stride);
     for tile in repetitions {
         let tile_rect = LayoutRect::from_origin_and_size(tile.origin, stretch_size);
+        let pattern_offset = tile.origin - local_rect.min;
+        let shared_pattern = if pattern_builder.use_shared_pattern() {
+            Some(pattern_builder.build(
+                None,
+                pattern_offset,
+                &pattern_ctx,
+                &mut PatternBuilderState {
+                    frame_gpu_data: frame_state.frame_gpu_data,
+                    transforms: frame_state.transforms,
+                    rg_builder: frame_state.rg_builder,
+                    clip_store: frame_state.clip_store,
+                },
+            ))
+        } else {
+            None
+        };
+
         prepare_quad_impl(
             strategy,
             pattern_builder,
             shared_pattern.as_ref(),
             &tile_rect,
+            pattern_offset,
             aligned_aa_edges & tile.edge_flags,
             transfomed_aa_edges & tile.edge_flags,
             prim_instance_index,
@@ -416,6 +445,7 @@ fn prepare_quad_impl(
     pattern_builder: &dyn PatternBuilder,
     shared_pattern: Option<&Pattern>,
     local_rect: &LayoutRect,
+    pattern_offset: LayoutVector2D,
     aligned_aa_edges: EdgeMask,
     transfomed_aa_edges: EdgeMask,
     prim_instance_index: PrimitiveInstanceIndex,
@@ -493,6 +523,7 @@ fn prepare_quad_impl(
         let pattern = shared_pattern.cloned().unwrap_or_else(|| {
             pattern_builder.build(
                 None,
+                pattern_offset,
                 &ctx,
                 &mut state,
             )
@@ -569,6 +600,7 @@ fn prepare_quad_impl(
             let pattern = shared_pattern.cloned().unwrap_or_else(|| {
                 pattern_builder.build(
                     None,
+                    pattern_offset,
                     &ctx,
                     &mut state,
                 )
@@ -612,6 +644,7 @@ fn prepare_quad_impl(
                 y_tiles,
                 pattern_builder,
                 shared_pattern,
+                pattern_offset,
                 quad_flags,
                 aa_flags,
                 clip_chain,
@@ -953,6 +986,7 @@ fn prepare_tiles(
     y_tiles: u16,
     pattern_builder: &dyn PatternBuilder,
     shared_pattern: Option<&Pattern>,
+    pattern_offset: LayoutVector2D,
     mut quad_flags: QuadFlags,
     aa_flags: EdgeMask,
     clip_chain: &ClipChainInstance,
@@ -1144,6 +1178,7 @@ fn prepare_tiles(
                 None => {
                     pattern_builder.build(
                         Some(tile.rect),
+                        pattern_offset,
                         &ctx,
                         &mut state,
                     )
@@ -1211,6 +1246,7 @@ fn prepare_tiles(
             None => {
                 pattern_builder.build(
                     Some(device_prim_rect),
+                    pattern_offset,
                     &ctx,
                     &mut state,
                 )
