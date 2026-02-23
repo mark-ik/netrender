@@ -742,6 +742,7 @@ fn prepare_indirect_pattern(
 
     let cache_key = cache_key.as_ref().map(|key| {
         RenderTaskCacheKey {
+            origin: clipped_surface_rect.min.to_i32(),
             size: task_size,
             kind: RenderTaskCacheKeyKind::Quad(key.clone()),
         }

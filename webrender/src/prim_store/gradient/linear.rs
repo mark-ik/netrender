@@ -546,6 +546,7 @@ impl LinearGradientTemplate {
 
             frame_state.resource_cache.request_render_task(
                 Some(RenderTaskCacheKey {
+                    origin: DeviceIntPoint::zero(),
                     size: self.task_size,
                     kind: RenderTaskCacheKeyKind::FastLinearGradient(gradient),
                 }),
@@ -574,6 +575,7 @@ impl LinearGradientTemplate {
 
             frame_state.resource_cache.request_render_task(
                 Some(RenderTaskCacheKey {
+                    origin: DeviceIntPoint::zero(),
                     size: self.task_size,
                     kind: RenderTaskCacheKeyKind::LinearGradient(cache_key),
                 }),

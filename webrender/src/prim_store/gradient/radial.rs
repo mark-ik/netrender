@@ -255,6 +255,7 @@ impl RadialGradientTemplate {
 
         let task_id = frame_state.resource_cache.request_render_task(
             Some(RenderTaskCacheKey {
+                origin: DeviceIntPoint::zero(),
                 size: task_size,
                 kind: RenderTaskCacheKeyKind::RadialGradient(cache_key),
             }),

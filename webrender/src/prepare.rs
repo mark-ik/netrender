@@ -433,6 +433,7 @@ fn prepare_interned_prim_for_render(
                 //           to temporarily store it in the primitive instance.
                 *render_task = Some(frame_state.resource_cache.request_render_task(
                     Some(RenderTaskCacheKey {
+                        origin: DeviceIntPoint::zero(),
                         size: task_size,
                         kind: RenderTaskCacheKeyKind::LineDecoration(cache_key.clone()),
                     }),
@@ -572,6 +573,7 @@ fn prepare_interned_prim_for_render(
                 let cache_size = to_cache_size(segment.local_task_size, &mut scale);
                 let cache_key = RenderTaskCacheKey {
                     kind: RenderTaskCacheKeyKind::BorderSegment(segment.cache_key.clone()),
+                    origin: DeviceIntPoint::zero(),
                     size: cache_size,
                 };
 
