@@ -425,7 +425,9 @@ pub fn prepare_repeatable_quad(
             aligned_aa_edges & tile.edge_flags,
             transfomed_aa_edges & tile.edge_flags,
             prim_instance_index,
-            &cache_key,
+            // Bug 2017832 - Caching breaks manually repeated patterns
+            // with SWGL for some reason.
+            &None,
             prim_spatial_node_index,
             clip_chain,
             device_pixel_scale,
