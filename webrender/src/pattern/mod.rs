@@ -10,7 +10,7 @@ use api::units::LayoutVector2D;
 use api::{ColorF, units::DeviceRect};
 
 use crate::frame_builder::FrameBuilderConfig;
-use crate::render_task_graph::{RenderTaskGraphBuilder, RenderTaskId};
+use crate::render_task_graph::RenderTaskId;
 use crate::renderer::GpuBufferBuilder;
 use crate::scene::SceneProperties;
 use crate::spatial_tree::SpatialTree;
@@ -83,8 +83,8 @@ pub struct PatternBuilderContext<'a> {
 
 pub struct PatternBuilderState<'a> {
     pub frame_gpu_data: &'a mut GpuBufferBuilder,
+    #[allow(unused)]
     pub transforms: &'a mut TransformPalette,
-    pub rg_builder: &'a mut RenderTaskGraphBuilder,
 }
 
 pub trait PatternBuilder {

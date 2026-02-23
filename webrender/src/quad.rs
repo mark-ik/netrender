@@ -23,11 +23,9 @@ use crate::render_task::{RenderTask, RenderTaskAddress, RenderTaskKind};
 use crate::render_task_cache::{RenderTaskCacheKey, RenderTaskCacheKeyKind, RenderTaskParent};
 use crate::render_task_graph::{RenderTaskGraph, RenderTaskGraphBuilder, RenderTaskId, SubTaskRange};
 use crate::renderer::{BlendMode, GpuBufferAddress, GpuBufferBuilder, GpuBufferBuilderF, GpuBufferDataI};
-use crate::resource_cache::ResourceCache;
 use crate::segment::EdgeMask;
 use crate::space::SpaceMapper;
 use crate::spatial_tree::{CoordinateSpaceMapping, SpatialNodeIndex, SpatialTree};
-use crate::surface::SurfaceBuilder;
 use crate::transform::GpuTransformId;
 use crate::util::{extract_inner_rect_k, MaxRect, ScaleOffset};
 use crate::visibility::compute_conservative_visible_rect;
@@ -119,7 +117,6 @@ pub fn prepare_quad(
         &mut PatternBuilderState {
             frame_gpu_data: frame_state.frame_gpu_data,
             transforms: frame_state.transforms,
-            rg_builder: frame_state.rg_builder,
         },
     );
 
@@ -201,7 +198,6 @@ pub fn prepare_repeatable_quad(
         &mut PatternBuilderState {
             frame_gpu_data: frame_state.frame_gpu_data,
             transforms: frame_state.transforms,
-            rg_builder: frame_state.rg_builder,
         },
     );
 
@@ -277,12 +273,6 @@ pub fn prepare_repeatable_quad(
         || (num_repetitions > 16.0 && surface_rect.area() < 1024.0 * 1024.0);
 
     if repeat_using_a_shader {
-        let mut pattern_state = PatternBuilderState {
-            frame_gpu_data: frame_state.frame_gpu_data,
-            transforms: frame_state.transforms,
-            rg_builder: frame_state.rg_builder,
-        };
-
         let (src_task_id, opaque) = match src_task_id {
             Some(_) => unimplemented!(),
             None => {
@@ -305,10 +295,7 @@ pub fn prepare_repeatable_quad(
                     None,
                     &pattern_ctx,
                     interned_clips,
-                    frame_state.clip_store,
-                    &mut pattern_state,
-                    frame_state.resource_cache,
-                    &mut frame_state.surface_builder
+                    frame_state,
                 ) else {
                     return;
                 };
@@ -328,7 +315,10 @@ pub fn prepare_repeatable_quad(
             None,
             LayoutVector2D::zero(),
             &pattern_ctx,
-            &mut pattern_state,
+            &mut PatternBuilderState {
+                frame_gpu_data: frame_state.frame_gpu_data,
+                transforms: frame_state.transforms,
+            },
         );
 
         // Note: caching is disabled when using the repeating shader.
@@ -378,7 +368,6 @@ pub fn prepare_repeatable_quad(
             &mut PatternBuilderState {
                 frame_gpu_data: frame_state.frame_gpu_data,
                 transforms: frame_state.transforms,
-                rg_builder: frame_state.rg_builder,
             },
         );
 
@@ -427,12 +416,6 @@ fn prepare_quad_impl(
     frame_state: &mut FrameBuildingState,
     scratch: &mut PrimitiveScratchBuffer,
 ) {
-    let mut state = PatternBuilderState {
-        frame_gpu_data: frame_state.frame_gpu_data,
-        transforms: frame_state.transforms,
-        rg_builder: frame_state.rg_builder,
-    };
-
     // If the local-to-device transform can be expressed as a 2D scale-offset,
     // We'll apply the transformation on the CPU and submit geometry in device
     // space to the shaders. Otherwise, the geometry is sent to the shaders in
@@ -445,7 +428,7 @@ fn prepare_quad_impl(
     let transform_id = if local_to_device_scale_offset.is_some() {
         GpuTransformId::IDENTITY
     } else {
-        state.transforms.gpu.get_id_with_post_scale(
+        frame_state.transforms.gpu.get_id_with_post_scale(
             prim_spatial_node_index,
             pic_context.raster_spatial_node_index,
             device_pixel_scale.get(),
@@ -496,7 +479,7 @@ fn prepare_quad_impl(
             pattern,
         );
 
-        let main_prim_address = state.frame_gpu_data.f32.push(&quad);
+        let main_prim_address = frame_state.frame_gpu_data.f32.push(&quad);
 
         // Render the primitive as a single instance. Coordinates are provided to the
         // shader in layout space.
@@ -567,10 +550,7 @@ fn prepare_quad_impl(
                 Some(clip_chain),
                 ctx,
                 interned_clips,
-                frame_state.clip_store,
-                &mut state,
-                frame_state.resource_cache,
-                &mut frame_state.surface_builder
+                frame_state,
             ) else {
                 return;
             };
@@ -651,10 +631,7 @@ fn prepare_indirect_pattern(
     clip_chain: Option<&ClipChainInstance>,
     ctx: &PatternBuilderContext,
     interned_clips: &DataStore<ClipIntern>,
-    clip_store: &ClipStore,
-    state: &mut PatternBuilderState,
-    resource_cache: &mut ResourceCache,
-    surface_builder: &mut SurfaceBuilder,
+    frame_state: &mut FrameBuildingState,
 ) -> Option<RenderTaskId> {
     let round_edges = !aa_flags;
     let quad = create_quad_primitive(
@@ -666,7 +643,7 @@ fn prepare_indirect_pattern(
         pattern,
     );
 
-    let main_prim_address = state.frame_gpu_data.f32.push(&quad);
+    let main_prim_address = frame_state.frame_gpu_data.f32.push(&quad);
 
     let mut clipped_surface_rect = *clipped_surface_rect;
     if local_to_device_scale_offset.is_some() && aa_flags.is_empty() {
@@ -722,12 +699,7 @@ fn prepare_indirect_pattern(
         cache_key.as_ref(),
         ctx.spatial_tree,
         interned_clips,
-        clip_store,
-        resource_cache,
-        state.rg_builder,
-        state.frame_gpu_data,
-        state.transforms,
-        surface_builder,
+        frame_state,
     ))
 }
 
@@ -878,12 +850,7 @@ fn prepare_nine_patch(
                     None,
                     ctx.spatial_tree,
                     interned_clips,
-                    frame_state.clip_store,
-                    frame_state.resource_cache,
-                    frame_state.rg_builder,
-                    frame_state.frame_gpu_data,
-                    frame_state.transforms,
-                    &mut frame_state.surface_builder,
+                    frame_state,
                 );
                 scratch.quad_indirect_segments.push(QuadSegment {
                     rect: segment_device_rect.to_f32().cast_unit(),
@@ -1130,12 +1097,7 @@ fn prepare_tiles(
                 None,
                 ctx.spatial_tree,
                 interned_clips,
-                frame_state.clip_store,
-                frame_state.resource_cache,
-                frame_state.rg_builder,
-                frame_state.frame_gpu_data,
-                frame_state.transforms,
-                &mut frame_state.surface_builder,
+                frame_state,
             );
 
             scratch.quad_indirect_segments.push(QuadSegment {
@@ -1323,21 +1285,18 @@ fn add_render_task_with_mask(
     cache_key: Option<&RenderTaskCacheKey>,
     spatial_tree: &SpatialTree,
     interned_clips: &DataStore<ClipIntern>,
-    clip_store: &ClipStore,
-    resource_cache: &mut ResourceCache,
-    rg_builder: &mut RenderTaskGraphBuilder,
-    gpu_buffers: &mut GpuBufferBuilder,
-    transforms: &mut TransformPalette,
-    surface_builder: &mut SurfaceBuilder,
+    frame_state: &mut FrameBuildingState,
 ) -> RenderTaskId {
+    let transforms = &mut frame_state.transforms;
+    let clip_store = &frame_state.clip_store;
     let is_opaque = pattern.is_opaque && clips_range.count == 0;
-    resource_cache.request_render_task(
+    frame_state.resource_cache.request_render_task(
         cache_key.cloned(),
         is_opaque,
         RenderTaskParent::Surface,
-        &mut gpu_buffers.f32,
-        rg_builder,
-        surface_builder,
+        &mut frame_state.frame_gpu_data.f32,
+        frame_state.rg_builder,
+        &mut frame_state.surface_builder,
         &mut|rg_builder, gpu_buffer| {
             let task_id = rg_builder.add().init(RenderTask::new_dynamic(
                 task_size,
