@@ -9,9 +9,7 @@ pub mod repeat;
 use api::units::LayoutVector2D;
 use api::{ColorF, units::DeviceRect};
 
-use crate::clip::{ClipIntern, ClipStore};
 use crate::frame_builder::FrameBuilderConfig;
-use crate::intern::DataStore;
 use crate::render_task_graph::{RenderTaskGraphBuilder, RenderTaskId};
 use crate::renderer::GpuBufferBuilder;
 use crate::scene::SceneProperties;
@@ -80,7 +78,6 @@ impl PatternTextureInput {
 pub struct PatternBuilderContext<'a> {
     pub scene_properties: &'a SceneProperties,
     pub spatial_tree: &'a SpatialTree,
-    pub interned_clips: &'a DataStore<ClipIntern>,
     pub fb_config: &'a FrameBuilderConfig,
 }
 
@@ -88,7 +85,6 @@ pub struct PatternBuilderState<'a> {
     pub frame_gpu_data: &'a mut GpuBufferBuilder,
     pub transforms: &'a mut TransformPalette,
     pub rg_builder: &'a mut RenderTaskGraphBuilder,
-    pub clip_store: &'a mut ClipStore,
 }
 
 pub trait PatternBuilder {
@@ -125,18 +121,6 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    pub fn texture(task_id: RenderTaskId, color: ColorF) -> Self {
-        Pattern {
-            kind: PatternKind::ColorOrTexture,
-            shader_input: PatternShaderInput::default(),
-            texture_input: PatternTextureInput::new(task_id),
-            base_color: color,
-            // TODO(gw): We may want to add support to render tasks to query
-            //           if they are known to be opaque.
-            is_opaque: false,
-        }
-    }
-
     pub fn color(color: ColorF) -> Self {
         Pattern {
             kind: PatternKind::ColorOrTexture,

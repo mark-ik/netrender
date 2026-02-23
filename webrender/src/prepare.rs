@@ -348,28 +348,8 @@ fn prepare_interned_prim_for_render(
     let device_pixel_scale = frame_state.surfaces[pic_context.surface_index.0].device_pixel_scale;
 
     match &mut prim_instance.kind {
-        PrimitiveInstanceKind::BoxShadow { data_handle } => {
-            let prim_data = &mut data_stores.box_shadow[*data_handle];
-
-            quad::prepare_quad(
-                prim_data,
-                &prim_data.kind.outer_shadow_rect,
-                prim_data.common.aligned_aa_edges,
-                prim_data.common.transformed_aa_edges,
-                prim_instance_index,
-                &None,
-                prim_spatial_node_index,
-                &prim_instance.vis.clip_chain,
-                device_pixel_scale,
-                frame_context,
-                pic_context,
-                targets,
-                &data_stores.clip,
-                frame_state,
-                scratch,
-            );
-
-            return;
+        PrimitiveInstanceKind::BoxShadow { .. } => {
+            unimplemented!();
         }
         PrimitiveInstanceKind::LineDecoration { data_handle, ref mut render_task, .. } => {
             profile_scope!("LineDecoration");

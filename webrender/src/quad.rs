@@ -109,7 +109,6 @@ pub fn prepare_quad(
     let pattern_ctx = PatternBuilderContext {
         scene_properties: frame_context.scene_properties,
         spatial_tree: frame_context.spatial_tree,
-        interned_clips,
         fb_config: frame_context.fb_config,
     };
 
@@ -122,7 +121,6 @@ pub fn prepare_quad(
                 frame_gpu_data: frame_state.frame_gpu_data,
                 transforms: frame_state.transforms,
                 rg_builder: frame_state.rg_builder,
-                clip_store: frame_state.clip_store,
             },
         ))
     } else {
@@ -201,7 +199,6 @@ pub fn prepare_repeatable_quad(
     let pattern_ctx = PatternBuilderContext {
         scene_properties: frame_context.scene_properties,
         spatial_tree: frame_context.spatial_tree,
-        interned_clips,
         fb_config: frame_context.fb_config,
     };
 
@@ -214,7 +211,6 @@ pub fn prepare_repeatable_quad(
                 frame_gpu_data: frame_state.frame_gpu_data,
                 transforms: frame_state.transforms,
                 rg_builder: frame_state.rg_builder,
-                clip_store: frame_state.clip_store,
             },
         ))
     } else {
@@ -301,7 +297,6 @@ pub fn prepare_repeatable_quad(
             frame_gpu_data: frame_state.frame_gpu_data,
             transforms: frame_state.transforms,
             rg_builder: frame_state.rg_builder,
-            clip_store: frame_state.clip_store,
         };
 
         let (src_task_id, opaque) = match src_task_id {
@@ -335,6 +330,7 @@ pub fn prepare_repeatable_quad(
                     None,
                     &pattern_ctx,
                     interned_clips,
+                    frame_state.clip_store,
                     &mut pattern_state,
                     frame_state.resource_cache,
                     &mut frame_state.surface_builder
@@ -411,7 +407,6 @@ pub fn prepare_repeatable_quad(
                     frame_gpu_data: frame_state.frame_gpu_data,
                     transforms: frame_state.transforms,
                     rg_builder: frame_state.rg_builder,
-                    clip_store: frame_state.clip_store,
                 },
             ))
         } else {
@@ -471,7 +466,6 @@ fn prepare_quad_impl(
         frame_gpu_data: frame_state.frame_gpu_data,
         transforms: frame_state.transforms,
         rg_builder: frame_state.rg_builder,
-        clip_store: frame_state.clip_store,
     };
 
     // If the local-to-device transform can be expressed as a 2D scale-offset,
@@ -624,7 +618,9 @@ fn prepare_quad_impl(
                 aa_flags,
                 cache_key,
                 Some(clip_chain),
-                ctx, interned_clips,
+                ctx,
+                interned_clips,
+                frame_state.clip_store,
                 &mut state,
                 frame_state.resource_cache,
                 &mut frame_state.surface_builder
@@ -715,6 +711,7 @@ fn prepare_indirect_pattern(
     clip_chain: Option<&ClipChainInstance>,
     ctx: &PatternBuilderContext,
     interned_clips: &DataStore<ClipIntern>,
+    clip_store: &ClipStore,
     state: &mut PatternBuilderState,
     resource_cache: &mut ResourceCache,
     surface_builder: &mut SurfaceBuilder,
@@ -785,7 +782,7 @@ fn prepare_indirect_pattern(
         cache_key.as_ref(),
         ctx.spatial_tree,
         interned_clips,
-        state.clip_store,
+        clip_store,
         resource_cache,
         state.rg_builder,
         state.frame_gpu_data,
@@ -1022,7 +1019,6 @@ fn prepare_tiles(
         frame_gpu_data: frame_state.frame_gpu_data,
         transforms: frame_state.transforms,
         rg_builder: frame_state.rg_builder,
-        clip_store: frame_state.clip_store,
     };
 
     let surface = &mut frame_state.surfaces[pic_context.surface_index.0];
@@ -1049,7 +1045,7 @@ fn prepare_tiles(
 
     // Walk each clip, extract the local mask regions and add them to the tile classifier.
     for i in 0 .. clip_chain.clips_range.count {
-        let clip_instance = state.clip_store.get_instance_from_range(&clip_chain.clips_range, i);
+        let clip_instance = frame_state.clip_store.get_instance_from_range(&clip_chain.clips_range, i);
         let clip_node = &interned_clips[clip_instance.handle];
 
         clip_to_raster.set_target_spatial_node(clip_node.item.spatial_node_index, ctx.spatial_tree);
@@ -1228,7 +1224,7 @@ fn prepare_tiles(
                 None,
                 ctx.spatial_tree,
                 interned_clips,
-                state.clip_store,
+                frame_state.clip_store,
                 frame_state.resource_cache,
                 state.rg_builder,
                 state.frame_gpu_data,

@@ -20,7 +20,7 @@ use crate::space::SpaceMapper;
 use crate::spatial_tree::{SpatialTree, SpatialNodeIndex};
 use crate::util::MaxRect;
 use crate::visibility::{VisibilityState, PrimitiveVisibility, FrameVisibilityContext};
-pub use crate::picture_composite_mode::{get_surface_rects, calculate_uv_rect_kind};
+pub use crate::picture_composite_mode::get_surface_rects;
 
 
 /// Maximum blur radius for blur filter

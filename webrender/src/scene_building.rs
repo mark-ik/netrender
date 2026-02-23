@@ -1874,7 +1874,6 @@ impl<'a> SceneBuilder<'a> {
                     info.border_radius,
                     info.shadow_radius,
                     info.clip_mode,
-                    self.spatial_tree.is_root_coord_system(spatial_node_index),
                 );
             }
             DisplayItem::Border(ref info) => {

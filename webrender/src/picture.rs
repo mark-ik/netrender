@@ -124,7 +124,7 @@ use crate::scene::SceneProperties;
 use crate::spatial_tree::CoordinateSystemId;
 use crate::surface::{SurfaceDescriptor, SurfaceTileDescriptor, get_surface_rects};
 pub use crate::surface::{SurfaceIndex, SurfaceInfo, SubpixelMode};
-pub use crate::surface::{calculate_screen_uv, calculate_uv_rect_kind};
+pub use crate::surface::calculate_screen_uv;
 use smallvec::SmallVec;
 use std::{mem, u8, u32};
 use std::ops::Range;
