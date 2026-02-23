@@ -319,7 +319,7 @@ pub fn prepare_repeatable_quad(
                     )
                 });
 
-                let task_id = prepare_indirect_pattern(
+                let Some(task_id) = prepare_indirect_pattern(
                     prim_spatial_node_index,
                     pic_context.raster_spatial_node_index,
                     local_rect,
@@ -338,7 +338,9 @@ pub fn prepare_repeatable_quad(
                     &mut pattern_state,
                     frame_state.resource_cache,
                     &mut frame_state.surface_builder
-                );
+                ) else {
+                    return;
+                };
 
                 (task_id, base_pattern.is_opaque)
             }
@@ -608,7 +610,7 @@ fn prepare_quad_impl(
                 )
             });
 
-            let task_id = prepare_indirect_pattern(
+            let Some(task_id) = prepare_indirect_pattern(
                 prim_spatial_node_index,
                 pic_context.raster_spatial_node_index,
                 local_rect,
@@ -626,7 +628,9 @@ fn prepare_quad_impl(
                 &mut state,
                 frame_state.resource_cache,
                 &mut frame_state.surface_builder
-            );
+            ) else {
+                return;
+            };
 
             add_composite_prim(
                 pattern_builder.get_base_color(&ctx),
@@ -714,7 +718,7 @@ fn prepare_indirect_pattern(
     state: &mut PatternBuilderState,
     resource_cache: &mut ResourceCache,
     surface_builder: &mut SurfaceBuilder,
-) -> RenderTaskId {
+) -> Option<RenderTaskId> {
     let round_edges = !aa_flags;
     let quad = create_quad_primitive(
         local_rect,
@@ -739,6 +743,9 @@ fn prepare_indirect_pattern(
     }
 
     let task_size = clipped_surface_rect.size().to_i32();
+    if task_size.is_empty() {
+        return None;
+    }
 
     let cache_key = cache_key.as_ref().map(|key| {
         RenderTaskCacheKey {
@@ -761,7 +768,7 @@ fn prepare_indirect_pattern(
         clips_range = clip_chain.clips_range;
     }
 
-    add_render_task_with_mask(
+    Some(add_render_task_with_mask(
         &pattern,
         &local_coverage_rect,
         task_size,
@@ -784,7 +791,7 @@ fn prepare_indirect_pattern(
         state.frame_gpu_data,
         state.transforms,
         surface_builder,
-    )
+    ))
 }
 
 fn prepare_nine_patch(
