@@ -24,8 +24,9 @@ use crate::gpu_types::ZBufferId;
 use crate::internal_types::{FastHashMap, FrameId, Filter};
 use crate::invalidation::{InvalidationReason, DirtyRegion, PrimitiveCompareResult};
 use crate::invalidation::cached_surface::{CachedSurface, TileUpdateDirtyContext, TileUpdateDirtyState, PrimitiveDependencyInfo};
+use crate::invalidation::vert_buffer::{CornersCache, VertRange};
 use crate::invalidation::compare::{PrimitiveDependency, ImageDependency};
-use crate::invalidation::compare::{SpatialNodeComparer, PrimitiveComparisonKey};
+use crate::invalidation::compare::PrimitiveComparisonKey;
 use crate::invalidation::compare::{OpacityBindingInfo, ColorBindingInfo};
 use crate::picture::{SurfaceTextureDescriptor, PictureCompositeMode, SurfaceIndex, clamp};
 use crate::picture::{get_relative_scale_offset, PicturePrimitive};
@@ -244,6 +245,8 @@ pub struct Tile {
     pub z_id: ZBufferId,
     /// Cached surface state (content tracking, invalidation, dependencies)
     pub cached_surface: CachedSurface,
+    /// Raster-space rect for this tile, cached to avoid recomputing per primitive.
+    pub local_raster_rect: RasterRect,
 }
 
 impl Tile {
@@ -263,6 +266,7 @@ impl Tile {
             is_opaque: false,
             z_id: ZBufferId::invalid(),
             cached_surface: CachedSurface::new(),
+            local_raster_rect: RasterRect::zero(),
         }
     }
 
@@ -318,6 +322,8 @@ impl Tile {
             ),
         );
 
+        self.local_raster_rect = ctx.local_to_raster.map_rect(&self.cached_surface.local_rect);
+
         self.world_tile_rect = ctx.pic_to_world_mapper
             .map(&self.cached_surface.local_rect)
             .expect("bug: map local tile rect");
@@ -338,6 +344,8 @@ impl Tile {
     fn add_prim_dependency(
         &mut self,
         info: &PrimitiveDependencyInfo,
+        corners_cache: &CornersCache,
+        prim_clamp_to_tile: bool,
     ) {
         // If this tile isn't currently visible, we don't want to update the dependencies
         // for this tile, as an optimization, since it won't be drawn anyway.
@@ -345,7 +353,14 @@ impl Tile {
             return;
         }
 
-        self.cached_surface.add_prim_dependency(info, self.cached_surface.local_rect);
+        let local_rect = self.cached_surface.local_rect;
+        self.cached_surface.add_prim_dependency(
+            info,
+            corners_cache,
+            prim_clamp_to_tile,
+            &self.local_raster_rect,
+            local_rect,
+        );
     }
 
     /// Called during tile cache instance post_update. Allows invalidation and dirty
@@ -358,12 +373,6 @@ impl Tile {
     ) {
         // Ensure peek-poke constraint is met, that `dep_data` is large enough
         ensure_red_zone::<PrimitiveDependency>(&mut self.cached_surface.current_descriptor.dep_data);
-
-        // Register the frame id of this tile with the spatial node comparer, to ensure
-        // that it doesn't GC any spatial nodes from the comparer that are referenced
-        // by this tile. Must be done before we early exit below, so that we retain
-        // spatial node info even for tiles that are currently not visible.
-        state.spatial_node_comparer.retain_for_frame(self.cached_surface.current_descriptor.last_updated_frame_id);
 
         // If tile is not visible, just early out from here - we don't update dependencies
         // so don't want to invalidate, merge, split etc. The tile won't need to be drawn
@@ -727,8 +736,6 @@ pub struct TileCacheInstance {
     opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
     /// Switch back and forth between old and new bindings hashmaps to avoid re-allocating.
     old_opacity_bindings: FastHashMap<PropertyBindingId, OpacityBindingInfo>,
-    /// A helper to compare transforms between previous and current frame.
-    spatial_node_comparer: SpatialNodeComparer,
     /// List of color bindings, with some extra information
     /// about whether they changed since last frame.
     color_bindings: FastHashMap<PropertyBindingId, ColorBindingInfo>,
@@ -815,6 +822,8 @@ pub struct TileCacheInstance {
     /// The remaining number of YuvImage prims we will see this frame. We prioritize
     /// promoting these before promoting any Image prims.
     pub yuv_images_remaining: usize,
+    /// Persistent cache for computing and storing raster-space primitive corners.
+    corners_cache: CornersCache,
 }
 
 impl TileCacheInstance {
@@ -837,7 +846,6 @@ impl TileCacheInstance {
             sub_slices,
             opacity_bindings: FastHashMap::default(),
             old_opacity_bindings: FastHashMap::default(),
-            spatial_node_comparer: SpatialNodeComparer::new(),
             color_bindings: FastHashMap::default(),
             old_color_bindings: FastHashMap::default(),
             dirty_region: DirtyRegion::new(params.visibility_node_index, params.spatial_node_index),
@@ -879,6 +887,7 @@ impl TileCacheInstance {
             overlay_region: PictureRect::zero(),
             yuv_images_count: params.yuv_image_surface_count,
             yuv_images_remaining: 0,
+            corners_cache: CornersCache::new(),
         }
     }
 
@@ -1166,10 +1175,6 @@ impl TileCacheInstance {
         // after any retained prev state is taken above).
         self.frame_id.advance();
 
-        // Notify the spatial node comparer that a new frame has started, and the
-        // current reference spatial node for this tile cache.
-        self.spatial_node_comparer.next_frame(self.spatial_node_index);
-
         // At the start of the frame, step through each current compositor surface
         // and mark it as unused. Later, this is used to free old compositor surfaces.
         // TODO(gw): In future, we might make this more sophisticated - for example,
@@ -1434,7 +1439,10 @@ impl TileCacheInstance {
             global_screen_world_rect: frame_context.global_screen_world_rect,
             tile_size: self.tile_size,
             frame_id: self.frame_id,
+            local_to_raster: self.local_to_raster,
         };
+
+        self.corners_cache.pre_update();
 
         // Pre-update each tile
         for sub_slice in &mut self.sub_slices {
@@ -2219,9 +2227,11 @@ impl TileCacheInstance {
         }
 
         // Build the list of resources that this primitive has dependencies on.
-        let mut prim_info = PrimitiveDependencyInfo::new(
-            prim_instance.uid(),
-            pic_coverage_rect,
+        let mut prim_info = PrimitiveDependencyInfo::new(prim_instance.uid(), pic_coverage_rect);
+        // Compute once here so it's available for both prim_info and the tile loop.
+        let prim_clamp_to_tile = matches!(
+            prim_instance.kind,
+            PrimitiveInstanceKind::Rectangle { .. }
         );
 
         let mut sub_slice_index = self.sub_slices.len() - 1;
@@ -2248,26 +2258,12 @@ impl TileCacheInstance {
             }
         }
 
-        // Include the prim spatial node, if differs relative to cache root.
-        if prim_spatial_node_index != self.spatial_node_index {
-            prim_info.spatial_nodes.push(prim_spatial_node_index);
-        }
+        // Spatial node and clip deps are no longer added; vert corners (computed per
+        // tile below) capture transform and clip position changes directly in raster space.
 
-        // If there was a clip chain, add any clip dependencies to the list for this tile.
+        // Gather clip data needed for the per-tile vert push below.
         let clip_instances = &clip_store
             .clip_node_instances[prim_clip_chain.clips_range.to_range()];
-        for clip_instance in clip_instances {
-            let clip = &data_stores.clip[clip_instance.handle];
-
-            prim_info.clips.push(clip_instance.handle.uid());
-
-            // If the clip has the same spatial node, the relative transform
-            // will always be the same, so there's no need to depend on it.
-            if clip.item.spatial_node_index != self.spatial_node_index
-                && !prim_info.spatial_nodes.contains(&clip.item.spatial_node_index) {
-                prim_info.spatial_nodes.push(clip.item.spatial_node_index);
-            }
-        }
 
         // Certain primitives may select themselves to be a backdrop candidate, which is
         // then applied below.
@@ -2742,24 +2738,93 @@ impl TileCacheInstance {
             }
         }
 
-        // Record any new spatial nodes in the used list.
-        for spatial_node_index in &prim_info.spatial_nodes {
-            self.spatial_node_comparer.register_used_transform(
-                *spatial_node_index,
-                self.frame_id,
-                frame_context.spatial_tree,
-            );
+        // coverage_rect is the visible portion of the primitive in local space.
+        // Used for coverage_corners: detects when clipping changes the visible area
+        // without over-invalidating when the clip changes outside the prim extent.
+        let coverage_rect = local_prim_rect
+            .intersection(&prim_clip_chain.local_clip_rect)
+            .unwrap_or_default();
+
+        // Compute raster-space corners once, outside the tile loop.
+        // Transform + unquantized results land in corners_cache scratch (amortised alloc).
+        // The per-prim spatial-node transform is cached across consecutive same-node prims.
+        self.corners_cache.clear_scratch();
+        prim_info.prim_scratch = self.corners_cache.compute_to_scratch(
+            local_prim_rect,
+            prim_spatial_node_index,
+            self.spatial_node_index,
+            self.local_to_raster,
+            frame_context.spatial_tree,
+        );
+        prim_info.cov_scratch = self.corners_cache.compute_to_scratch(
+            coverage_rect,
+            prim_spatial_node_index,
+            self.spatial_node_index,
+            self.local_to_raster,
+            frame_context.spatial_tree,
+        );
+
+        // Compute scratch ranges for clips once, outside the tile loop.
+        // Actual quantization into per-tile vert_data happens inside add_prim_dependency.
+        for clip_instance in clip_instances {
+            let clip = &data_stores.clip[clip_instance.handle];
+            let clip_local_rect = match clip.item.kind {
+                ClipItemKind::Rectangle { rect, .. } => Some(rect),
+                ClipItemKind::RoundedRectangle { rect, .. } => Some(rect),
+                ClipItemKind::Image { rect, .. } => Some(rect),
+                ClipItemKind::BoxShadow { .. } => None,
+            };
+            let clip_scratch = match clip_local_rect {
+                Some(rect) => self.corners_cache.compute_to_scratch(
+                    rect,
+                    clip.item.spatial_node_index,
+                    self.spatial_node_index,
+                    self.local_to_raster,
+                    frame_context.spatial_tree,
+                ),
+                None => VertRange::INVALID,
+            };
+            prim_info.clips.push((clip_instance.handle.uid(), clip_scratch));
         }
 
-        // Normalize the tile coordinates before adding to tile dependencies.
-        // For each affected tile, mark any of the primitive dependencies.
+        // For unclamped primitives, push prim + coverage into curr_verts once.
+        // All tiles share the same VertRange.
+        //
+        // For clamped primitives (Rectangle), push per-tile clamped corners into
+        // curr_verts inside the tile loop. The VertRange is tile-specific but still
+        // indexes into the same single buffer.
+        //
+        // clamp_to_tile = true  (coverage-only, currently Rectangle):
+        //   A primitive growing/shrinking while still covering the tile does not
+        //   change the tile's visual output — same coverage, same uniform color.
+        //   Clamping the corners to tile bounds means such a resize compares
+        //   equal and avoids a spurious invalidation.
+        //
+        //   NOTE: this optimisation does not yet fire in practice. prim_uid is
+        //   the full intern uid, which includes prim_rect in the key; if the
+        //   Rectangle's bounds change the uid changes and the prim_uid check in
+        //   compare_prim invalidates the tile before the clamped-corners check
+        //   is ever reached. The clamp_to_tile path is correct and ready; it
+        //   will become effective once prim_uid is derived from a true
+        //   content-only key (excluding prim_rect).
+        //
+        // clamp_to_tile = false (UV-mapped):
+        //   The pixels sampled from the primitive depend on UV coordinates
+        //   (tile_pos - prim_min) / prim_size. Any position or size change
+        //   shifts the UV mapping even if the tile stays fully covered.
+
+        // For each affected tile, record the primitive dependencies.
         for y in p0.y .. p1.y {
             for x in p0.x .. p1.x {
                 // TODO(gw): Convert to 2d array temporarily to avoid hash lookups per-tile?
                 let key = TileOffset::new(x, y);
                 let tile = sub_slice.tiles.get_mut(&key).expect("bug: no tile");
 
-                tile.add_prim_dependency(&prim_info);
+                tile.add_prim_dependency(
+                    &prim_info,
+                    &self.corners_cache,
+                    prim_clamp_to_tile,
+                );
             }
         }
 
@@ -2920,7 +2985,6 @@ impl TileCacheInstance {
             resource_cache,
             composite_state,
             compare_cache: &mut self.compare_cache,
-            spatial_node_comparer: &mut self.spatial_node_comparer,
         };
 
         // Step through each tile and invalidate if the dependencies have changed. Determine
@@ -3187,6 +3251,9 @@ struct TilePreUpdateContext {
 
     /// The current frame id for this picture cache
     frame_id: FrameId,
+
+    /// Maps picture-space coords to raster space, for caching per-tile raster rects.
+    local_to_raster: ScaleOffset,
 }
 
 // Immutable context passed to picture cache tiles during post_update
