@@ -158,7 +158,7 @@ impl From<RadialGradientKey> for RadialGradientTemplate {
         let mut brush_segments = Vec::new();
 
         if let Some(ref nine_patch) = item.nine_patch {
-            brush_segments = nine_patch.create_segments(common.prim_rect.size());
+            brush_segments = nine_patch.create_brush_segments(common.prim_rect.size());
         }
 
         let (stops, min_alpha) = stops_and_min_alpha(&item.stops);

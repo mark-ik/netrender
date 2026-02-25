@@ -377,7 +377,7 @@ impl From<LinearGradientKey> for LinearGradientTemplate {
         let mut brush_segments = Vec::new();
 
         if let Some(ref nine_patch) = item.nine_patch {
-            brush_segments = nine_patch.create_segments(common.prim_rect.size());
+            brush_segments = nine_patch.create_brush_segments(common.prim_rect.size());
         }
 
         // Save opacity of the stops for use in
