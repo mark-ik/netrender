@@ -229,7 +229,7 @@ pub use crate::renderer::{
     MAX_VERTEX_TEXTURE_WIDTH,
 };
 #[cfg(feature = "gl_backend")]
-pub use crate::renderer::init::{WebRenderOptions, create_webrender_instance, AsyncPropertySampler, SceneBuilderHooks, RenderBackendHooks, ONE_TIME_USAGE_HINT};
+pub use crate::renderer::init::{WebRenderOptions, create_webrender_instance, RendererBackend, AsyncPropertySampler, SceneBuilderHooks, RenderBackendHooks, ONE_TIME_USAGE_HINT};
 #[cfg(feature = "gl_backend")]
 pub use crate::hit_test::SharedHitTester;
 pub use crate::internal_types::FastHashMap;

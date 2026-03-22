@@ -115,6 +115,16 @@ pub trait RenderBackendHooks {
     fn init_thread(&self);
 }
 
+/// Selects which rendering backend `create_webrender_instance` should
+/// initialize.  The `Gl` variant is the only option today; a `Wgpu` variant
+/// will be added in a future stage of the wgpu backend work.
+pub enum RendererBackend {
+    /// OpenGL / ANGLE backend driven through a `gleam` handle.
+    Gl {
+        gl: Rc<dyn gl::Gl>,
+    },
+}
+
 pub struct WebRenderOptions {
     pub resource_override_path: Option<PathBuf>,
     /// Whether to use shaders that have been optimized at build time.
@@ -290,7 +300,7 @@ impl Default for WebRenderOptions {
 /// ```
 /// [WebRenderOptions]: struct.WebRenderOptions.html
 pub fn create_webrender_instance(
-    gl: Rc<dyn gl::Gl>,
+    backend: RendererBackend,
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
@@ -310,6 +320,8 @@ pub fn create_webrender_instance(
     }
 
     HAS_BEEN_INITIALIZED.store(true, Ordering::SeqCst);
+
+    let RendererBackend::Gl { gl } = backend;
 
     let (api_tx, api_rx) = unbounded_channel();
     let (result_tx, result_rx) = unbounded_channel();

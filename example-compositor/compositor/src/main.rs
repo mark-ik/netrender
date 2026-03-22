@@ -457,7 +457,7 @@ fn main() {
         })
     };
     let (mut renderer, sender) =
-        webrender::create_webrender_instance(gl.clone(), notifier, opts, None).unwrap();
+        webrender::create_webrender_instance(webrender::RendererBackend::Gl { gl: gl.clone() }, notifier, opts, None).unwrap();
     let mut api = sender.create_api();
     let document_id = api.add_document(device_size);
     let device_pixel_ratio = 1.0;
