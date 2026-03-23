@@ -122,6 +122,38 @@ pub enum RendererBackend {
     Gl { gl: Rc<dyn gl::Gl> },
 }
 
+impl RendererBackend {
+    fn prepare_options(&self, options: &mut WebRenderOptions) {
+        match options.compositor_config {
+            CompositorConfig::Draw { .. } | CompositorConfig::Native { .. } => {}
+            CompositorConfig::Layer { .. } => {
+                options.surface_origin_is_top_left = true;
+            }
+        }
+    }
+
+    fn into_device(self, options: &mut WebRenderOptions) -> Device {
+        self.prepare_options(options);
+
+        match self {
+            RendererBackend::Gl { gl } => Device::new(
+                gl,
+                options.crash_annotator.clone(),
+                options.resource_override_path.clone(),
+                options.use_optimized_shaders,
+                options.upload_method.clone(),
+                options.batched_upload_threshold,
+                options.cached_programs.take(),
+                options.allow_texture_storage_support,
+                options.allow_texture_swizzling,
+                options.dump_shader_source.take(),
+                options.surface_origin_is_top_left,
+                options.panic_on_gl_error,
+            ),
+        }
+    }
+}
+
 pub struct WebRenderOptions {
     pub resource_override_path: Option<PathBuf>,
     /// Whether to use shaders that have been optimized at build time.
@@ -319,29 +351,7 @@ pub fn create_webrender_instance(
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
-    match options.compositor_config {
-        CompositorConfig::Draw { .. } | CompositorConfig::Native { .. } => {}
-        CompositorConfig::Layer { .. } => {
-            options.surface_origin_is_top_left = true;
-        }
-    }
-
-    let device = Device::new(
-        match backend {
-            RendererBackend::Gl { gl } => gl,
-        },
-        options.crash_annotator.clone(),
-        options.resource_override_path.clone(),
-        options.use_optimized_shaders,
-        options.upload_method.clone(),
-        options.batched_upload_threshold,
-        options.cached_programs.take(),
-        options.allow_texture_storage_support,
-        options.allow_texture_swizzling,
-        options.dump_shader_source.take(),
-        options.surface_origin_is_top_left,
-        options.panic_on_gl_error,
-    );
+    let device = backend.into_device(&mut options);
 
     create_webrender_instance_with_device(device, notifier, options, shaders)
 }
@@ -367,15 +377,6 @@ fn create_webrender_instance_with_device(
     }
 
     HAS_BEEN_INITIALIZED.store(true, Ordering::SeqCst);
-
-    // For now, we assume that native OS compositors are top-left origin. If that doesn't
-    // turn out to be the case, we can add a query method on `LayerCompositor`.
-    match options.compositor_config {
-        CompositorConfig::Draw { .. } | CompositorConfig::Native { .. } => {}
-        CompositorConfig::Layer { .. } => {
-            options.surface_origin_is_top_left = true;
-        }
-    }
 
     let (api_tx, api_rx) = unbounded_channel();
     let (result_tx, result_rx) = unbounded_channel();
