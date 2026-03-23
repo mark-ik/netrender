@@ -13,7 +13,7 @@ use crate::bump_allocator::ChunkPool;
 use crate::render_api::{RenderApiSender, FrameMsg};
 use crate::composite::{CompositorKind, CompositorConfig};
 use crate::device::{
-    Device, DeviceConfig, ProgramCache, RendererBackend, TextureFilter, UploadMethod, UploadPBOPool, VertexUsageHint,
+    Device, DeviceConfig, GpuDevice, ProgramCache, RendererBackend, TextureFilter, UploadMethod, UploadPBOPool, VertexUsageHint,
 };
 use crate::frame_builder::FrameBuilderConfig;
 use crate::glyph_cache::GlyphCache;
@@ -62,6 +62,31 @@ static HAS_BEEN_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// Returns true if a WR instance has ever been initialized in this process.
 pub fn wr_has_been_initialized() -> bool {
     HAS_BEEN_INITIALIZED.load(Ordering::SeqCst)
+}
+
+fn create_dither_matrix_texture<D: GpuDevice>(device: &mut D) -> D::Texture {
+    let dither_matrix: [u8; 64] = [
+        0, 48, 12, 60, 3, 51, 15, 63,
+        32, 16, 44, 28, 35, 19, 47, 31,
+        8, 56, 4, 52, 11, 59, 7, 55,
+        40, 24, 36, 20, 43, 27, 39, 23,
+        2, 50, 14, 62, 1, 49, 13, 61,
+        34, 18, 46, 30, 33, 17, 45, 29,
+        10, 58, 6, 54, 9, 57, 5, 53,
+        42, 26, 38, 22, 41, 25, 37, 21,
+    ];
+
+    let texture = device.create_texture(
+        ImageBufferKind::Texture2D,
+        ImageFormat::R8,
+        8,
+        8,
+        TextureFilter::Nearest,
+        None,
+    );
+    device.upload_texture_immediate(&texture, &dither_matrix);
+
+    texture
 }
 
 /// Allows callers to hook in at certain points of the async scene build. These
@@ -418,84 +443,7 @@ fn create_webrender_instance_with_device(
     };
 
     let dither_matrix_texture = if options.enable_dithering {
-        let dither_matrix: [u8; 64] = [
-            0,
-            48,
-            12,
-            60,
-            3,
-            51,
-            15,
-            63,
-            32,
-            16,
-            44,
-            28,
-            35,
-            19,
-            47,
-            31,
-            8,
-            56,
-            4,
-            52,
-            11,
-            59,
-            7,
-            55,
-            40,
-            24,
-            36,
-            20,
-            43,
-            27,
-            39,
-            23,
-            2,
-            50,
-            14,
-            62,
-            1,
-            49,
-            13,
-            61,
-            34,
-            18,
-            46,
-            30,
-            33,
-            17,
-            45,
-            29,
-            10,
-            58,
-            6,
-            54,
-            9,
-            57,
-            5,
-            53,
-            42,
-            26,
-            38,
-            22,
-            41,
-            25,
-            37,
-            21,
-        ];
-
-        let texture = device.create_texture(
-            ImageBufferKind::Texture2D,
-            ImageFormat::R8,
-            8,
-            8,
-            TextureFilter::Nearest,
-            None,
-        );
-        device.upload_texture_immediate(&texture, &dither_matrix);
-
-        Some(texture)
+        Some(create_dither_matrix_texture(&mut device))
     } else {
         None
     };
