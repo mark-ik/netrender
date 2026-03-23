@@ -1692,8 +1692,24 @@ fn preprocess_for_naga(src: &str, stage: naga::ShaderStage) -> String {
     }
 
     // ── Pass 1: line-by-line rewriting ───────────────────────────────────────
-    let mut name_to_binding: HashMap<String, u32> = HashMap::new();
-    let mut next_binding: u32 = 0;
+
+    // Fixed binding table matching GL TextureSampler slot assignments.
+    // Using fixed indices ensures VS and FS agree on binding numbers for the
+    // same resource, which is required by wgpu's PipelineLayout.
+    const FIXED_BINDINGS: &[(&str, u32)] = &[
+        ("sColor0", 0),  ("sColor1", 1),  ("sColor2", 2),
+        ("sGpuCache", 3), ("sTransformPalette", 4), ("sRenderTasks", 5),
+        ("sDither", 6), ("sPrimitiveHeadersF", 7), ("sPrimitiveHeadersI", 8),
+        ("sClipMask", 9), ("sGpuBufferF", 10), ("sGpuBufferI", 11),
+        ("uTransform", 12), ("uTextureSize", 13),
+        ("u_mali_workaround_dummy", 14),
+    ];
+    let binding_for = |name: &str| -> u32 {
+        FIXED_BINDINGS.iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, b)| *b)
+            .unwrap_or_else(|| panic!("Unknown uniform/sampler in shader: {}", name))
+    };
     let mut next_attr_loc: u32 = 0;     // vertex attribute input locations
     let mut next_vary_loc: u32 = 0;     // varying interface locations (vertex out / fragment in)
     let is_vertex   = stage == naga::ShaderStage::Vertex;
@@ -1735,12 +1751,8 @@ fn preprocess_for_naga(src: &str, stage: naga::ShaderStage) -> String {
                 .unwrap_or("unknown")
                 .to_string();
 
-            // Assign a stable binding index.
-            let binding = *name_to_binding.entry(var_name.clone()).or_insert_with(|| {
-                let b = next_binding;
-                next_binding += 1;
-                b
-            });
+            // Use the fixed binding table so VS/FS agree on resource slots.
+            let binding = binding_for(&var_name);
 
             if let Some(&samp_ty) = sampler_type_map.get(&var_name) {
                 // Replace the combined sampler type with the Vulkan-GLSL texture type.
@@ -2042,4 +2054,3 @@ pub fn write_wgsl_shaders(
 
     Ok(())
 }
-
