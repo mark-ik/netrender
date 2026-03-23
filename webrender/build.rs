@@ -593,6 +593,613 @@ fn move_definitions_before_prototypes(src: &str) -> String {
     result
 }
 
+/// Remove switch fall-through patterns that naga's WGSL emitter cannot handle.
+///
+/// Two transformations are applied to the assembled GLSL source:
+///
+/// **1. Cascade fall-through** — a bare `case X:` or `default:` label (nothing
+/// following the colon) that is immediately followed by another case/default
+/// label has the target case's body duplicated after it:
+///
+/// ```glsl
+/// case A:           →   case A: { body; break; }
+/// case B: { body; break; }   case B: { body; break; }
+/// ```
+///
+/// **2. Missing break** — a `default:` body at switch-case depth that exits
+/// without `break`/`return`/`discard` gets a `break;` appended before the
+/// switch-closing `}`:
+///
+/// ```glsl
+/// default:               →   default:
+///     stmt;                      stmt;
+/// }                              break;
+///                            }
+/// ```
+///
+/// Both patterns appear in WR's cs_border_*, cs_clip_box_shadow,
+/// cs_line_decoration, and ps_text_run shaders.
+#[cfg(feature = "wgpu_backend")]
+fn fix_switch_fallthrough(src: &str) -> String {
+    let lines: Vec<&str> = src.lines().collect();
+    let n = lines.len();
+
+    // True if the trimmed, comment-stripped line is a bare case/default label
+    // with nothing after the colon (no `{`, `;`, or code).
+    let bare_case = |raw: &str| -> bool {
+        let c = strip_glsl_comment(raw.trim());
+        if c.is_empty() { return false; }
+        let starts = c.starts_with("case ") || c == "default:" || c.starts_with("default:");
+        if !starts || !c.contains(':') { return false; }
+        let after = c[c.rfind(':').unwrap_or(0) + 1..].trim();
+        after.is_empty() && !c.contains('{') && !c.contains(';')
+    };
+
+    // True if the line starts a case or default label (code may follow the colon).
+    let is_case = |raw: &str| -> bool {
+        let c = strip_glsl_comment(raw.trim());
+        (c.starts_with("case ") || c == "default:" || c.starts_with("default:")) && c.contains(':')
+    };
+
+    // True if the line contains an explicit case-level terminator.
+    // Handles both standalone `break;` and inline `case X: stmt; break;` /
+    // `default: stmt; break;` patterns (where `is_term` checks the WHOLE line).
+    let is_term = |raw: &str| -> bool {
+        let c = strip_glsl_comment(raw.trim());
+        // Standalone or prefixed terminator: starts with keyword AND ends with `;`
+        if (c.starts_with("break")    || c.starts_with("return") ||
+            c.starts_with("discard") || c.starts_with("continue")) && c.ends_with(';')
+        {
+            return true;
+        }
+        // Inline terminator at end: `default: stmt; break;` or `case X: stmt; return y;`
+        // — the last statement in the line is a terminator.
+        c.ends_with("break;") || c.ends_with("discard;") || c.ends_with("continue;")
+    };
+
+    // Collect the body that belongs to the case at `case_line`, returning
+    // (body_lines_to_insert, end_index_exclusive).
+    // Statements are returned WITHOUT an outer { } wrapper so they are
+    // inserted at the CASE level — naga requires case-level terminators and
+    // does not accept `break` / `return` inside a nested block as satisfying
+    // the fall-through check.
+    let extract_body = |lines: &[&str], case_line: usize, n: usize| -> (Vec<String>, usize) {
+        let code  = strip_glsl_comment(lines[case_line].trim());
+        let colon = code.rfind(':').unwrap_or(0);
+        let after = code[colon + 1..].trim();
+
+        if after.starts_with('{') {
+            // `case X: { … }` — block starts on same line as label.
+            // Extract the CONTENTS of the block (not including the outer { }).
+            let mut result = vec![];
+            let mut depth: i32 = 1;
+            let mut j = case_line + 1;
+            while j < n && depth > 0 {
+                let lc = strip_glsl_comment(lines[j].trim());
+                // Track depth changes ON this line before deciding to include it.
+                let mut new_depth = depth;
+                for ch in lc.chars() {
+                    match ch { '{' => new_depth += 1, '}' => new_depth -= 1, _ => {} }
+                }
+                if new_depth > 0 {
+                    result.push(lines[j].to_string());
+                }
+                // If new_depth == 0 this line is (or contains) the closing `}`.
+                // We skip it — we don't want to emit it as part of the body.
+                depth = new_depth;
+                j += 1;
+            }
+            (result, j)
+        } else if !after.is_empty() {
+            // Inline statement after colon (e.g. `case X: return y;`).
+            let raw   = lines[case_line];
+            let indent: String = raw[..raw.len() - raw.trim_start().len()].to_string();
+            (vec![format!("{}    {}", indent, after)], case_line + 1)
+        } else {
+            // Body starts on lines after the label.  Collect until the next
+            // case label at depth 0 or the `}` closing the switch.
+            let mut result = vec![];
+            let mut depth: i32 = 0;
+            let mut j = case_line + 1;
+            while j < n {
+                let lc = strip_glsl_comment(lines[j].trim());
+                if depth == 0 && (is_case(lines[j]) || lc == "}" || lc == "};") { break; }
+                for ch in lc.chars() { match ch { '{' => depth += 1, '}' => depth -= 1, _ => {} } }
+                result.push(lines[j].to_string());
+                j += 1;
+                if depth < 0 { result.pop(); break; }
+            }
+            (result, j)
+        }
+    };
+
+    // ── Pass 1: cascade fall-through ─────────────────────────────────────────
+    let mut p1: Vec<String> = Vec::with_capacity(n + 64);
+    {
+        let mut i = 0;
+        while i < n {
+            let raw = lines[i];
+            if bare_case(raw) {
+                // Next non-blank line.
+                let mut j = i + 1;
+                while j < n && lines[j].trim().is_empty() { j += 1; }
+
+                if j < n && is_case(lines[j]) {
+                    // Cascade detected: collect all bare labels in this run.
+                    let mut group: Vec<usize> = vec![i];
+                    while j < n {
+                        if lines[j].trim().is_empty() { j += 1; continue; }
+                        if bare_case(lines[j]) {
+                            // Include in run only if followed by another case start.
+                            let mut k = j + 1;
+                            while k < n && lines[k].trim().is_empty() { k += 1; }
+                            if k < n && is_case(lines[k]) {
+                                group.push(j); j += 1;
+                            } else {
+                                break; // j is the last label with body following.
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    // j = the last (non-bare or last-bare-before-body) case label.
+                    let (body, _) = extract_body(&lines, j, n);
+                    for &li in &group {
+                        p1.push(lines[li].to_string());
+                        for bl in &body { p1.push(bl.clone()); }
+                    }
+                    i = j; // Continue at last label so its body is emitted normally.
+                    continue;
+                }
+            }
+            p1.push(raw.to_string());
+            i += 1;
+        }
+    }
+
+    // ── Pass 2: fix `case X: { … }` blocks so naga sees a case-level break ──
+    //
+    // Root cause (confirmed via naga source):
+    //   naga's parse_statement for `{…}` blocks uses `get_or_insert` to set the
+    //   outer case_terminator when block_terminator is non-None.  This locks
+    //   case_terminator to point AFTER the block (to the Block statement itself,
+    //   not to a Break).  So `ctx.body[idx-1]` = Block ≠ Break, and fall_through
+    //   stays `true`.  Adding an outer `break;` after `}` doesn't help: by the
+    //   time `break;` is parsed, case_terminator is already set (get_or_insert
+    //   is a no-op on Some).
+    //
+    // Fix: REMOVE the terminator from *inside* the block so that block_terminator
+    //   is None.  The `{…}` block is kept intact for variable-scoping purposes.
+    //   After the block's closing `}`, a case-level `break;` is emitted.  Now:
+    //   • block has no inner terminator → block_terminator = None
+    //   • block doesn't set case_terminator via get_or_insert
+    //   • the outer `break;` sets case_terminator pointing to Statement::Break
+    //   • ctx.body[idx-1] = Break → fall_through = false ✓
+    //
+    // For `return expr;` inside blocks (ps_text_run helper functions): we also
+    // remove the return and add an outer `break;`. The function's implicit or
+    // explicit return after the switch handles the control flow.
+    let p1r: Vec<&str> = p1.iter().map(|s| s.as_str()).collect();
+    let n2 = p1r.len();
+    let mut p2: Vec<String> = Vec::with_capacity(n2 + 16);
+    {
+        let mut i = 0;
+        while i < n2 {
+            let raw = p1r[i];
+            let code = strip_glsl_comment(raw.trim());
+            // Detect `case X: {` or `default: {` — label immediately opening a block.
+            let is_case_with_block =
+                (code.starts_with("case ") || code.starts_with("default:") || code == "default:")
+                && code.contains(':') && {
+                    let colon = code.rfind(':').unwrap_or(0);
+                    code[colon + 1..].trim().starts_with('{')
+                };
+            if is_case_with_block {
+                let indent = &raw[..raw.len() - raw.trim_start().len()];
+
+                // Collect all lines from i+1 until the matching `}`.
+                let mut depth: i32 = 1; // `{` on the case line opened depth 1
+                let mut j = i + 1;
+                let mut block_indices: Vec<usize> = Vec::new();
+                while j < n2 && depth > 0 {
+                    let lc = strip_glsl_comment(p1r[j].trim());
+                    block_indices.push(j);
+                    let delta = lc.chars().fold(0i32, |d, ch| match ch {
+                        '{' => d + 1, '}' => d - 1, _ => d,
+                    });
+                    depth += delta;
+                    j += 1;
+                }
+                // block_indices now contains all lines through the closing `}`.
+
+                // Find the LAST directly-nested terminator (at block depth 0).
+                // This is the terminator that causes block_terminator to be set,
+                // which in turn locks the outer case_terminator via get_or_insert.
+                // Removing it ensures block_terminator = None.
+                let mut inner_depth: i32 = 0;
+                let mut last_term_bi: Option<usize> = None;
+                for (bi, &li) in block_indices.iter().enumerate() {
+                    let lc = strip_glsl_comment(p1r[li].trim());
+                    // Check at current depth BEFORE updating (depth 0 = direct child).
+                    if inner_depth == 0 {
+                        let is_term_stmt =
+                            (lc.starts_with("break") || lc.starts_with("return") ||
+                             lc.starts_with("discard") || lc.starts_with("continue"))
+                            && lc.ends_with(';');
+                        if is_term_stmt {
+                            last_term_bi = Some(bi);
+                        }
+                    }
+                    let delta = lc.chars().fold(0i32, |d, ch| match ch {
+                        '{' => d + 1, '}' => d - 1, _ => d,
+                    });
+                    inner_depth += delta;
+                }
+
+                // Emit case line as-is (includes `{`).
+                p2.push(raw.to_string());
+                // Emit block lines, skipping the last direct terminator.
+                for (bi, &li) in block_indices.iter().enumerate() {
+                    if last_term_bi == Some(bi) {
+                        continue; // omit so block has no inner terminator
+                    }
+                    p2.push(p1r[li].to_string());
+                }
+                // Emit case-level `break;` after the block's closing `}`.
+                p2.push(format!("{}break;", indent));
+                i = j;
+            } else {
+                p2.push(raw.to_string());
+                i += 1;
+            }
+        }
+    }
+
+    // ── Pass 3: missing `break` before switch-closing `}` ────────────────────
+    // Track which brace depths are switch bodies so we know when `}` closes a
+    // switch.  When it does and the prior code lacked a terminator, insert break.
+    //
+    // IMPORTANT: the switch keyword detection MUST happen BEFORE processing the
+    // characters of the same line, so that `switch (...) {` (all on one line)
+    // has its `{` pushed immediately.  Detecting it AFTER the char loop would
+    // leave the `{` un-pushed and let the sticky flag leak into subsequent code
+    // (including `#ifdef WR_FRAGMENT_SHADER` sections), causing spurious breaks.
+    let p2r: Vec<&str> = p2.iter().map(|s| s.as_str()).collect();
+    let n3 = p2r.len();
+    let mut p3: Vec<String> = Vec::with_capacity(n3 + 8);
+
+    let mut brace_depth: i32 = 0;
+    // Stack of brace depths where a switch body is open.
+    // Entry = brace depth AFTER the opening `{` of the switch body.
+    let mut sw_depths: Vec<i32> = Vec::new();
+    // Set to true when a `switch (...)` keyword is detected on the current or
+    // previous line.  The next `{` encountered will be the switch body open.
+    let mut next_open_is_switch = false;
+    let mut last_was_term = false; // last non-empty code line was a terminator
+
+    for raw in &p2r {
+        let code = strip_glsl_comment(raw.trim());
+
+        // ── Detect switch keyword BEFORE processing characters ────────────────
+        // This ensures that for `switch (...) {` all on one line the `{` is
+        // caught in the char loop below (not on the *next* iteration).
+        // Preprocessor directives (`#ifdef` etc.) are excluded so that the flag
+        // does not leak from an inactive `#ifdef WR_VERTEX_SHADER` block into
+        // the `#ifdef WR_FRAGMENT_SHADER` block or vice-versa.
+        if !code.starts_with('#') {
+            let is_switch_kw = code.starts_with("switch")
+                && code[6..].trim_start().starts_with('(');
+            if is_switch_kw {
+                next_open_is_switch = true;
+            }
+        }
+
+        // ── Character-by-character depth tracking ────────────────────────────
+        // Process `{` and `}` in order so that lines like `} else {` are
+        // handled correctly without false positives.
+        let indent = &raw[..raw.len() - raw.trim_start().len()];
+        let mut temp_depth = brace_depth;
+        for ch in code.chars() {
+            match ch {
+                '}' => {
+                    // Check BEFORE decrementing: sw_depths stores the depth
+                    // *after* the switch-opening `{`, which equals temp_depth
+                    // right when we're about to close that brace.
+                    if sw_depths.last() == Some(&temp_depth) {
+                        if !last_was_term {
+                            p3.push(format!("{}    break;", indent));
+                        }
+                        sw_depths.pop();
+                    }
+                    temp_depth -= 1;
+                }
+                '{' => {
+                    temp_depth += 1;
+                    if next_open_is_switch {
+                        sw_depths.push(temp_depth);
+                        next_open_is_switch = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        p3.push(raw.to_string());
+        brace_depth = temp_depth;
+
+        if !code.is_empty() && !code.starts_with("//") {
+            last_was_term = is_term(raw);
+        }
+    }
+
+    // ── Pass 4: move `default:` to the last position in each switch ──────────
+    // Some naga versions reject (or mishandle) a `default:` case that appears
+    // before other `case X:` labels.  Reorder each switch so `default:` is
+    // always the last case.
+    let p3r: Vec<&str> = p3.iter().map(|s| s.as_str()).collect();
+    let n4 = p3r.len();
+    let mut p4: Vec<String> = Vec::with_capacity(n4 + 4);
+    {
+        let mut i = 0;
+        while i < n4 {
+            let raw = p3r[i];
+            let code = strip_glsl_comment(raw.trim());
+
+            // Detect the start of a switch block (not inside a `#` directive).
+            let is_switch_start = !code.starts_with('#')
+                && code.starts_with("switch")
+                && code[6..].trim_start().starts_with('(');
+
+            if !is_switch_start {
+                p4.push(raw.to_string());
+                i += 1;
+                continue;
+            }
+
+            // Emit the switch header line(s) up to and including the opening `{`.
+            // Usually `switch (...) {` is all on one line.
+            let mut header_end = i;
+            {
+                let mut depth: i32 = 0;
+                let mut j = i;
+                while j < n4 {
+                    let lc = strip_glsl_comment(p3r[j].trim());
+                    for ch in lc.chars() {
+                        match ch {
+                            '{' => { depth += 1; }
+                            '}' => { depth -= 1; }
+                            _ => {}
+                        }
+                    }
+                    header_end = j;
+                    if depth > 0 { break; } // found the opening `{`
+                    j += 1;
+                }
+            }
+            for li in i..=header_end {
+                p4.push(p3r[li].to_string());
+            }
+            i = header_end + 1;
+
+            // Collect case sections at depth 0 (relative to switch body).
+            // A section = case/default label line(s) + body lines.
+            // Depth 0 = directly inside the switch body.
+            let mut sections: Vec<Vec<String>> = Vec::new();
+            let mut default_idx: Option<usize> = None;
+            let mut cur: Vec<String> = Vec::new();
+            let mut depth: i32 = 0;
+
+            loop {
+                if i >= n4 { break; }
+                let raw2 = p3r[i];
+                let lc = strip_glsl_comment(raw2.trim());
+
+                // Compute depth change.
+                let new_depth = lc.chars().fold(depth, |d, ch| match ch {
+                    '{' => d + 1, '}' => d - 1, _ => d
+                });
+
+                // Switch-closing `}` at depth 0.
+                if depth == 0 && new_depth < 0 {
+                    if !cur.is_empty() {
+                        if default_idx.is_none() {
+                            if let Some(fl) = cur.first() {
+                                let fc = strip_glsl_comment(fl.trim());
+                                if fc == "default:" || fc.starts_with("default:") {
+                                    default_idx = Some(sections.len());
+                                }
+                            }
+                        }
+                        sections.push(std::mem::take(&mut cur));
+                    }
+                    // Move default to end if it's not already last.
+                    if let Some(di) = default_idx {
+                        if di + 1 < sections.len() {
+                            let def_sec = sections.remove(di);
+                            sections.push(def_sec);
+                        }
+                    }
+                    for sec in sections {
+                        for ln in sec { p4.push(ln); }
+                    }
+                    p4.push(raw2.to_string()); // closing `}`
+                    i += 1;
+                    break;
+                }
+
+                // New case/default section starts at depth 0.
+                if depth == 0 && is_case(raw2) {
+                    if !cur.is_empty() {
+                        if default_idx.is_none() {
+                            if let Some(fl) = cur.first() {
+                                let fc = strip_glsl_comment(fl.trim());
+                                if fc == "default:" || fc.starts_with("default:") {
+                                    default_idx = Some(sections.len());
+                                }
+                            }
+                        }
+                        sections.push(std::mem::take(&mut cur));
+                    }
+                }
+
+                cur.push(raw2.to_string());
+                depth = new_depth;
+                i += 1;
+            }
+        }
+    }
+
+    // ── Pass 5: convert return-only switches to if-else chains ───────────────
+    // naga's fall_through mechanism only recognises Statement::Break.  A switch
+    // case ending with `return expr;` at case level leaves fall_through = true
+    // for non-last cases (Return ≠ Break in naga's internal check), causing
+    // Unimplemented("fall-through switch case block").
+    //
+    // If EVERY case in a switch has a body consisting solely of `return expr;`
+    // statements (possibly with comments or trailing break; from earlier passes),
+    // the switch is semantically equivalent to an if-else chain.  Converting it
+    // avoids the switch entirely, so no fall_through tracking is needed.
+    let p4r: Vec<&str> = p4.iter().map(|s| s.as_str()).collect();
+    let n5 = p4r.len();
+    let mut p5: Vec<String> = Vec::with_capacity(n5 + 8);
+
+    // Extract selector expression from `switch (EXPR) {`, or None.
+    let switch_expr = |raw: &str| -> Option<String> {
+        let code = strip_glsl_comment(raw.trim());
+        if code.starts_with('#') || !code.starts_with("switch") { return None; }
+        let rest = code[6..].trim_start();
+        if !rest.starts_with('(') { return None; }
+        let mut depth = 0i32;
+        for (k, ch) in rest.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => { depth -= 1; if depth == 0 { return Some(rest[1..k].trim().to_string()); } }
+                _ => {}
+            }
+        }
+        None
+    };
+
+    // True when a slice of case-body lines contains only return/break/comments.
+    let is_return_only_body = |body: &[String]| -> bool {
+        let has_return = body.iter().any(|ln| {
+            let c = strip_glsl_comment(ln.trim());
+            c.starts_with("return") && c.ends_with(';')
+        });
+        has_return && body.iter().all(|ln| {
+            let c = strip_glsl_comment(ln.trim());
+            c.is_empty()
+                || c.starts_with("//")
+                || (c.starts_with("return") && c.ends_with(';'))
+                || (c.starts_with("break") && c.ends_with(';'))
+        })
+    };
+
+    let mut i5 = 0;
+    while i5 < n5 {
+        let raw = p4r[i5];
+        if let Some(sel_expr) = switch_expr(raw) {
+            let sw_indent = raw[..raw.len() - raw.trim_start().len()].to_string();
+
+            // Advance past the switch header to find the opening `{`.
+            let mut hdr_depth: i32 = 0;
+            let mut j5 = i5;
+            loop {
+                let lc = strip_glsl_comment(p4r[j5].trim());
+                for ch in lc.chars() {
+                    match ch { '{' => hdr_depth += 1, '}' => hdr_depth -= 1, _ => {} }
+                }
+                j5 += 1;
+                if hdr_depth > 0 || j5 >= n5 { break; }
+            }
+
+            // Collect switch body lines until the matching closing `}`.
+            let mut body_depth: i32 = 1;
+            let mut sw_body: Vec<usize> = Vec::new();
+            while j5 < n5 && body_depth > 0 {
+                let lc = strip_glsl_comment(p4r[j5].trim());
+                let delta = lc.chars().fold(0i32, |d, ch| match ch {
+                    '{' => d + 1, '}' => d - 1, _ => d,
+                });
+                body_depth += delta;
+                if body_depth > 0 { sw_body.push(j5); }
+                j5 += 1;
+            }
+            // j5 now points to the line after the switch-closing `}`.
+
+            // Partition sw_body into case sections (label_line + body_lines).
+            let mut sections: Vec<Vec<String>> = Vec::new();
+            let mut cur_sec: Vec<String> = Vec::new();
+            let mut sec_depth: i32 = 0;
+            for &li in &sw_body {
+                let lc = strip_glsl_comment(p4r[li].trim());
+                if sec_depth == 0 && is_case(p4r[li]) {
+                    if !cur_sec.is_empty() { sections.push(std::mem::take(&mut cur_sec)); }
+                }
+                cur_sec.push(p4r[li].to_string());
+                let delta = lc.chars().fold(0i32, |d, ch| match ch {
+                    '{' => d + 1, '}' => d - 1, _ => d,
+                });
+                sec_depth += delta;
+            }
+            if !cur_sec.is_empty() { sections.push(cur_sec); }
+
+            // Determine whether all case bodies are return-only.
+            let all_return = !sections.is_empty() && sections.iter().all(|sec| {
+                is_return_only_body(&sec[1..])
+            });
+
+            if !all_return {
+                // Not a return-only switch: emit verbatim.
+                for k in i5..j5 { p5.push(p4r[k].to_string()); }
+                i5 = j5;
+                continue;
+            }
+
+            // Emit as an if-else chain.
+            let mut first_case = true;
+            for sec in &sections {
+                let label_code = strip_glsl_comment(sec[0].trim());
+                let is_default = label_code == "default:"
+                    || label_code.starts_with("default:");
+
+                // Body: all lines except bare `break;` added by earlier passes.
+                let body_emit: Vec<&String> = sec[1..].iter()
+                    .filter(|ln| {
+                        let c = strip_glsl_comment(ln.trim());
+                        !(c.starts_with("break") && c.ends_with(';'))
+                    })
+                    .collect();
+
+                if is_default {
+                    p5.push(format!("{}}} else {{", sw_indent));
+                    for bl in &body_emit { p5.push((*bl).clone()); }
+                } else {
+                    // Extract value: strip "case " prefix and trailing ":".
+                    let colon = label_code.rfind(':').unwrap_or(label_code.len());
+                    let val = label_code[5..colon].trim(); // skip "case "
+                    if first_case {
+                        p5.push(format!("{}if ({} == {}) {{", sw_indent, sel_expr, val));
+                        first_case = false;
+                    } else {
+                        p5.push(format!("{}}} else if ({} == {}) {{",
+                            sw_indent, sel_expr, val));
+                    }
+                    for bl in &body_emit { p5.push((*bl).clone()); }
+                }
+            }
+            // Close the last branch.
+            p5.push(format!("{}}}", sw_indent));
+            i5 = j5;
+        } else {
+            p5.push(raw.to_string());
+            i5 += 1;
+        }
+    }
+
+    p5.join("\n") + if src.ends_with('\n') { "\n" } else { "" }
+}
+
 /// Scan the leading tokens of a GLSL declaration line and return the first
 /// GLSL storage/interface qualifier found.
 ///
@@ -806,6 +1413,17 @@ fn preprocess_for_naga(src: &str, stage: naga::ShaderStage) -> String {
     // struct/uniform blocks where the per-line Pass 1 handler doesn't reach.
     result = strip_precision(&result);
 
+    // Fix GLSL switch fall-through patterns that naga's WGSL emitter rejects.
+    // fix_switch_fallthrough() applies up to five passes:
+    //   1. Cascade labels — bare `case A:` → duplicate next case's body.
+    //   2. Block-scoped terminators — `case X: { break; }` → remove inner break,
+    //      keep {} for variable scoping, add case-level break after }.
+    //   3. Missing break before switch-closing `}` → insert one.
+    //   4. `default:` in the middle of a switch → reorder to last position.
+    //   5. Return-only switches (all cases use `return expr;`) → convert to
+    //      if-else chain so no switch fall-through tracking is needed.
+    result = fix_switch_fallthrough(&result);
+
     // NOTE: move_definitions_before_prototypes() was tested here (Stage 4c) but
     // had to be deactivated.  WR's brush / ps_quad ForwardDependency pattern
     // involves definitions that depend on struct types defined in the same
@@ -929,6 +1547,14 @@ fn write_wgsl_shaders(
             // split sampler2D declarations, assign locations and bindings.
             let vert_glsl = preprocess_for_naga(&vert_glsl, naga::ShaderStage::Vertex);
             let frag_glsl = preprocess_for_naga(&frag_glsl, naga::ShaderStage::Fragment);
+
+            // DEBUG: dump preprocessed GLSL for failing shaders
+            for dump_name in &["ps_text_run", "cs_clip_box_shadow", "cs_border_solid", "cs_line_decoration", "cs_border_segment"] {
+                if (*shader_name).contains(dump_name) && (config.is_empty() || config.contains("TEXTURE_2D")) {
+                    let _ = std::fs::write(format!("/tmp/{}_vert.glsl", dump_name), &vert_glsl);
+                    let _ = std::fs::write(format!("/tmp/{}_frag.glsl", dump_name), &frag_glsl);
+                }
+            }
 
             let vert_wgsl = translate_to_wgsl(
                 &vert_glsl,
