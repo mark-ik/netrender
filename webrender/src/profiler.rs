@@ -23,10 +23,13 @@ use api::{ColorF, ColorU};
 #[cfg(feature = "debugger")]
 use api::debugger::{ProfileCounterUpdate, ProfileCounterId};
 use glyph_rasterizer::profiler::GlyphRasterizeProfiler;
+#[cfg(feature = "gl_backend")]
 use crate::renderer::DebugRenderer;
+#[cfg(feature = "gl_backend")]
 use crate::device::query::GpuTimer;
 use euclid::{Point2D, Rect, Size2D, vec2, default};
 use crate::internal_types::FastHashMap;
+#[cfg(feature = "gl_backend")]
 use crate::renderer::{FullFrameStats, MAX_VERTEX_TEXTURE_WIDTH, init::wr_has_been_initialized};
 use api::units::DeviceIntSize;
 use std::collections::vec_deque::VecDeque;
@@ -291,8 +294,11 @@ pub const NUM_PROFILER_EVENTS: usize = 141;
 
 pub struct Profiler {
     counters: Vec<Counter>,
+    #[cfg(feature = "gl_backend")]
     gpu_frames: ProfilerFrameCollection,
+    #[cfg(feature = "gl_backend")]
     frame_stats: ProfilerFrameCollection,
+    #[cfg(feature = "gl_backend")]
     slow_scroll_frames: ProfilerFrameCollection,
 
     start: u64,
@@ -518,8 +524,11 @@ impl Profiler {
         }
 
         Profiler {
+            #[cfg(feature = "gl_backend")]
             gpu_frames: ProfilerFrameCollection::new(),
+            #[cfg(feature = "gl_backend")]
             frame_stats: ProfilerFrameCollection::new(),
+            #[cfg(feature = "gl_backend")]
             slow_scroll_frames: ProfilerFrameCollection::new(),
 
             counters,
@@ -573,6 +582,7 @@ impl Profiler {
         false
     }
 
+    #[cfg(feature = "gl_backend")]
     fn classify_slow_cpu_frame(&mut self) {
         let is_apz = self.counters[RENDER_REASON_ANIMATED_PROPERTY].value > 0.5
             || self.counters[RENDER_REASON_APZ].value > 0.5;
@@ -669,9 +679,12 @@ impl Profiler {
             80.0
         );
 
+        #[cfg(feature = "gl_backend")]
         if slow_cpu {
             self.classify_slow_cpu_frame();
         }
+        #[cfg(not(feature = "gl_backend"))]
+        let _ = slow_cpu;
 
         let div = 100.0 / self.slow_frame_cpu_count as f64;
         self.counters[SLOW_FRAME_CPU_COUNT].set(self.slow_frame_cpu_count as f64);
@@ -691,6 +704,7 @@ impl Profiler {
         }
     }
 
+    #[cfg(feature = "gl_backend")]
     pub fn update_frame_stats(&mut self, stats: FullFrameStats) {
         if stats.gecko_display_list_time != 0.0 {
           self.frame_stats.push(stats.into());
@@ -717,6 +731,7 @@ impl Profiler {
         self.counters[GPU_TOTAL_MEM].set(total);
     }
 
+    #[cfg(feature = "gl_backend")]
     pub fn set_gpu_time_queries(&mut self, gpu_queries: Vec<GpuTimer>) {
         let mut gpu_time_ns = 0;
         for sample in &gpu_queries {
@@ -861,6 +876,7 @@ impl Profiler {
         self.counters[id].get()
     }
 
+    #[cfg(feature = "gl_backend")]
     fn draw_counters(
         counters: &[Counter],
         selected: &[usize],
@@ -942,6 +958,7 @@ impl Profiler {
         total_rect
     }
 
+    #[cfg(feature = "gl_backend")]
     fn draw_graph(
         counter: &Counter,
         x: f32,
@@ -1059,6 +1076,7 @@ impl Profiler {
     }
 
 
+    #[cfg(feature = "gl_backend")]
     fn draw_change_indicator(
         counter: &Counter,
         x: f32, y: f32,
@@ -1099,6 +1117,7 @@ impl Profiler {
         }
     }
 
+    #[cfg(feature = "gl_backend")]
     fn draw_bar(
         label: &str,
         label_color: ColorU,
@@ -1141,6 +1160,7 @@ impl Profiler {
         total_rect
     }
 
+    #[cfg(feature = "gl_backend")]
     fn draw_gpu_cache_bars(&self, x: f32, mut y: f32, text_buffer: &mut String, debug_renderer: &mut DebugRenderer) -> default::Rect<f32> {
         let color_updated = ColorU::new(0xFF, 0, 0, 0xFF);
         let color_free = ColorU::new(0, 0, 0xFF, 0xFF);
@@ -1196,6 +1216,7 @@ impl Profiler {
     }
 
     // Draws a frame graph for a given frame collection.
+    #[cfg(feature = "gl_backend")]
     fn draw_frame_graph(
         frame_collection: &ProfilerFrameCollection,
         x: f32, y: f32,
@@ -1326,6 +1347,7 @@ impl Profiler {
         bounding_rect
     }
 
+    #[cfg(feature = "gl_backend")]
     pub fn draw_profile(
         &mut self,
         _frame_index: u64,
@@ -1497,10 +1519,12 @@ pub static mut PROFILER_HOOKS: Option<&'static dyn ProfilerHooks> = None;
 /// This function must only ever be called before any WR instances
 /// have been created, or the hooks will not be set.
 pub fn set_profiler_hooks(hooks: Option<&'static dyn ProfilerHooks>) {
-    if !wr_has_been_initialized() {
-        unsafe {
-            PROFILER_HOOKS = hooks;
-        }
+    #[cfg(feature = "gl_backend")]
+    if wr_has_been_initialized() {
+        return;
+    }
+    unsafe {
+        PROFILER_HOOKS = hooks;
     }
 }
 
@@ -2009,15 +2033,18 @@ pub enum ShowAs {
     Int,
 }
 
+#[cfg(feature = "gl_backend")]
 struct ProfilerFrame {
     total_time: u64,
     samples: Vec<GpuTimer>,
 }
 
+#[cfg(feature = "gl_backend")]
 struct ProfilerFrameCollection {
     frames: VecDeque<ProfilerFrame>,
 }
 
+#[cfg(feature = "gl_backend")]
 impl ProfilerFrameCollection {
     fn new() -> Self {
         ProfilerFrameCollection {
@@ -2033,6 +2060,7 @@ impl ProfilerFrameCollection {
     }
 }
 
+#[cfg(feature = "gl_backend")]
 impl From<FullFrameStats> for ProfilerFrame {
   fn from(stats: FullFrameStats) -> ProfilerFrame {
     let new_sample = |time, label, color| -> GpuTimer {
@@ -2113,6 +2141,7 @@ impl CpuFrameTimings {
         }
     }
 
+    #[cfg(feature = "gl_backend")]
     fn to_profiler_frame(&self) -> ProfilerFrame {
         fn sample(time_ms: f64, label: &'static str, color: ColorF) -> GpuTimer {
             let time_ns = ms_to_ns(time_ms);

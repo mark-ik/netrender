@@ -265,3 +265,12 @@ pub fn get_shader_features(flags: ShaderFeatureFlags) -> ShaderFeatures {
 
     shaders
 }
+
+/// Returns the ShaderFeatureFlags to use when generating shaders for the wgpu
+/// backend.  Excludes extension-dependent and GL-only variant families
+/// (TEXTURE_RECT, TEXTURE_EXTERNAL*, ADVANCED_BLEND, DUAL_SOURCE_BLENDING)
+/// since those have no wgpu/WGSL equivalent.
+pub fn wgpu_shader_feature_flags() -> ShaderFeatureFlags {
+    ShaderFeatureFlags::DITHERING
+        | ShaderFeatureFlags::DEBUG
+}
