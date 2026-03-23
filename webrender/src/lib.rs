@@ -141,6 +141,11 @@ mod picture_textures;
 mod frame_allocator;
 mod bump_allocator;
 
+#[cfg(feature = "wgpu_backend")]
+pub use crate::device::{TextureFilter, WgpuDevice};
+#[cfg(feature = "wgpu_backend")]
+pub use crate::internal_types::RenderTargetInfo;
+
 ///
 pub mod intern;
 ///

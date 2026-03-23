@@ -50,8 +50,13 @@ path = "texture_cache_stress.rs"
 name = "yuv"
 path = "yuv.rs"
 
+[[bin]]
+name = "wgpu_headless"
+path = "wgpu_headless.rs"
+
 [features]
 debug = ["webrender/capture", "webrender/profiler"]
+wgpu_backend = ["webrender/wgpu_backend"]
 
 [dependencies]
 app_units = "0.7"
