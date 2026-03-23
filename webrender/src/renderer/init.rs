@@ -118,6 +118,10 @@ pub trait RenderBackendHooks {
     fn init_thread(&self);
 }
 
+pub enum RendererBackend {
+    Gl { gl: Rc<dyn gl::Gl> },
+}
+
 pub struct WebRenderOptions {
     pub resource_override_path: Option<PathBuf>,
     /// Whether to use shaders that have been optimized at build time.
@@ -310,7 +314,7 @@ impl Default for WebRenderOptions {
 /// ```
 /// [WebRenderOptions]: struct.WebRenderOptions.html
 pub fn create_webrender_instance(
-    gl: Rc<dyn gl::Gl>,
+    backend: RendererBackend,
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
@@ -323,7 +327,9 @@ pub fn create_webrender_instance(
     }
 
     let device = Device::new(
-        gl,
+        match backend {
+            RendererBackend::Gl { gl } => gl,
+        },
         options.crash_annotator.clone(),
         options.resource_override_path.clone(),
         options.use_optimized_shaders,
