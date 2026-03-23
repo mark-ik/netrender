@@ -148,12 +148,6 @@ impl RendererBackend {
         }
     }
 
-    fn into_device(self, config: DeviceConfig) -> Device {
-        match self {
-            RendererBackend::Gl { gl } => Device::new(gl, config),
-        }
-    }
-
     pub fn create_device(self, options: &mut WebRenderOptions) -> Device {
         self.prepare_options(options);
         let config = self.take_device_config(options);

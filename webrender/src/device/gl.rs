@@ -1457,7 +1457,7 @@ pub struct DeviceConfig {
 }
 
 impl Device {
-    pub fn new(mut gl: Rc<dyn gl::Gl>, config: DeviceConfig) -> Device {
+    fn new(mut gl: Rc<dyn gl::Gl>, config: DeviceConfig) -> Device {
         let DeviceConfig {
             crash_annotator,
             resource_override_path,
@@ -4262,6 +4262,14 @@ impl Device {
         }
 
         total
+    }
+}
+
+impl super::RendererBackend {
+    pub(super) fn into_device(self, config: DeviceConfig) -> Device {
+        match self {
+            super::RendererBackend::Gl { gl } => Device::new(gl, config),
+        }
     }
 }
 
