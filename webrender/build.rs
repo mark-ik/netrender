@@ -311,6 +311,236 @@ fn write_optimized_shader_file(
     }
 }
 
+/// Preprocess assembled WR GLSL source for naga's GLSL 4.50 frontend.
+///
+/// WR shaders are written for OpenGL 3.2 (#version 150) with GLES compatibility
+/// patterns. naga's GLSL frontend only accepts #version 450. This function:
+///
+/// 1. Replaces the #version line with `#version 450` so naga accepts the source.
+/// 2. Strips #extension directives — naga cannot handle unknown extensions even
+///    in dead preprocessor branches.
+/// 3. Strips standalone `precision ...;` statements — GLES-only, invalid in 4.50.
+/// 4. Adds `layout(binding=N, set=0)` to each `uniform` resource declaration that
+///    lacks an explicit binding — required by naga's Vulkan-style GLSL frontend.
+///    Binding indices are assigned per unique variable name for stability across
+///    #ifdef branches that redeclare the same sampler under different types.
+#[cfg(feature = "wgpu_backend")]
+fn preprocess_for_naga(src: &str) -> String {
+    use std::collections::HashMap;
+
+    let mut name_to_binding: HashMap<String, u32> = HashMap::new();
+    let mut next_binding: u32 = 0;
+
+    let mut lines = Vec::with_capacity(src.lines().count());
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        // Strip inline // comment for structural checks.
+        let code = match trimmed.find("//") {
+            Some(i) => trimmed[..i].trim_end(),
+            None => trimmed,
+        };
+        if trimmed.starts_with("#version") {
+            // Replace with the version naga's GLSL frontend accepts.
+            lines.push("#version 450".to_string());
+        } else if trimmed.starts_with("#extension") {
+            // Strip — naga rejects unknown extensions even in dead #ifdef blocks.
+        } else if code.starts_with("precision ") && code.ends_with(';') {
+            // Strip GLES-style precision statements — not valid in GLSL 4.50 core.
+        } else if code.starts_with("uniform ") && code.ends_with(';')
+            && !code.starts_with("uniform struct ")
+        {
+            // Add layout(binding=N, set=0) to resource declarations that lack one.
+            // The last whitespace-delimited token before ';' is the variable name.
+            let var_name = code.trim_end_matches(';')
+                .split_whitespace()
+                .last()
+                .unwrap_or("unknown")
+                .to_string();
+            let binding = *name_to_binding.entry(var_name).or_insert_with(|| {
+                let b = next_binding;
+                next_binding += 1;
+                b
+            });
+            let indent = &line[..line.len() - trimmed.len()];
+            lines.push(format!("{}layout(binding = {}, set = 0) {}", indent, binding, trimmed));
+        } else {
+            lines.push(line.to_string());
+        }
+    }
+    lines.join("\n")
+}
+
+/// Translate fully-assembled GLSL source to WGSL via naga 26.
+/// Translate fully-assembled GLSL source to WGSL via naga 26.
+/// Returns `Ok(wgsl)` on success, or `Err(diagnostic)` if naga rejects the shader.
+/// Callers should emit `cargo:warning` for failures and skip the variant.
+#[cfg(feature = "wgpu_backend")]
+fn translate_to_wgsl(
+    glsl: &str,
+    stage: naga::ShaderStage,
+    name: &str,
+    config: &str,
+) -> Result<String, String> {
+    use naga::{
+        back::wgsl,
+        front::glsl,
+        valid::{Capabilities, ValidationFlags, Validator},
+    };
+    let module = glsl::Frontend::default()
+        .parse(&glsl::Options::from(stage), glsl)
+        .map_err(|e| format!(
+            "GLSL->naga parse failed [shader={} config={:?}]: {:?}", name, config, e
+        ))?;
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .map_err(|e| format!(
+            "naga validation failed [shader={} config={:?}]: {:?}", name, config, e
+        ))?;
+    wgsl::write_string(&module, &info, wgsl::WriterFlags::empty()).map_err(|e| format!(
+        "WGSL emit failed [shader={} config={:?}]: {:?}", name, config, e
+    ))
+}
+
+/// Generate WGSL shaders for the wgpu backend and write the `WGSL_SHADERS`
+/// lazy_static entry into `shader_file`.
+#[cfg(feature = "wgpu_backend")]
+fn write_wgsl_shaders(
+    shader_dir: &Path,
+    out_dir: &str,
+    shader_file: &mut File,
+) -> Result<(), std::io::Error> {
+    use std::fs;
+    use webrender_build::shader_features::wgpu_shader_feature_flags;
+
+    let wgsl_dir = Path::new(out_dir).join("wgsl");
+    fs::create_dir_all(&wgsl_dir)?;
+
+    writeln!(
+        shader_file,
+        "  pub static ref WGSL_SHADERS: HashMap<(&'static str, &'static str), WgslShaderSource> = {{"
+    )?;
+    writeln!(shader_file, "    let mut shaders = HashMap::new();")?;
+
+    let features = get_shader_features(wgpu_shader_feature_flags());
+
+    // Sort for deterministic output.
+    let mut sorted_features: Vec<(&str, Vec<String>)> = features
+        .iter()
+        .map(|(&name, configs)| (name, configs.clone()))
+        .collect();
+    sorted_features.sort_by_key(|(name, _)| *name);
+
+    let mut entries: Vec<(String, String, PathBuf, PathBuf)> = Vec::new();
+    let mut success_count: u32 = 0;
+    let mut fail_count: u32 = 0;
+
+    for (shader_name, configs) in &sorted_features {
+        let mut sorted_configs = configs.clone();
+        sorted_configs.sort();
+        for config in &sorted_configs {
+            let feature_list: Vec<&str> = config
+                .split(',')
+                .filter(|f| !f.is_empty())
+                .collect();
+            let (vert_glsl, frag_glsl) = build_shader_strings(
+                ShaderVersion::Gl,
+                &feature_list,
+                shader_name,
+                &|f| Cow::Owned(shader_source_from_file(&shader_dir.join(format!("{}.glsl", f)))),
+            );
+
+            // Preprocess: fix version, strip unknown #extension directives,
+            // strip GLES precision statements.
+            let vert_glsl = preprocess_for_naga(&vert_glsl);
+            let frag_glsl = preprocess_for_naga(&frag_glsl);
+
+            let vert_wgsl = translate_to_wgsl(
+                &vert_glsl,
+                naga::ShaderStage::Vertex,
+                shader_name,
+                config,
+            );
+            let frag_wgsl = translate_to_wgsl(
+                &frag_glsl,
+                naga::ShaderStage::Fragment,
+                shader_name,
+                config,
+            );
+
+            // Filesystem-safe key: replace commas with underscores.
+            let safe_key = if config.is_empty() {
+                shader_name.to_string()
+            } else {
+                format!("{}__{}", shader_name, config.replace(',', "_"))
+            };
+
+            match (vert_wgsl, frag_wgsl) {
+                (Ok(vert), Ok(frag)) => {
+                    let vert_path = wgsl_dir.join(format!("{}_vs.wgsl", safe_key));
+                    let frag_path = wgsl_dir.join(format!("{}_fs.wgsl", safe_key));
+                    fs::write(&vert_path, &vert)?;
+                    fs::write(&frag_path, &frag)?;
+                    entries.push((
+                        shader_name.to_string(),
+                        config.clone(),
+                        vert_path,
+                        frag_path,
+                    ));
+                    success_count += 1;
+                }
+                (vert_res, frag_res) => {
+                    let msg = vert_res.err().or_else(|| frag_res.err()).unwrap_or_default();
+                    println!(
+                        "cargo:warning=WGSL translation skipped [{}#{}]: {}",
+                        shader_name, config, msg
+                    );
+                    fail_count += 1;
+                }
+            }
+        }
+    }
+
+    // Note: it is expected that many/all shaders fail in early stages because naga's
+    // GLSL frontend requires Vulkan-style separate texture+sampler while WR uses
+    // combined sampler2D.  Stage 4 will add the sampler2D→texture2D preprocessing
+    // pass to unlock full translation.
+    println!(
+        "cargo:warning=WGSL translation: {}/{} variants succeeded (0 expected until Stage 4)",
+        success_count,
+        success_count + fail_count
+    );
+
+    for (name, config, vert_path, frag_path) in &entries {
+        writeln!(
+            shader_file,
+            "    shaders.insert((\"{name}\", \"{config}\"), WgslShaderSource {{ \
+                vert_source: include_str!(\"{vp}\"), \
+                frag_source: include_str!(\"{fp}\") \
+            }});",
+            name = name,
+            config = config,
+            vp = escape_include_path(vert_path),
+            fp = escape_include_path(frag_path),
+        )?;
+    }
+
+    writeln!(shader_file, "    shaders")?;
+    writeln!(shader_file, "  }};")?;
+
+    Ok(())
+}
+
+/// Stub for GL builds: `write_wgsl_shaders` is never called in GL builds
+/// but must exist so the call-site in `main()` compiles in both configs.
+#[cfg(not(feature = "wgpu_backend"))]
+fn write_wgsl_shaders(
+    _shader_dir: &Path,
+    _out_dir: &str,
+    _shader_file: &mut File,
+) -> Result<(), std::io::Error> {
+    unreachable!()
+}
+
 fn main() -> Result<(), std::io::Error> {
     // Enforce that exactly one rendering backend is selected.
     let gl_backend = std::env::var("CARGO_FEATURE_GL_BACKEND").is_ok();
@@ -353,6 +583,12 @@ fn main() -> Result<(), std::io::Error> {
     writeln!(shader_file, "    pub frag_source: &'static str,")?;
     writeln!(shader_file, "    pub digest: &'static str,")?;
     writeln!(shader_file, "}}\n")?;
+    if !gl_backend {
+        writeln!(shader_file, "pub struct WgslShaderSource {{")?;
+        writeln!(shader_file, "    pub vert_source: &'static str,")?;
+        writeln!(shader_file, "    pub frag_source: &'static str,")?;
+        writeln!(shader_file, "}}\n")?;
+    }
     writeln!(shader_file, "lazy_static! {{")?;
 
     if gl_backend {
@@ -360,10 +596,10 @@ fn main() -> Result<(), std::io::Error> {
         writeln!(shader_file, "")?;
         write_optimized_shaders(&res_dir, &mut shader_file, &out_dir)?;
     } else {
-        // wgpu_backend: emit empty maps so shader_source still compiles.
-        // WGSL shader generation will be added here in Stage 3.
+        // wgpu_backend: emit empty GL maps; generate WGSL shaders via naga.
         writeln!(shader_file, "  pub static ref UNOPTIMIZED_SHADERS: HashMap<&'static str, SourceWithDigest> = HashMap::new();")?;
         writeln!(shader_file, "  pub static ref OPTIMIZED_SHADERS: HashMap<(ShaderVersion, &'static str), OptimizedSourceWithDigest> = HashMap::new();")?;
+        write_wgsl_shaders(&res_dir, &out_dir, &mut shader_file)?;
     }
     writeln!(shader_file, "}}")?;
 

@@ -11,7 +11,7 @@ edition = "2018"
 [features]
 default = ["static_freetype", "gl_backend"]
 gl_backend = ["dep:gleam"]
-wgpu_backend = []
+wgpu_backend = ["dep:naga"]
 profiler = ["tracy-rs/enable_profiler"]
 capture = ["api/serialize", "ron", "serde", "smallvec/serde", "etagere/serialization", "glyph_rasterizer/capture"]
 replay = ["api/deserialize", "ron", "serde", "smallvec/serde", "etagere/serialization", "glyph_rasterizer/replay"]
@@ -27,6 +27,7 @@ sw_compositor = ["swgl"]
 build-parallel = "0.1.2"
 glslopt = "0.1.11"
 webrender_build = { version = "0.0.2", path = "../webrender_build" }
+naga = { version = "26.0", features = ["glsl-in", "wgsl-out"], optional = true }
 
 [dependencies]
 bincode = "1.0"

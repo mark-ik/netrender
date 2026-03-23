@@ -246,3 +246,21 @@ pub fn get_shader_features(flags: ShaderFeatureFlags) -> ShaderFeatures {
     shaders
 }
 
+/// Returns the ShaderFeatureFlags to use when generating shaders for the wgpu
+/// backend.  Excludes extension-dependent variant families that have no WGSL
+/// or wgpu equivalent:
+///
+/// - `GLES` / `TEXTURE_EXTERNAL*` — `samplerExternalOES` /
+///   `__samplerExternal2DY2YEXT` have no WGSL counterpart.
+/// - `ADVANCED_BLEND_EQUATION` — requires `GL_KHR_blend_equation_advanced`.
+/// - `DUAL_SOURCE_BLENDING` — requires `GL_EXT_blend_func_extended` /
+///   `GL_ARB_explicit_attrib_location`.
+///
+/// Desktop GL (`#version 150`) is used as the GLSL input dialect so that
+/// naga's GLSL frontend gets well-formed source.
+pub fn wgpu_shader_feature_flags() -> ShaderFeatureFlags {
+    ShaderFeatureFlags::GL
+        | ShaderFeatureFlags::DITHERING
+        | ShaderFeatureFlags::DEBUG
+}
+
