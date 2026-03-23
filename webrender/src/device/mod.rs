@@ -106,6 +106,61 @@ pub trait GpuDevice {
     );
 }
 
+#[cfg(feature = "gl_backend")]
+use std::rc::Rc;
+
+#[cfg(feature = "gl_backend")]
+use crate::composite::CompositorConfig;
+#[cfg(feature = "gl_backend")]
+use crate::renderer::init::WebRenderOptions;
+#[cfg(feature = "gl_backend")]
+use gleam::gl::Gl as GlApi;
+
+#[cfg(feature = "gl_backend")]
+pub enum RendererBackend {
+    Gl { gl: Rc<dyn GlApi> },
+}
+
+#[cfg(feature = "gl_backend")]
+impl RendererBackend {
+    fn prepare_options(&self, options: &mut WebRenderOptions) {
+        match options.compositor_config {
+            CompositorConfig::Draw { .. } | CompositorConfig::Native { .. } => {}
+            CompositorConfig::Layer { .. } => {
+                options.surface_origin_is_top_left = true;
+            }
+        }
+    }
+
+    fn take_device_config(&self, options: &mut WebRenderOptions) -> DeviceConfig {
+        DeviceConfig {
+            crash_annotator: options.crash_annotator.take(),
+            resource_override_path: options.resource_override_path.clone(),
+            use_optimized_shaders: options.use_optimized_shaders,
+            upload_method: options.upload_method.clone(),
+            batched_upload_threshold: options.batched_upload_threshold,
+            cached_programs: options.cached_programs.take(),
+            allow_texture_storage_support: options.allow_texture_storage_support,
+            allow_texture_swizzling: options.allow_texture_swizzling,
+            dump_shader_source: options.dump_shader_source.take(),
+            surface_origin_is_top_left: options.surface_origin_is_top_left,
+            panic_on_gl_error: options.panic_on_gl_error,
+        }
+    }
+
+    fn into_device(self, config: DeviceConfig) -> Device {
+        match self {
+            RendererBackend::Gl { gl } => Device::new(gl, config),
+        }
+    }
+
+    pub fn create_device(self, options: &mut WebRenderOptions) -> Device {
+        self.prepare_options(options);
+        let config = self.take_device_config(options);
+        self.into_device(config)
+    }
+}
+
 // ── Backend modules ───────────────────────────────────────────────────────────
 
 #[cfg(feature = "gl_backend")]
