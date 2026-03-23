@@ -86,6 +86,46 @@ impl WgpuDevice {
     }
 }
 
+// ── WgpuDevice render-pass helpers ────────────────────────────────────────────
+
+impl WgpuDevice {
+    /// Clear a render-target texture to a solid RGBA colour.
+    ///
+    /// This is wgpu-specific (not part of `GpuDevice`) and is the first real
+    /// encoder / render-pass operation in the backend.  It proves that command
+    /// encoding and queue submission work end-to-end before draw calls land in
+    /// Stage 4c.
+    pub fn clear_texture(&self, texture: &WgpuTexture, color: [f64; 4]) {
+        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("clear_texture") },
+        );
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: color[0],
+                            g: color[1],
+                            b: color[2],
+                            a: color[3],
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        self.queue.submit([encoder.finish()]);
+    }
+}
+
 // ── GpuDevice implementation ──────────────────────────────────────────────────
 
 impl GpuDevice for WgpuDevice {
@@ -289,6 +329,25 @@ mod tests {
             TextureFilter::Linear,
             Some(RenderTargetInfo { has_depth: false }),
         );
+        dev.delete_texture(tex);
+    }
+
+    #[test]
+    fn clear_render_target() {
+        // Exercises the first real render-pass: encoder creation, clear load-op,
+        // and queue submission.  Confirms the GPU command infrastructure works
+        // before draw calls land in Stage 4c.
+        let Some(mut dev) = try_device() else { return };
+        let tex = dev.create_texture(
+            ImageBufferKind::Texture2D,
+            ImageFormat::BGRA8,
+            32, 32,
+            TextureFilter::Nearest,
+            Some(RenderTargetInfo { has_depth: false }),
+        );
+        // Clear to opaque red.  No assertion on pixel values — readback is
+        // added in Stage 4c alongside the first draw pass.
+        dev.clear_texture(&tex, [1.0, 0.0, 0.0, 1.0]);
         dev.delete_texture(tex);
     }
 }
