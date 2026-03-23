@@ -13,7 +13,7 @@ use crate::bump_allocator::ChunkPool;
 use crate::render_api::{RenderApiSender, FrameMsg};
 use crate::composite::{CompositorKind, CompositorConfig};
 use crate::device::{
-    Device, ProgramCache, RendererBackend, TextureFilter, UploadMethod, UploadPBOPool, VertexUsageHint,
+    Device, DeviceConfig, ProgramCache, RendererBackend, TextureFilter, UploadMethod, UploadPBOPool, VertexUsageHint,
 };
 use crate::frame_builder::FrameBuilderConfig;
 use crate::glyph_cache::GlyphCache;
@@ -225,6 +225,31 @@ impl WebRenderOptions {
     /// Having a limit here allows the drivers to more easily manage
     /// the PBOs for us.
     const MAX_INSTANCE_BUFFER_SIZE: usize = 0x20000; // actual threshold in macOS GL drivers
+
+    pub(crate) fn prepare_for_device_creation(&mut self) {
+        match self.compositor_config {
+            CompositorConfig::Draw { .. } | CompositorConfig::Native { .. } => {}
+            CompositorConfig::Layer { .. } => {
+                self.surface_origin_is_top_left = true;
+            }
+        }
+    }
+
+    pub(crate) fn take_device_config(&mut self) -> DeviceConfig {
+        DeviceConfig {
+            crash_annotator: self.crash_annotator.take(),
+            resource_override_path: self.resource_override_path.clone(),
+            use_optimized_shaders: self.use_optimized_shaders,
+            upload_method: self.upload_method.clone(),
+            batched_upload_threshold: self.batched_upload_threshold,
+            cached_programs: self.cached_programs.take(),
+            allow_texture_storage_support: self.allow_texture_storage_support,
+            allow_texture_swizzling: self.allow_texture_swizzling,
+            dump_shader_source: self.dump_shader_source.take(),
+            surface_origin_is_top_left: self.surface_origin_is_top_left,
+            panic_on_gl_error: self.panic_on_gl_error,
+        }
+    }
 }
 
 impl Default for WebRenderOptions {
