@@ -1442,21 +1442,36 @@ fn is_mali_valhall(renderer_name: &str) -> bool {
     renderer_name.starts_with("Mali-G") && !is_mali_bifrost(renderer_name)
 }
 
+pub struct DeviceConfig {
+    pub crash_annotator: Option<Box<dyn CrashAnnotator>>,
+    pub resource_override_path: Option<PathBuf>,
+    pub use_optimized_shaders: bool,
+    pub upload_method: UploadMethod,
+    pub batched_upload_threshold: i32,
+    pub cached_programs: Option<Rc<ProgramCache>>,
+    pub allow_texture_storage_support: bool,
+    pub allow_texture_swizzling: bool,
+    pub dump_shader_source: Option<String>,
+    pub surface_origin_is_top_left: bool,
+    pub panic_on_gl_error: bool,
+}
+
 impl Device {
-    pub fn new(
-        mut gl: Rc<dyn gl::Gl>,
-        crash_annotator: Option<Box<dyn CrashAnnotator>>,
-        resource_override_path: Option<PathBuf>,
-        use_optimized_shaders: bool,
-        upload_method: UploadMethod,
-        batched_upload_threshold: i32,
-        cached_programs: Option<Rc<ProgramCache>>,
-        allow_texture_storage_support: bool,
-        allow_texture_swizzling: bool,
-        dump_shader_source: Option<String>,
-        surface_origin_is_top_left: bool,
-        panic_on_gl_error: bool,
-    ) -> Device {
+    pub fn new(mut gl: Rc<dyn gl::Gl>, config: DeviceConfig) -> Device {
+        let DeviceConfig {
+            crash_annotator,
+            resource_override_path,
+            use_optimized_shaders,
+            upload_method,
+            batched_upload_threshold,
+            cached_programs,
+            allow_texture_storage_support,
+            allow_texture_swizzling,
+            dump_shader_source,
+            surface_origin_is_top_left,
+            panic_on_gl_error,
+        } = config;
+
         let mut max_texture_size = [0];
         unsafe {
             gl.get_integer_v(gl::MAX_TEXTURE_SIZE, &mut max_texture_size);

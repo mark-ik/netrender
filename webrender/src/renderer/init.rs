@@ -13,7 +13,7 @@ use crate::bump_allocator::ChunkPool;
 use crate::render_api::{RenderApiSender, FrameMsg};
 use crate::composite::{CompositorKind, CompositorConfig};
 use crate::device::{
-    UploadMethod, UploadPBOPool, VertexUsageHint, Device, ProgramCache, TextureFilter
+    Device, DeviceConfig, ProgramCache, TextureFilter, UploadMethod, UploadPBOPool, VertexUsageHint,
 };
 use crate::frame_builder::FrameBuilderConfig;
 use crate::glyph_cache::GlyphCache;
@@ -121,35 +121,19 @@ pub enum RendererBackend {
     Gl { gl: Rc<dyn gl::Gl> },
 }
 
-struct RendererDeviceConfig {
-    crash_annotator: Option<Box<dyn CrashAnnotator>>,
-    resource_override_path: Option<PathBuf>,
-    use_optimized_shaders: bool,
-    upload_method: UploadMethod,
-    batched_upload_threshold: i32,
-    cached_programs: Option<Rc<ProgramCache>>,
-    allow_texture_storage_support: bool,
-    allow_texture_swizzling: bool,
-    dump_shader_source: Option<String>,
-    surface_origin_is_top_left: bool,
-    panic_on_gl_error: bool,
-}
-
-impl RendererDeviceConfig {
-    fn from_options(options: &mut WebRenderOptions) -> Self {
-        RendererDeviceConfig {
-            crash_annotator: options.crash_annotator.take(),
-            resource_override_path: options.resource_override_path.clone(),
-            use_optimized_shaders: options.use_optimized_shaders,
-            upload_method: options.upload_method.clone(),
-            batched_upload_threshold: options.batched_upload_threshold,
-            cached_programs: options.cached_programs.take(),
-            allow_texture_storage_support: options.allow_texture_storage_support,
-            allow_texture_swizzling: options.allow_texture_swizzling,
-            dump_shader_source: options.dump_shader_source.take(),
-            surface_origin_is_top_left: options.surface_origin_is_top_left,
-            panic_on_gl_error: options.panic_on_gl_error,
-        }
+fn take_device_config(options: &mut WebRenderOptions) -> DeviceConfig {
+    DeviceConfig {
+        crash_annotator: options.crash_annotator.take(),
+        resource_override_path: options.resource_override_path.clone(),
+        use_optimized_shaders: options.use_optimized_shaders,
+        upload_method: options.upload_method.clone(),
+        batched_upload_threshold: options.batched_upload_threshold,
+        cached_programs: options.cached_programs.take(),
+        allow_texture_storage_support: options.allow_texture_storage_support,
+        allow_texture_swizzling: options.allow_texture_swizzling,
+        dump_shader_source: options.dump_shader_source.take(),
+        surface_origin_is_top_left: options.surface_origin_is_top_left,
+        panic_on_gl_error: options.panic_on_gl_error,
     }
 }
 
@@ -163,36 +147,9 @@ impl RendererBackend {
         }
     }
 
-    fn into_device(self, config: RendererDeviceConfig) -> Device {
-        let RendererDeviceConfig {
-            crash_annotator,
-            resource_override_path,
-            use_optimized_shaders,
-            upload_method,
-            batched_upload_threshold,
-            cached_programs,
-            allow_texture_storage_support,
-            allow_texture_swizzling,
-            dump_shader_source,
-            surface_origin_is_top_left,
-            panic_on_gl_error,
-        } = config;
-
+    fn into_device(self, config: DeviceConfig) -> Device {
         match self {
-            RendererBackend::Gl { gl } => Device::new(
-                gl,
-                crash_annotator,
-                resource_override_path,
-                use_optimized_shaders,
-                upload_method,
-                batched_upload_threshold,
-                cached_programs,
-                allow_texture_storage_support,
-                allow_texture_swizzling,
-                dump_shader_source,
-                surface_origin_is_top_left,
-                panic_on_gl_error,
-            ),
+            RendererBackend::Gl { gl } => Device::new(gl, config),
         }
     }
 }
@@ -395,7 +352,7 @@ pub fn create_webrender_instance(
     shaders: Option<&SharedShaders>,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
     backend.prepare_options(&mut options);
-    let device_config = RendererDeviceConfig::from_options(&mut options);
+    let device_config = take_device_config(&mut options);
     let device = backend.into_device(device_config);
 
     create_webrender_instance_with_device(device, notifier, options, shaders)
