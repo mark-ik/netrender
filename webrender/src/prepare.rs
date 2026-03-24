@@ -783,8 +783,7 @@ fn prepare_interned_prim_for_render(
                 let cache_key = if should_cache {
                     quad::cache_key(
                         data_handle.uid(),
-                        prim_spatial_node_index,
-                        frame_context.spatial_tree,
+                        quad_transform,
                         &prim_instance.vis.clip_chain,
                         frame_state.clip_store,
                     )
@@ -1032,8 +1031,7 @@ fn prepare_interned_prim_for_render(
                 let cache_key = if should_cache {
                     quad::cache_key(
                         data_handle.uid(),
-                        prim_spatial_node_index,
-                        frame_context.spatial_tree,
+                        quad_transform,
                         &prim_instance.vis.clip_chain,
                         frame_state.clip_store,
                     )

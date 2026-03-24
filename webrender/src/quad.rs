@@ -50,7 +50,7 @@ const MAX_TILES_PER_QUAD_Y: usize = 4;
 pub struct QuadCacheKey {
     pub prim: u64,
     pub clips: [u64; 3],
-    pub spatial_node: u64,
+    pub transform: [u32; 4],
 }
 
 /// Contains some transform-related information that is computed
@@ -1446,8 +1446,7 @@ fn adjust_indirect_pattern_resolution(
 
 pub fn cache_key(
     prim_uid: ItemUid,
-    prim_spatial_node_index: SpatialNodeIndex,
-    spatial_tree: &SpatialTree,
+    transform: &QuadTransformState,
     clip_chain: &ClipChainInstance,
     clip_store: &ClipStore,
 ) -> Option<QuadCacheKey> {
@@ -1456,6 +1455,17 @@ pub fn cache_key(
     if (clip_chain.clips_range.count as usize) >= CACHE_MAX_CLIPS {
         return None;
     }
+
+    let prim_spatial_node_index = transform.prim_spatial_node_index();
+    // The assumption is here is that the vast majority of transforms
+    // are 2d scale offsets and that 3d ones tend to be animated, so
+    // in order to keep the key small, we only attempt to cache when
+    // the transform is a 2d scale offset.
+    // This will miss some caching opportunities, but they should
+    // hopefully be rare.
+    let Some(transform) = transform.as_2d_scale_offset() else {
+        return None;
+    };
 
     let mut clip_uids = [!0; CACHE_MAX_CLIPS];
 
@@ -1467,14 +1477,15 @@ pub fn cache_key(
         }
     }
 
-    let spatial_uid = spatial_tree
-        .get_spatial_node(prim_spatial_node_index)
-        .uid;
-
     Some(QuadCacheKey {
         prim: prim_uid.get_uid(),
         clips: clip_uids,
-        spatial_node: spatial_uid,
+        transform: [
+            transform.scale.x.to_bits(),
+            transform.scale.y.to_bits(),
+            transform.offset.x.to_bits(),
+            transform.offset.y.to_bits(),
+        ],
     })
 }
 
