@@ -27,7 +27,7 @@ use crate::picture::{PrimitiveList, PrimitiveCluster, SurfaceIndex, SubpixelMode
 use crate::tile_cache::{SliceId, TileCacheInstance};
 use crate::prim_store::line_dec::MAX_LINE_DECORATION_RESOLUTION;
 use crate::prim_store::*;
-use crate::quad;
+use crate::quad::{self, QuadTransformState};
 use crate::prim_store::gradient::GradientGpuBlockBuilder;
 use crate::render_backend::DataStores;
 use crate::render_task_graph::RenderTaskId;
@@ -117,6 +117,8 @@ fn prepare_primitives(
     profile_scope!("prepare_primitives");
     let mut cmd_buffer_targets = Vec::new();
 
+    let mut quad_transform = QuadTransformState::new();
+
     for cluster in &mut prim_list.clusters {
         if !cluster.flags.contains(ClusterFlags::IS_VISIBLE) {
             continue;
@@ -125,6 +127,14 @@ fn prepare_primitives(
         pic_state.map_local_to_pic.set_target_spatial_node(
             cluster.spatial_node_index,
             frame_context.spatial_tree,
+        );
+
+        let device_pixel_scale = frame_state.surfaces[pic_context.surface_index.0].device_pixel_scale;
+        quad_transform.set(
+            cluster.spatial_node_index,
+            pic_context.raster_spatial_node_index,
+            frame_context.spatial_tree,
+            device_pixel_scale,
         );
 
         for prim_instance_index in cluster.prim_range() {
@@ -141,6 +151,7 @@ fn prepare_primitives(
                     store,
                     prim_instance_index,
                     cluster,
+                    &mut quad_transform,
                     pic_context,
                     pic_state,
                     frame_context,
@@ -197,6 +208,7 @@ fn prepare_prim_for_render(
     store: &mut PrimitiveStore,
     prim_instance_index: usize,
     cluster: &mut PrimitiveCluster,
+    quad_transform: &mut QuadTransformState,
     pic_context: &PictureContext,
     pic_state: &mut PictureState,
     frame_context: &FrameBuildingContext,
@@ -315,6 +327,7 @@ fn prepare_prim_for_render(
         prim_instance,
         cluster,
         plane_split_anchor,
+        quad_transform,
         pic_context,
         pic_state,
         frame_context,
@@ -334,6 +347,7 @@ fn prepare_interned_prim_for_render(
     prim_instance: &mut PrimitiveInstance,
     cluster: &mut PrimitiveCluster,
     plane_split_anchor: PlaneSplitAnchor,
+    quad_transform: &mut QuadTransformState,
     pic_context: &PictureContext,
     pic_state: &mut PictureState,
     frame_context: &FrameBuildingContext,
@@ -630,9 +644,8 @@ fn prepare_interned_prim_for_render(
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
                     &None,
-                    prim_spatial_node_index,
                     &prim_instance.vis.clip_chain,
-                    device_pixel_scale,
+                    quad_transform,
                     frame_context,
                     pic_context,
                     targets,
@@ -690,8 +703,7 @@ fn prepare_interned_prim_for_render(
                     image_data,
                     &prim_instance.vis.clip_chain,
                     prim_instance_index,
-                    prim_spatial_node_index,
-                    device_pixel_scale,
+                    quad_transform,
                     frame_context,
                     pic_context,
                     targets,
@@ -739,9 +751,8 @@ fn prepare_interned_prim_for_render(
                         prim_data.common.aligned_aa_edges,
                         prim_data.common.transformed_aa_edges,
                         prim_instance_index,
-                        prim_spatial_node_index,
                         &prim_instance.vis.clip_chain,
-                        device_pixel_scale,
+                        quad_transform,
                         frame_context,
                         pic_context,
                         targets,
@@ -791,9 +802,8 @@ fn prepare_interned_prim_for_render(
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
                     &cache_key,
-                    prim_spatial_node_index,
                     &prim_instance.vis.clip_chain,
-                    device_pixel_scale,
+                    quad_transform,
                     frame_context,
                     pic_context,
                     targets,
@@ -908,9 +918,8 @@ fn prepare_interned_prim_for_render(
                         prim_data.common.aligned_aa_edges,
                         prim_data.common.transformed_aa_edges,
                         prim_instance_index,
-                        prim_spatial_node_index,
                         &prim_instance.vis.clip_chain,
-                        device_pixel_scale,
+                        quad_transform,
                         frame_context,
                         pic_context,
                         targets,
@@ -930,9 +939,8 @@ fn prepare_interned_prim_for_render(
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
                     &None,
-                    prim_spatial_node_index,
                     &prim_instance.vis.clip_chain,
-                    device_pixel_scale,
+                    quad_transform,
                     frame_context,
                     pic_context,
                     targets,
@@ -987,9 +995,8 @@ fn prepare_interned_prim_for_render(
                         prim_data.common.aligned_aa_edges,
                         prim_data.common.transformed_aa_edges,
                         prim_instance_index,
-                        prim_spatial_node_index,
                         &prim_instance.vis.clip_chain,
-                        device_pixel_scale,
+                        quad_transform,
                         frame_context,
                         pic_context,
                         targets,
@@ -1044,9 +1051,8 @@ fn prepare_interned_prim_for_render(
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
                     &cache_key,
-                    prim_spatial_node_index,
                     &prim_instance.vis.clip_chain,
-                    device_pixel_scale,
+                    quad_transform,
                     frame_context,
                     pic_context,
                     targets,

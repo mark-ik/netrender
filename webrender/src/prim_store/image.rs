@@ -14,6 +14,7 @@ use crate::command_buffer::CommandBufferIndex;
 use crate::composite::CompositorSurfaceKind;
 use crate::gpu_types::{ImageBrushPrimitiveData, YuvPrimitive};
 use crate::pattern::image::ImagePattern;
+use crate::quad::QuadTransformState;
 use crate::renderer::{GpuBufferBuilderF, GpuBufferWriterF};
 use crate::scene_building::{CreateShadow, IsVisible};
 use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureContext};
@@ -438,8 +439,7 @@ pub fn prepare_image_quads(
     image_data: &ImageData,
     clip_chain: &ClipChainInstance,
     prim_instance_index: PrimitiveInstanceIndex,
-    prim_spatial_node_index: SpatialNodeIndex,
-    device_pixel_scale: DevicePixelScale,
+    quad_transform: &mut QuadTransformState,
     frame_context: &FrameBuildingContext,
     pic_context: &PictureContext,
     targets: &[CommandBufferIndex],
@@ -483,8 +483,7 @@ pub fn prepare_image_quads(
                 image_data,
                 clip_chain,
                 prim_instance_index,
-                prim_spatial_node_index,
-                device_pixel_scale,
+                quad_transform,
                 frame_context,
                 pic_context,
                 targets,
@@ -507,8 +506,7 @@ pub fn prepare_non_tiled_image_quad(
     image_data: &ImageData,
     clip_chain: &ClipChainInstance,
     prim_instance_index: PrimitiveInstanceIndex,
-    prim_spatial_node_index: SpatialNodeIndex,
-    device_pixel_scale: DevicePixelScale,
+    quad_transform: &mut QuadTransformState,
     frame_context: &FrameBuildingContext,
     pic_context: &PictureContext,
     targets: &[CommandBufferIndex],
@@ -530,9 +528,8 @@ pub fn prepare_non_tiled_image_quad(
         common_data.transformed_aa_edges,
         prim_instance_index,
         &None,
-        prim_spatial_node_index,
         clip_chain,
-        device_pixel_scale,
+        quad_transform,
         frame_context,
         pic_context,
         targets,

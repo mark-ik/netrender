@@ -53,6 +53,87 @@ pub struct QuadCacheKey {
     pub spatial_node: u64,
 }
 
+/// Contains some transform-related information that is computed
+/// per primitive cluster.
+pub struct QuadTransformState {
+    map_prim_to_raster: CoordinateSpaceMapping<LayoutPixel, LayoutPixel>,
+    as_scale_offset: Option<ScaleOffset>, // local-to-device
+    is_2d_axis_aligned: bool,
+    prim_spatial_node: SpatialNodeIndex,
+    raster_spatial_node: SpatialNodeIndex,
+    device_pixel_scale: DevicePixelScale,
+}
+
+impl QuadTransformState {
+    pub fn new() -> QuadTransformState {
+        QuadTransformState {
+            map_prim_to_raster: CoordinateSpaceMapping::Local,
+            as_scale_offset: Some(ScaleOffset::identity()),
+            is_2d_axis_aligned: true,
+            prim_spatial_node: SpatialNodeIndex::INVALID,
+            raster_spatial_node: SpatialNodeIndex::INVALID,
+            device_pixel_scale: DevicePixelScale::identity(),
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        src_node: SpatialNodeIndex,
+        dst_node: SpatialNodeIndex,
+        spatial_tree: &SpatialTree,
+        scale: DevicePixelScale,
+    ) {
+        if self.prim_spatial_node == src_node && self.raster_spatial_node == dst_node {
+            return;
+        }
+
+        self.map_prim_to_raster = spatial_tree.get_relative_transform(src_node, dst_node);
+
+        self.as_scale_offset = self.map_prim_to_raster
+            .as_2d_scale_offset()
+            .map(|t| t.then_scale(scale.0));
+
+        self.is_2d_axis_aligned = self.as_scale_offset.is_some()
+            || self.map_prim_to_raster.is_2d_axis_aligned();
+
+        self.prim_spatial_node = src_node;
+        self.raster_spatial_node = dst_node;
+    }
+
+    pub fn is_2d_scale_offset(&self) -> bool {
+        self.as_scale_offset.is_some()
+    }
+
+    pub fn is_2d_axis_aligned(&self) -> bool {
+        self.is_2d_axis_aligned
+    }
+
+    // The local to device transform as a scale+offset transform if it
+    // can be represented as such.
+    pub fn as_2d_scale_offset(&self) -> Option<&ScaleOffset> {
+        self.as_scale_offset.as_ref()
+    }
+
+    // X and Y scale facotrs of the local to device transform.
+    pub fn scale_factors(&self) -> (f32, f32) {
+        let s = self.map_prim_to_raster.scale_factors();
+
+        (s.0 * self.device_pixel_scale().0, s.1 * self.device_pixel_scale().0)
+    }
+
+    pub fn prim_spatial_node_index(&self) -> SpatialNodeIndex {
+        self.prim_spatial_node
+    }
+
+    pub fn raster_spatial_node_index(&self) -> SpatialNodeIndex {
+        self.raster_spatial_node
+    }
+
+    pub fn device_pixel_scale(&self) -> DevicePixelScale {
+        self.device_pixel_scale
+    }
+}
+
 /// Describes how clipping affects the rendering of a quad primitive.
 ///
 /// As a general rule, parts of the quad that require masking are prerendered in an
@@ -92,9 +173,8 @@ pub fn prepare_quad(
     transfomed_aa_edges: EdgeMask,
     prim_instance_index: PrimitiveInstanceIndex,
     cache_key: &Option<QuadCacheKey>,
-    prim_spatial_node_index: SpatialNodeIndex,
     clip_chain: &ClipChainInstance,
-    device_pixel_scale: DevicePixelScale,
+    transform: &mut QuadTransformState,
 
     frame_context: &FrameBuildingContext,
     pic_context: &PictureContext,
@@ -121,23 +201,14 @@ pub fn prepare_quad(
         },
     );
 
-    // TODO: It would be worth hoisting this out of prepare_quad and
-    // prepare_repeatable_quad.
-    let map_prim_to_raster = pattern_ctx.spatial_tree.get_relative_transform(
-        prim_spatial_node_index,
-        pic_context.raster_spatial_node_index,
-    );
-
-    let prim_is_scale_offset = map_prim_to_raster.is_2d_scale_translation();
-
     let strategy = match cache_key {
         Some(_) => QuadRenderStrategy::Indirect,
         None => get_prim_render_strategy(
-            prim_spatial_node_index,
+            transform.prim_spatial_node_index(),
             clip_chain,
             frame_state.clip_store,
             interned_clips,
-            prim_is_scale_offset,
+            transform.is_2d_scale_offset(),
             pattern_ctx.spatial_tree,
         ),
     };
@@ -150,11 +221,9 @@ pub fn prepare_quad(
         transfomed_aa_edges,
         prim_instance_index,
         cache_key,
-        prim_spatial_node_index,
         clip_chain,
-        device_pixel_scale,
 
-        &map_prim_to_raster,
+        transform,
         &pattern_ctx,
         pic_context,
         targets,
@@ -174,9 +243,8 @@ pub fn prepare_repeatable_quad(
     transfomed_aa_edges: EdgeMask,
     prim_instance_index: PrimitiveInstanceIndex,
     cache_key: &Option<QuadCacheKey>,
-    prim_spatial_node_index: SpatialNodeIndex,
     clip_chain: &ClipChainInstance,
-    device_pixel_scale: DevicePixelScale,
+    transform: &mut QuadTransformState,
 
     frame_context: &FrameBuildingContext,
     pic_context: &PictureContext,
@@ -203,13 +271,6 @@ pub fn prepare_repeatable_quad(
         },
     );
 
-    let map_prim_to_raster = pattern_ctx.spatial_tree.get_relative_transform(
-        prim_spatial_node_index,
-        pic_context.raster_spatial_node_index,
-    );
-
-    let prim_is_scale_offset = map_prim_to_raster.is_2d_scale_translation();
-
     // This could move back into preapre_quad_impl if it took the tile's
     // coverage rect into account rather than the whole primitive's, but
     // for now it does the latter so we might as well not do the work
@@ -217,11 +278,11 @@ pub fn prepare_repeatable_quad(
     let strategy = match cache_key {
         Some(_) => QuadRenderStrategy::Indirect,
         None => get_prim_render_strategy(
-            prim_spatial_node_index,
+            transform.prim_spatial_node_index(),
             clip_chain,
             frame_state.clip_store,
             interned_clips,
-            prim_is_scale_offset,
+            transform.is_2d_scale_offset(),
             pattern_ctx.spatial_tree,
         ),
     };
@@ -239,10 +300,8 @@ pub fn prepare_repeatable_quad(
             transfomed_aa_edges,
             prim_instance_index,
             &cache_key,
-            prim_spatial_node_index,
             clip_chain,
-            device_pixel_scale,
-            &map_prim_to_raster,
+            transform,
             &pattern_ctx,
             pic_context,
             targets,
@@ -259,8 +318,8 @@ pub fn prepare_repeatable_quad(
         stretch_size,
     );
 
-    let scales = map_prim_to_raster.scale_factors();
-    let mut indirect_transform = ScaleOffset::from_scale(scales.into()).then_scale(device_pixel_scale.0);
+    let scales = transform.scale_factors();
+    let mut indirect_transform = ScaleOffset::from_scale(scales.into());
     let mut surface_rect: DeviceRect = indirect_transform.map_rect(&pattern_rect);
 
     // If the source pattern is an image, we can repeat it directly using the repeat
@@ -289,8 +348,8 @@ pub fn prepare_repeatable_quad(
                 );
 
                 let Some(task_id) = prepare_indirect_pattern(
-                    prim_spatial_node_index,
-                    pic_context.raster_spatial_node_index,
+                    transform.prim_spatial_node_index(),
+                    transform.raster_spatial_node_index(),
                     &pattern_rect,
                     &pattern_rect,
                     &surface_rect,
@@ -340,10 +399,8 @@ pub fn prepare_repeatable_quad(
             transfomed_aa_edges,
             prim_instance_index,
             &None,
-            prim_spatial_node_index,
             clip_chain,
-            device_pixel_scale,
-            &map_prim_to_raster,
+            transform,
             &pattern_ctx,
             pic_context,
             targets,
@@ -361,7 +418,7 @@ pub fn prepare_repeatable_quad(
         clip_chain,
         frame_state.current_dirty_region().combined,
         frame_state.current_dirty_region().visibility_spatial_node,
-        prim_spatial_node_index,
+        transform.prim_spatial_node_index(),
         frame_context.spatial_tree,
     ).intersection_unchecked(&clip_chain.local_clip_rect);
 
@@ -390,10 +447,8 @@ pub fn prepare_repeatable_quad(
             // Bug 2017832 - Caching breaks manually repeated patterns
             // with SWGL for some reason.
             &None,
-            prim_spatial_node_index,
             clip_chain,
-            device_pixel_scale,
-            &map_prim_to_raster,
+            transform,
             &pattern_ctx,
             pic_context,
             targets,
@@ -412,9 +467,8 @@ pub fn prepare_border_image_nine_patch(
     aligned_aa_edges: EdgeMask,
     transfomed_aa_edges: EdgeMask,
     prim_instance_index: PrimitiveInstanceIndex,
-    prim_spatial_node_index: SpatialNodeIndex,
     clip_chain: &ClipChainInstance,
-    device_pixel_scale: DevicePixelScale,
+    transform: &mut QuadTransformState,
 
     frame_context: &FrameBuildingContext,
     pic_context: &PictureContext,
@@ -441,28 +495,19 @@ pub fn prepare_border_image_nine_patch(
         },
     );
 
-    // TODO: It would be worth hoisting this out of prepare_quad and
-    // prepare_repeatable_quad.
-    let map_prim_to_raster = pattern_ctx.spatial_tree.get_relative_transform(
-        prim_spatial_node_index,
-        pic_context.raster_spatial_node_index,
-    );
-
-    let prim_is_scale_offset = map_prim_to_raster.is_2d_scale_translation();
-
     let strategy = get_prim_render_strategy(
-        prim_spatial_node_index,
+        transform.prim_spatial_node_index(),
         clip_chain,
         frame_state.clip_store,
         interned_clips,
-        prim_is_scale_offset,
+        transform.is_2d_scale_offset(),
         pattern_ctx.spatial_tree,
     );
 
     // The indirect transform drives the resolution at which each segment is going
     // going to be rasterized in intermediate render tasks.
-    let scales = map_prim_to_raster.scale_factors();
-    let base_indirect_transform = ScaleOffset::from_scale(scales.into()).then_scale(device_pixel_scale.0);
+    let scales = transform.scale_factors();
+    let base_indirect_transform = ScaleOffset::from_scale(scales.into());
 
     nine_patch.for_each_segment(local_rect, &mut|dst_rect, src_rect, side, _repeat_h, _repeat_v| {
         // First find the sub-rect of the source pattern that this segment is using.
@@ -496,8 +541,8 @@ pub fn prepare_border_image_nine_patch(
         );
 
         let Some(task_id) = prepare_indirect_pattern(
-            prim_spatial_node_index,
-            pic_context.raster_spatial_node_index,
+            transform.prim_spatial_node_index(),
+            transform.raster_spatial_node_index(),
             &pattern_rect,
             &pattern_rect,
             &surface_rect,
@@ -526,11 +571,9 @@ pub fn prepare_border_image_nine_patch(
             transfomed_aa_edges & side,
             prim_instance_index,
             &None,
-            prim_spatial_node_index,
             clip_chain,
-            device_pixel_scale,
 
-            &map_prim_to_raster,
+            transform,
             &pattern_ctx,
             pic_context,
             targets,
@@ -550,11 +593,9 @@ fn prepare_quad_impl(
     transfomed_aa_edges: EdgeMask,
     prim_instance_index: PrimitiveInstanceIndex,
     cache_key: &Option<QuadCacheKey>,
-    prim_spatial_node_index: SpatialNodeIndex,
     clip_chain: &ClipChainInstance,
-    device_pixel_scale: DevicePixelScale,
 
-    map_prim_to_raster: &CoordinateSpaceMapping<LayoutPixel, LayoutPixel>,
+    transform: &mut QuadTransformState,
     ctx: &PatternBuilderContext,
     pic_context: &PictureContext,
     targets: &[CommandBufferIndex],
@@ -568,24 +609,19 @@ fn prepare_quad_impl(
     // space to the shaders. Otherwise, the geometry is sent to the shaders in
     // layout space along with a transform.
 
-    let local_to_device_scale_offset = map_prim_to_raster
-        .as_2d_scale_offset()
-        .map(|t| t.then_scale(device_pixel_scale.0));
-
-    let transform_id = if local_to_device_scale_offset.is_some() {
+    let transform_id = if transform.is_2d_scale_offset() {
         GpuTransformId::IDENTITY
     } else {
         frame_state.transforms.gpu.get_id_with_post_scale(
-            prim_spatial_node_index,
-            pic_context.raster_spatial_node_index,
-            device_pixel_scale.get(),
+            transform.prim_spatial_node_index(),
+            transform.raster_spatial_node_index(),
+            transform.device_pixel_scale().get(),
             ctx.spatial_tree,
         )
     };
 
-
-    let prim_is_2d_scale_translation = local_to_device_scale_offset.is_some();
-    let prim_is_2d_axis_aligned = map_prim_to_raster.is_2d_axis_aligned();
+    let prim_is_2d_scale_translation = transform.is_2d_scale_offset();
+    let prim_is_2d_axis_aligned = transform.is_2d_axis_aligned();
 
     let mut quad_flags = QuadFlags::empty();
 
@@ -621,7 +657,7 @@ fn prepare_quad_impl(
             &local_rect,
             &clip_chain.local_clip_rect,
             &DeviceRect::max_rect(),
-            local_to_device_scale_offset.as_ref(),
+            transform.as_2d_scale_offset(),
             round_edges,
             pattern,
         );
@@ -641,7 +677,7 @@ fn prepare_quad_impl(
                 quad_flags,
                 aa_flags,
             ),
-            prim_spatial_node_index,
+            transform.prim_spatial_node_index(),
             targets,
         );
 
@@ -669,7 +705,7 @@ fn prepare_quad_impl(
 
     // TODO: we are making the assumption that raster space and world space have the same
     // scale. I think that it is the case, but it's not super clean.
-    let device_scale: Scale<f32, RasterPixel, DevicePixel> = Scale::new(surface.device_pixel_scale.0);
+    let device_scale: Scale<f32, RasterPixel, DevicePixel> = Scale::new(transform.device_pixel_scale.0);
 
     // Rounding is important here because clipped_surface_rect.min may be used as the origin
     // of render tasks. Fractional values would introduce fractional offsets in the render tasks.
@@ -682,13 +718,13 @@ fn prepare_quad_impl(
         QuadRenderStrategy::Direct => {}
         QuadRenderStrategy::Indirect => {
             let Some(task_id) = prepare_indirect_pattern(
-                prim_spatial_node_index,
-                pic_context.raster_spatial_node_index,
+                transform.prim_spatial_node_index(),
+                transform.raster_spatial_node_index(),
                 local_rect,
                 &clip_chain.local_clip_rect,
                 &clipped_surface_rect,
-                local_to_device_scale_offset.as_ref(),
-                device_pixel_scale,
+                transform.as_2d_scale_offset(),
+                transform.device_pixel_scale(),
                 transform_id,
                 pattern,
                 quad_flags,
@@ -722,11 +758,8 @@ fn prepare_quad_impl(
                 quad_flags,
                 aa_flags,
                 clip_chain,
-                prim_spatial_node_index,
                 transform_id,
-                map_prim_to_raster,
-                device_pixel_scale,
-                &local_to_device_scale_offset,
+                transform,
                 pic_context,
                 ctx,
                 interned_clips,
@@ -747,11 +780,8 @@ fn prepare_quad_impl(
                 quad_flags,
                 aa_flags,
                 clip_chain.clips_range,
-                prim_spatial_node_index,
-                pic_context.raster_spatial_node_index,
+                transform,
                 transform_id,
-                local_to_device_scale_offset.as_ref().unwrap(),
-                device_pixel_scale,
                 ctx,
                 interned_clips,
                 frame_state,
@@ -861,11 +891,8 @@ fn prepare_nine_patch(
     mut quad_flags: QuadFlags,
     aa_flags: EdgeMask,
     clips_range: ClipNodeRange,
-    prim_spatial_node_index: SpatialNodeIndex,
-    raster_spatial_node_index: SpatialNodeIndex,
+    transform: &mut QuadTransformState,
     gpu_transform: GpuTransformId,
-    local_to_device: &ScaleOffset,
-    device_pixel_scale: DevicePixelScale,
     ctx: &PatternBuilderContext,
     interned_clips: &DataStore<ClipIntern>,
     frame_state: &mut FrameBuildingState,
@@ -876,6 +903,7 @@ fn prepare_nine_patch(
     // Nine-patch segments that need it are drawn in a render task and then composited into the
     // destination picture.
 
+    let local_to_device = transform.as_2d_scale_offset().unwrap();
     let mut device_prim_rect: DeviceRect = local_to_device.map_rect(&local_rect);
     let mut device_clip_rect: DeviceRect = local_to_device
         .map_rect(&local_clip_rect)
@@ -986,13 +1014,13 @@ fn prepare_nine_patch(
                     segment_device_rect.size(),
                     segment_device_rect.min.to_f32(),
                     clips_range,
-                    prim_spatial_node_index,
-                    raster_spatial_node_index,
+                    transform.prim_spatial_node_index(),
+                    transform.raster_spatial_node_index(),
                     indirect_prim_address,
                     gpu_transform,
                     aa_flags,
                     quad_flags,
-                    device_pixel_scale,
+                    transform.device_pixel_scale(),
                     false,
                     None,
                     ctx.spatial_tree,
@@ -1048,11 +1076,8 @@ fn prepare_tiles(
     mut quad_flags: QuadFlags,
     aa_flags: EdgeMask,
     clip_chain: &ClipChainInstance,
-    prim_spatial_node_index: SpatialNodeIndex,
     gpu_transform: GpuTransformId,
-    map_prim_to_raster: &CoordinateSpaceMapping<LayoutPixel, LayoutPixel>,
-    device_pixel_scale: DevicePixelScale,
-    local_to_device_scale_offset: &Option<ScaleOffset>,
+    transform: &mut QuadTransformState,
     pic_context: &PictureContext,
     ctx: &PatternBuilderContext,
     interned_clips: &DataStore<ClipIntern>,
@@ -1069,13 +1094,13 @@ fn prepare_tiles(
 
     let surface = &mut frame_state.surfaces[pic_context.surface_index.0];
     surface.map_local_to_picture.set_target_spatial_node(
-        prim_spatial_node_index,
+        transform.prim_spatial_node_index(),
         ctx.spatial_tree,
     );
 
     let unclipped_surface_rect = device_clip_rect.round_out();
 
-    let force_masks = local_to_device_scale_offset.is_none();
+    let force_masks = !transform.is_2d_scale_offset();
     // Set up the tile classifier for the params of this quad
     scratch.quad_tile_classifier.reset(
         x_tiles as usize,
@@ -1085,7 +1110,7 @@ fn prepare_tiles(
     );
 
     let mut clip_to_raster = SpaceMapper::<LayoutPixel, RasterPixel>::new(
-        pic_context.raster_spatial_node_index,
+        transform.raster_spatial_node_index(),
         RasterRect::max_rect(),
     );
 
@@ -1097,7 +1122,7 @@ fn prepare_tiles(
         clip_to_raster.set_target_spatial_node(clip_instance.spatial_node_index, ctx.spatial_tree);
 
         let transform = match clip_to_raster.as_2d_scale_offset() {
-            Some(transform) => transform.then_scale(device_pixel_scale.0),
+            Some(transform) => transform,
             None => {
                 // If the clip transform is not axis-aligned, just assume the entire primitive
                 // is affected by the clip, for now.
@@ -1186,7 +1211,7 @@ fn prepare_tiles(
         &local_rect,
         &clip_chain.local_clip_rect,
         device_clip_rect,
-        local_to_device_scale_offset.as_ref(),
+        transform.as_2d_scale_offset(),
         !aa_flags,
         pattern,
     );
@@ -1226,20 +1251,20 @@ fn prepare_tiles(
                 quad_flags |= QuadFlags::IS_OPAQUE;
             }
 
-            let needs_scissor = local_to_device_scale_offset.is_none();
+            let needs_scissor = !transform.is_2d_scale_offset();
             let task_id = add_render_task_with_mask(
                 pattern,
                 local_rect,
                 tile_size,
                 tile.rect.min,
                 clip_chain.clips_range,
-                prim_spatial_node_index,
-                pic_context.raster_spatial_node_index,
+                transform.prim_spatial_node_index(),
+                transform.raster_spatial_node_index(),
                 indirect_prim_address,
                 gpu_transform,
                 aa_flags,
                 quad_flags,
-                device_pixel_scale,
+                transform.device_pixel_scale(),
                 needs_scissor,
                 None,
                 ctx.spatial_tree,
@@ -1255,9 +1280,8 @@ fn prepare_tiles(
     }
 
     if !scratch.quad_direct_segments.is_empty() {
-        let local_to_device = map_prim_to_raster.as_2d_scale_offset()
-            .expect("bug: nine-patch segments should be axis-aligned only")
-            .then_scale(device_pixel_scale.0);
+        // Nine-patch segments are only allowed for axis-aligned primitives.
+        let local_to_device = transform.as_2d_scale_offset().unwrap();
 
         let device_prim_rect: DeviceRect = local_to_device.map_rect(&local_rect);
 
