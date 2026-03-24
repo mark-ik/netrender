@@ -649,7 +649,6 @@ impl InternablePrimitive for LinearGradient {
             PrimitiveInstanceKind::LinearGradient {
                 data_handle,
                 visible_tiles_range: GradientTileRange::empty(),
-                use_legacy_path: true,
             }
         }
     }

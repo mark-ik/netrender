@@ -602,7 +602,6 @@ impl InternablePrimitive for Image {
             data_handle,
             image_instance_index,
             compositor_surface_kind: CompositorSurfaceKind::Blit,
-            use_legacy_path: true,
         }
     }
 }

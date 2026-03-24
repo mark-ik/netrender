@@ -250,23 +250,25 @@ fn prepare_prim_for_render(
     }
 
     let prim_instance = &mut prim_instances[prim_instance_index];
-
+    let mut use_legacy_path = true;
     if !is_passthrough {
-        let disable_quad_path = match &prim_instance.kind {
+        match &prim_instance.kind {
             PrimitiveInstanceKind::Rectangle { .. }
             | PrimitiveInstanceKind::RadialGradient { .. }
             | PrimitiveInstanceKind::ConicGradient { .. }
-            => false,
+            => {
+                use_legacy_path = false;
+            }
             PrimitiveInstanceKind::Image { data_handle, .. } => {
-                !crate::prim_store::image::can_use_quad_shaders(
+                use_legacy_path = !crate::prim_store::image::can_use_quad_shaders(
                     &data_stores.image[*data_handle].kind,
                     frame_state.resource_cache,
-                )
+                );
             }
             PrimitiveInstanceKind::LinearGradient { .. } => {
-                !frame_context.fb_config.precise_linear_gradients
+                use_legacy_path = !frame_context.fb_config.precise_linear_gradients;
             }
-            _ => true,
+            _ => {}
         };
 
         // In this initial patch, we only support non-masked primitives through the new
@@ -275,19 +277,19 @@ fn prepare_prim_for_render(
         // to skip the entry point to `update_clip_task` as that does old-style segmenting
         // and mask generation.
         let should_update_clip_task = match &mut prim_instance.kind {
-            PrimitiveInstanceKind::Rectangle { use_legacy_path, .. }
-            | PrimitiveInstanceKind::Image { use_legacy_path, .. }
-            | PrimitiveInstanceKind::RadialGradient { use_legacy_path, .. }
-            | PrimitiveInstanceKind::ConicGradient { use_legacy_path, .. }
-            | PrimitiveInstanceKind::LinearGradient { use_legacy_path, .. }
+            PrimitiveInstanceKind::Rectangle { .. }
+            | PrimitiveInstanceKind::Image { .. }
+            | PrimitiveInstanceKind::RadialGradient { .. }
+            | PrimitiveInstanceKind::ConicGradient { .. }
+            | PrimitiveInstanceKind::LinearGradient { .. }
             => {
-                *use_legacy_path = disable_quad_path || !can_use_clip_chain_for_quad_path(
+                use_legacy_path |= !can_use_clip_chain_for_quad_path(
                     &prim_instance.vis.clip_chain,
                     frame_state.clip_store,
                     data_stores,
                 );
 
-                *use_legacy_path
+                use_legacy_path
             }
             PrimitiveInstanceKind::BoxShadow { .. } |
             PrimitiveInstanceKind::Picture { .. } => false,
@@ -322,6 +324,7 @@ fn prepare_prim_for_render(
 
     prepare_interned_prim_for_render(
         store,
+        use_legacy_path,
         PrimitiveInstanceIndex(prim_instance_index as u32),
         prim_instance,
         cluster,
@@ -342,6 +345,7 @@ fn prepare_prim_for_render(
 /// prepare_prim_for_render_inner call for old style primitives.
 fn prepare_interned_prim_for_render(
     store: &mut PrimitiveStore,
+    use_legacy_path: bool,
     prim_instance_index: PrimitiveInstanceIndex,
     prim_instance: &mut PrimitiveInstance,
     cluster: &mut PrimitiveCluster,
@@ -540,10 +544,10 @@ fn prepare_interned_prim_for_render(
                 frame_state
             );
         }
-        PrimitiveInstanceKind::Rectangle { data_handle, segment_instance_index, use_legacy_path, .. } => {
+        PrimitiveInstanceKind::Rectangle { data_handle, segment_instance_index, .. } => {
             profile_scope!("Rectangle");
 
-            if *use_legacy_path {
+            if use_legacy_path {
                 let prim_data = &mut data_stores.prim[*data_handle];
                 prim_data.common.may_need_repetition = false;
 
@@ -614,7 +618,7 @@ fn prepare_interned_prim_for_render(
                 }
             );
         }
-        PrimitiveInstanceKind::Image { data_handle, image_instance_index, use_legacy_path, .. } => {
+        PrimitiveInstanceKind::Image { data_handle, image_instance_index, .. } => {
             profile_scope!("Image");
 
             let prim_data = &mut data_stores.image[*data_handle];
@@ -622,7 +626,7 @@ fn prepare_interned_prim_for_render(
             let image_data = &mut prim_data.kind;
             let image_instance = &mut store.images[*image_instance_index];
 
-            if !*use_legacy_path {
+            if !use_legacy_path {
                 let prim_rect = LayoutRect::from_origin_and_size(
                     prim_instance.prim_origin,
                     common_data.prim_size,
@@ -668,11 +672,11 @@ fn prepare_interned_prim_for_render(
                 },
             );
         }
-        PrimitiveInstanceKind::LinearGradient { data_handle, ref mut visible_tiles_range, use_legacy_path, .. } => {
+        PrimitiveInstanceKind::LinearGradient { data_handle, ref mut visible_tiles_range, .. } => {
             profile_scope!("LinearGradient");
             let prim_data = &mut data_stores.linear_grad[*data_handle];
             let prim_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
-            if !*use_legacy_path {
+            if !use_legacy_path {
                 if let Some(nine_patch) = &prim_data.border_nine_patch {
                     quad::prepare_border_image_nine_patch(
                         &*nine_patch,
@@ -833,11 +837,11 @@ fn prepare_interned_prim_for_render(
                 }
             }
         }
-        PrimitiveInstanceKind::RadialGradient { data_handle, ref mut visible_tiles_range, use_legacy_path, .. } => {
+        PrimitiveInstanceKind::RadialGradient { data_handle, ref mut visible_tiles_range, .. } => {
             profile_scope!("RadialGradient");
             let prim_data = &mut data_stores.radial_grad[*data_handle];
 
-            if !*use_legacy_path {
+            if !use_legacy_path {
                 let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
                 if let Some(nine_patch) = &prim_data.border_nine_patch {
                     quad::prepare_border_image_nine_patch(
@@ -910,12 +914,12 @@ fn prepare_interned_prim_for_render(
                 }
             }
         }
-        PrimitiveInstanceKind::ConicGradient { data_handle, ref mut visible_tiles_range, use_legacy_path, .. } => {
+        PrimitiveInstanceKind::ConicGradient { data_handle, ref mut visible_tiles_range, .. } => {
             profile_scope!("ConicGradient");
             let prim_data = &mut data_stores.conic_grad[*data_handle];
             let prim_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
 
-            if !*use_legacy_path {
+            if !use_legacy_path {
                 if let Some(nine_patch) = &prim_data.border_nine_patch {
                     quad::prepare_border_image_nine_patch(
                         &*nine_patch,
@@ -1413,8 +1417,7 @@ fn update_clip_task_for_brush(
 
             &segments_store[segment_instance.segments_range]
         }
-        PrimitiveInstanceKind::Rectangle { use_legacy_path, segment_instance_index, .. } => {
-            assert!(use_legacy_path);
+        PrimitiveInstanceKind::Rectangle { segment_instance_index, .. } => {
             debug_assert!(segment_instance_index != SegmentInstanceIndex::INVALID);
 
             if segment_instance_index == SegmentInstanceIndex::UNUSED {
@@ -1806,8 +1809,7 @@ fn build_segments_if_needed(
     );
 
     let segment_instance_index = match instance.kind {
-        PrimitiveInstanceKind::Rectangle { use_legacy_path, ref mut segment_instance_index, .. } => {
-            assert!(use_legacy_path);
+        PrimitiveInstanceKind::Rectangle { ref mut segment_instance_index, .. } => {
             segment_instance_index
         }
         PrimitiveInstanceKind::YuvImage { ref mut segment_instance_index, compositor_surface_kind, .. } => {

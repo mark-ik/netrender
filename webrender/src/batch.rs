@@ -2077,8 +2077,7 @@ impl BatchBuilder {
                     specific_resource_address,
                 );
             }
-            PrimitiveInstanceKind::Rectangle { use_legacy_path, .. } => {
-                debug_assert!(use_legacy_path);
+            PrimitiveInstanceKind::Rectangle { .. } => {
                 let batch_params = BrushBatchParameters::shared(
                     BrushBatchKind::Solid,
                     TextureSet::UNTEXTURED,

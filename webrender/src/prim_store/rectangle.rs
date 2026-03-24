@@ -64,7 +64,6 @@ impl InternablePrimitive for RectanglePrim {
             data_handle,
             segment_instance_index: SegmentInstanceIndex::INVALID,
             color_binding_index,
-            use_legacy_path: false,
         }
     }
 }

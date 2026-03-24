@@ -793,7 +793,6 @@ pub enum PrimitiveInstanceKind {
         data_handle: RectangleDataHandle,
         segment_instance_index: SegmentInstanceIndex,
         color_binding_index: ColorBindingIndex,
-        use_legacy_path: bool,
     },
     YuvImage {
         /// Handle to the common interned data for this primitive.
@@ -806,7 +805,6 @@ pub enum PrimitiveInstanceKind {
         data_handle: ImageDataHandle,
         image_instance_index: ImageInstanceIndex,
         compositor_surface_kind: CompositorSurfaceKind,
-        use_legacy_path: bool,
     },
     /// Always rendered directly into the picture. This tends to be
     /// faster with SWGL.
@@ -814,7 +812,6 @@ pub enum PrimitiveInstanceKind {
         /// Handle to the common interned data for this primitive.
         data_handle: LinearGradientDataHandle,
         visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
     },
     /// Always rendered via a cached render task. Usually faster with
     /// a GPU.
@@ -827,13 +824,11 @@ pub enum PrimitiveInstanceKind {
         /// Handle to the common interned data for this primitive.
         data_handle: RadialGradientDataHandle,
         visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
     },
     ConicGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: ConicGradientDataHandle,
         visible_tiles_range: GradientTileRange,
-        use_legacy_path: bool,
     },
     /// Render a portion of a specified backdrop.
     BackdropCapture {
