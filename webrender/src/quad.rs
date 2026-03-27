@@ -98,6 +98,7 @@ impl QuadTransformState {
 
         self.prim_spatial_node = src_node;
         self.raster_spatial_node = dst_node;
+        self.device_pixel_scale = scale;
     }
 
     pub fn is_2d_scale_offset(&self) -> bool {
