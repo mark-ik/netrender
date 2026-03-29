@@ -3127,6 +3127,7 @@ impl ClipBatcher {
                     unreachable!();
                 }
                 ClipItemKind::BoxShadow { ref source }  => {
+                    // Only reachable when use_quad_box_shadow is not set.
                     let task_id = source
                         .render_task
                         .expect("bug: render task handle not allocated");
