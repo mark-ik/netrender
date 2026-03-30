@@ -889,7 +889,7 @@ pub struct Renderer {
     last_time: u64,
 
     pub gpu_profiler: GpuProfiler,
-    vaos: vertex::RendererVAOs,
+    vaos: vertex::RendererVaoState,
 
     gpu_cache_texture: gpu_cache::RendererGpuCache,
     vertex_data_textures: vertex::RendererVertexData,
@@ -2237,7 +2237,7 @@ impl Renderer {
         // the batch.
         debug_assert!(!data.is_empty());
 
-        let vao = &self.vaos[vertex_array_kind];
+        let vao = self.vaos.vao(vertex_array_kind);
         self.device.bind_vao(vao);
 
         let chunk_size = if self.debug_flags.contains(DebugFlags::DISABLE_BATCHING) {

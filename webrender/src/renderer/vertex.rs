@@ -1239,6 +1239,49 @@ impl RendererVAOs {
     }
 }
 
+pub(super) struct GlRendererVaos {
+    vaos: RendererVAOs,
+}
+
+#[cfg(feature = "wgpu_backend")]
+#[allow(dead_code)]
+pub struct WgpuRendererVaos;
+
+#[cfg_attr(feature = "wgpu_backend", allow(dead_code))]
+pub(super) enum RendererVaoState {
+    Gl(GlRendererVaos),
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu(WgpuRendererVaos),
+}
+
+impl RendererVaoState {
+    pub fn new_gl(device: &mut Device, indexed_quads: Option<NonZeroUsize>) -> Self {
+        Self::Gl(GlRendererVaos {
+            vaos: RendererVAOs::new(device, indexed_quads),
+        })
+    }
+
+    fn gl(&self) -> &GlRendererVaos {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu vao state is not wired yet"),
+        }
+    }
+
+    pub fn vao(&self, kind: VertexArrayKind) -> &VAO {
+        &self.gl().vaos[kind]
+    }
+
+    pub fn deinit(self, device: &mut Device) {
+        match self {
+            Self::Gl(state) => state.vaos.deinit(device),
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => {}
+        }
+    }
+}
+
 impl ops::Index<VertexArrayKind> for RendererVAOs {
     type Output = VAO;
     fn index(&self, kind: VertexArrayKind) -> &VAO {

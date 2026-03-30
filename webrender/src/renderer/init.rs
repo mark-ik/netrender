@@ -466,7 +466,7 @@ fn create_webrender_instance_with_device(
 
     let max_primitive_instance_count =
         WebRenderOptions::MAX_INSTANCE_BUFFER_SIZE / mem::size_of::<PrimitiveInstanceData>();
-    let vaos = vertex::RendererVAOs::new(
+    let vaos = vertex::RendererVaoState::new_gl(
         &mut device,
         if options.enable_instancing { None } else { NonZeroUsize::new(max_primitive_instance_count) },
     );
