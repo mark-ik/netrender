@@ -624,7 +624,7 @@ impl super::Renderer {
         self.profile.start_time(profiler::GPU_CACHE_UPLOAD_TIME);
         let updated_rows = self.gpu_cache_texture.flush(
             &mut self.device,
-            &mut self.texture_upload_pbo_pool
+            self.upload_state.gl_pools_mut().0
         );
         self.gpu_cache_upload_time += self.profile.end_time(profiler::GPU_CACHE_UPLOAD_TIME);
 

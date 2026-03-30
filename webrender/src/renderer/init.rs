@@ -32,7 +32,7 @@ use crate::renderer::{
     debug, gpu_cache, vertex, gl,
     Renderer, DebugOverlayState, BufferDamageTracker, PipelineInfo, TextureResolver,
     RendererError, ShaderPrecacheFlags,
-    upload::UploadTexturePool,
+    upload::{RendererUploadState, UploadTexturePool},
     shade::{Shaders, SharedShaders},
 };
 #[cfg(feature = "debugger")]
@@ -473,6 +473,7 @@ fn create_webrender_instance_with_device(
 
     let texture_upload_pbo_pool = UploadPBOPool::new(&mut device, options.upload_pbo_default_size);
     let staging_texture_pool = UploadTexturePool::new();
+    let upload_state = RendererUploadState::new_gl(texture_upload_pbo_pool, staging_texture_pool);
     let texture_resolver = TextureResolver::new(&mut device);
 
     let vertex_data_textures = vertex::RendererVertexData::new_gl();
@@ -774,8 +775,7 @@ fn create_webrender_instance_with_device(
         gpu_cache_debug_chunks: Vec::new(),
         gpu_cache_frame_id: FrameId::INVALID,
         gpu_cache_overflow: false,
-        texture_upload_pbo_pool,
-        staging_texture_pool,
+        upload_state,
         texture_resolver,
         renderer_errors: Vec::new(),
         async_frame_recorder: None,

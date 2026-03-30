@@ -62,7 +62,7 @@ use crate::composite::TileKind;
 use api::debugger::CompositorDebugInfo;
 use crate::segment::SegmentBuilder;
 use crate::{debug_colors, CompositorInputConfig, CompositorSurfaceUsage};
-use crate::device::{DepthFunction, Device, DrawTarget, ExternalTexture, GpuDevice, GpuFrameId, UploadPBOPool};
+use crate::device::{DepthFunction, Device, DrawTarget, ExternalTexture, GpuDevice, GpuFrameId};
 use crate::device::{ReadTarget, ShaderError, Texture, TextureFilter, TextureFlags, TextureSlot, Texel};
 use crate::device::query::{GpuSampler, GpuTimer};
 #[cfg(feature = "capture")]
@@ -97,7 +97,7 @@ use crate::util::drain_filter;
 use crate::rectangle_occlusion as occlusion;
 #[cfg(feature = "debugger")]
 use crate::debugger::{Debugger, DebugQueryKind};
-use upload::{upload_to_texture_cache, UploadTexturePool};
+use upload::{upload_to_texture_cache, RendererUploadState};
 use init::*;
 
 use euclid::{rect, Transform3D, Scale, default};
@@ -907,8 +907,7 @@ pub struct Renderer {
     // Manages and resolves source textures IDs to real texture IDs.
     texture_resolver: TextureResolver,
 
-    texture_upload_pbo_pool: UploadPBOPool,
-    staging_texture_pool: UploadTexturePool,
+    upload_state: RendererUploadState,
 
     dither_matrix_texture: Option<Texture>,
 
@@ -1225,8 +1224,7 @@ impl Renderer {
                     // the device module asserts if we delete textures while
                     // not in a frame.
                     if memory_pressure {
-                        self.texture_upload_pbo_pool.on_memory_pressure(&mut self.device);
-                        self.staging_texture_pool.delete_textures(&mut self.device);
+                        self.upload_state.on_memory_pressure(&mut self.device);
                     }
 
                     self.device.end_frame();
@@ -1648,7 +1646,7 @@ impl Renderer {
         self.profile.end_time_if_started(profiler::FRAME_SEND_TIME);
         self.profile.start_time(profiler::RENDERER_TIME);
 
-        self.staging_texture_pool.begin_frame();
+        self.upload_state.begin_frame();
 
         let compositor_kind = active_doc.frame.composite_state.compositor_kind;
         // CompositorKind is updated
@@ -1922,8 +1920,7 @@ impl Renderer {
             );
         }
 
-        self.staging_texture_pool.end_frame(&mut self.device);
-        self.texture_upload_pbo_pool.end_frame(&mut self.device);
+        self.upload_state.end_frame(&mut self.device);
         self.device.end_frame();
 
         if debug_overlay.is_some() {
@@ -5133,7 +5130,7 @@ impl Renderer {
 
         self.vertex_data_textures.bind_frame_data(
             &mut self.device,
-            &mut self.texture_upload_pbo_pool,
+            self.upload_state.gl_pools_mut().0,
             frame,
         );
     }
@@ -6005,8 +6002,7 @@ impl Renderer {
             self.device.delete_texture(zoom_debug_texture);
         }
         self.vertex_data_textures.deinit(&mut self.device);
-        self.texture_upload_pbo_pool.deinit(&mut self.device);
-        self.staging_texture_pool.delete_textures(&mut self.device);
+        self.upload_state.deinit(&mut self.device);
         self.texture_resolver.deinit(&mut self.device);
         self.vaos.deinit(&mut self.device);
         self.debug.deinit(&mut self.device);
@@ -6039,8 +6035,6 @@ impl Renderer {
         // GPU cache CPU memory.
         self.gpu_cache_texture.report_memory_to(&mut report, self.size_of_ops.as_ref().unwrap());
 
-        self.staging_texture_pool.report_memory_to(&mut report, self.size_of_ops.as_ref().unwrap());
-
         // Render task CPU memory.
         for (_id, doc) in &self.active_documents {
             let frame_alloc_stats = doc.frame.allocator_memory.get_stats();
@@ -6054,8 +6048,7 @@ impl Renderer {
         // Texture cache and render target GPU memory.
         report += self.texture_resolver.report_memory();
 
-        // Texture upload PBO memory.
-        report += self.texture_upload_pbo_pool.report_memory();
+        self.upload_state.report_memory_to(&mut report, self.size_of_ops.as_ref().unwrap());
 
         // Textures held internally within the device layer.
         report += self.device.report_memory(self.size_of_ops.as_ref().unwrap(), swgl);

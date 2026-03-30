@@ -32,7 +32,7 @@ use crate::internal_types::{
     CacheTextureId, RenderTargetInfo,
 };
 use crate::device::{
-    Device, GpuDevice, UploadMethod, Texture, DrawTarget, UploadStagingBuffer, TextureFlags, TextureUploader,
+    Device, GpuDevice, UploadMethod, UploadPBOPool, Texture, DrawTarget, UploadStagingBuffer, TextureFlags, TextureUploader,
     TextureFilter,
 };
 use crate::gpu_types::CopyInstance;
@@ -52,7 +52,6 @@ pub fn upload_to_texture_cache(
     renderer: &mut Renderer,
     update_list: FastHashMap<CacheTextureId, Vec<TextureCacheUpdate>>,
 ) {
-
     let mut stats = UploadStats {
         num_draw_calls: 0,
         upload_time: 0,
@@ -75,177 +74,174 @@ pub fn upload_to_texture_cache(
     // and a texture allocator for packing the buffers.
     let mut batch_upload_buffers = FastHashMap::default();
 
-    // For best performance we use a single TextureUploader for all uploads.
-    // This allows us to fill PBOs more efficiently and therefore allocate fewer PBOs.
-    let mut uploader = renderer.device.upload_texture(
-        &mut renderer.texture_upload_pbo_pool,
-    );
-
     let num_updates = update_list.len();
+    {
+        let device = &mut renderer.device;
+        let texture_resolver = &renderer.texture_resolver;
+        let external_image_handler = &mut renderer.external_image_handler;
+        let (texture_upload_pbo_pool, staging_texture_pool) = renderer.upload_state.gl_pools_mut();
 
-    for (texture_id, updates) in update_list {
-        let texture = &renderer.texture_resolver.texture_cache_map[&texture_id].texture;
-        for update in updates {
-            let TextureCacheUpdate { rect, stride, offset, format_override, source } = update;
-            let mut arc_data = None;
-            let dummy_data;
-            let data = match source {
-                TextureUpdateSource::Bytes { ref data } => {
-                    arc_data = Some(data.clone());
-                    &data[offset as usize ..]
-                }
-                TextureUpdateSource::External { id, channel_index } => {
-                    let handler = renderer.external_image_handler
-                        .as_mut()
-                        .expect("Found external image, but no handler set!");
-                    // The filter is only relevant for NativeTexture external images.
-                    match handler.lock(id, channel_index, false).source {
-                        ExternalImageSource::RawData(data) => {
-                            &data[offset as usize ..]
-                        }
-                        ExternalImageSource::Invalid => {
-                            // Create a local buffer to fill the pbo.
-                            let bpp = texture.get_format().bytes_per_pixel();
-                            let width = stride.unwrap_or(rect.width() * bpp);
-                            let total_size = width * rect.height();
-                            // WR haven't support RGBAF32 format in texture_cache, so
-                            // we use u8 type here.
-                            dummy_data = vec![0xFFu8; total_size as usize];
-                            &dummy_data
-                        }
-                        ExternalImageSource::NativeTexture(eid) => {
-                            panic!("Unexpected external texture {:?} for the texture cache update of {:?}", eid, id);
+        // For best performance we use a single TextureUploader for all uploads.
+        // This allows us to fill PBOs more efficiently and therefore allocate fewer PBOs.
+        let mut uploader = device.upload_texture(texture_upload_pbo_pool);
+
+        for (texture_id, updates) in update_list {
+            let texture = &texture_resolver.texture_cache_map[&texture_id].texture;
+            for update in updates {
+                let TextureCacheUpdate { rect, stride, offset, format_override, source } = update;
+                let mut arc_data = None;
+                let dummy_data;
+                let data = match source {
+                    TextureUpdateSource::Bytes { ref data } => {
+                        arc_data = Some(data.clone());
+                        &data[offset as usize ..]
+                    }
+                    TextureUpdateSource::External { id, channel_index } => {
+                        let handler = external_image_handler
+                            .as_mut()
+                            .expect("Found external image, but no handler set!");
+                        match handler.lock(id, channel_index, false).source {
+                            ExternalImageSource::RawData(data) => {
+                                &data[offset as usize ..]
+                            }
+                            ExternalImageSource::Invalid => {
+                                let bpp = texture.get_format().bytes_per_pixel();
+                                let width = stride.unwrap_or(rect.width() * bpp);
+                                let total_size = width * rect.height();
+                                dummy_data = vec![0xFFu8; total_size as usize];
+                                &dummy_data
+                            }
+                            ExternalImageSource::NativeTexture(eid) => {
+                                panic!("Unexpected external texture {:?} for the texture cache update of {:?}", eid, id);
+                            }
                         }
                     }
-                }
-                TextureUpdateSource::DebugClear => {
-                    let draw_target = DrawTarget::from_texture(
+                    TextureUpdateSource::DebugClear => {
+                        let draw_target = DrawTarget::from_texture(
+                            texture,
+                            false,
+                        );
+                        device.bind_draw_target(draw_target);
+                        device.clear_target(
+                            Some(TEXTURE_CACHE_DBG_CLEAR_COLOR),
+                            None,
+                            Some(draw_target.to_framebuffer_rect(update.rect.to_i32()))
+                        );
+
+                        continue;
+                    }
+                };
+
+                stats.items_uploaded += 1;
+
+                let use_batch_upload = device.use_batched_texture_uploads() &&
+                    texture.flags().contains(TextureFlags::IS_SHARED_TEXTURE_CACHE) &&
+                    rect.width() <= BATCH_UPLOAD_TEXTURE_SIZE.width &&
+                    rect.height() <= BATCH_UPLOAD_TEXTURE_SIZE.height &&
+                    rect.area() < device.batched_upload_threshold();
+
+                if use_batch_upload
+                    && arc_data.is_some()
+                    && matches!(device.upload_method(), &UploadMethod::Immediate)
+                    && rect.area() > BATCH_UPLOAD_TEXTURE_SIZE.area() / 2 {
+                    skip_staging_buffer(
+                        device,
+                        staging_texture_pool,
+                        rect,
+                        stride,
+                        arc_data.unwrap(),
+                        texture_id,
                         texture,
-                        false,
+                        &mut batch_upload_buffers,
+                        &mut batch_upload_textures,
+                        &mut batch_upload_copies,
+                        &mut stats,
                     );
-                    renderer.device.bind_draw_target(draw_target);
-                    renderer.device.clear_target(
-                        Some(TEXTURE_CACHE_DBG_CLEAR_COLOR),
-                        None,
-                        Some(draw_target.to_framebuffer_rect(update.rect.to_i32()))
+                } else if use_batch_upload {
+                    copy_into_staging_buffer(
+                        device,
+                        &mut uploader,
+                        staging_texture_pool,
+                        rect,
+                        stride,
+                        data,
+                        texture_id,
+                        texture,
+                        &mut batch_upload_buffers,
+                        &mut batch_upload_textures,
+                        &mut batch_upload_copies,
+                        &mut stats,
+                    );
+                } else {
+                    let upload_start_time = zeitstempel::now();
+
+                    stats.bytes_uploaded += uploader.upload(
+                        device,
+                        texture,
+                        rect,
+                        stride,
+                        format_override,
+                        data.as_ptr(),
+                        data.len()
                     );
 
-                    continue;
+                    stats.upload_time += zeitstempel::now() - upload_start_time;
                 }
-            };
 
-            stats.items_uploaded += 1;
-
-            let use_batch_upload = renderer.device.use_batched_texture_uploads() &&
-                texture.flags().contains(TextureFlags::IS_SHARED_TEXTURE_CACHE) &&
-                rect.width() <= BATCH_UPLOAD_TEXTURE_SIZE.width &&
-                rect.height() <= BATCH_UPLOAD_TEXTURE_SIZE.height &&
-                rect.area() < renderer.device.batched_upload_threshold();
-
-            if use_batch_upload
-                && arc_data.is_some()
-                && matches!(renderer.device.upload_method(), &UploadMethod::Immediate)
-                && rect.area() > BATCH_UPLOAD_TEXTURE_SIZE.area() / 2 {
-                skip_staging_buffer(
-                    &mut renderer.device,
-                    &mut renderer.staging_texture_pool,
-                    rect,
-                    stride,
-                    arc_data.unwrap(),
-                    texture_id,
-                    texture,
-                    &mut batch_upload_buffers,
-                    &mut batch_upload_textures,
-                    &mut batch_upload_copies,
-                    &mut stats,
-                );
-            } else if use_batch_upload {
-                copy_into_staging_buffer(
-                    &mut renderer.device,
-                    &mut uploader,
-                    &mut renderer.staging_texture_pool,
-                    rect,
-                    stride,
-                    data,
-                    texture_id,
-                    texture,
-                    &mut batch_upload_buffers,
-                    &mut batch_upload_textures,
-                    &mut batch_upload_copies,
-                    &mut stats,
-                );
-            } else {
-                let upload_start_time = zeitstempel::now();
-
-                stats.bytes_uploaded += uploader.upload(
-                    &mut renderer.device,
-                    texture,
-                    rect,
-                    stride,
-                    format_override,
-                    data.as_ptr(),
-                    data.len()
-                );
-
-                stats.upload_time += zeitstempel::now() - upload_start_time;
-            }
-
-            if let TextureUpdateSource::External { id, channel_index } = source {
-                let handler = renderer.external_image_handler
-                    .as_mut()
-                    .expect("Found external image, but no handler set!");
-                handler.unlock(id, channel_index);
+                if let TextureUpdateSource::External { id, channel_index } = source {
+                    let handler = external_image_handler
+                        .as_mut()
+                        .expect("Found external image, but no handler set!");
+                    handler.unlock(id, channel_index);
+                }
             }
         }
-    }
 
-    let upload_start_time = zeitstempel::now();
-    // Upload batched texture updates to their temporary textures.
-    for batch_buffer in batch_upload_buffers.into_iter().map(|(_, (_, buffers))| buffers).flatten() {
-        let texture = &batch_upload_textures[batch_buffer.texture_index];
-        match batch_buffer.staging_buffer {
-            StagingBufferKind::Pbo(pbo) => {
-                stats.bytes_uploaded += uploader.upload_staged(
-                    &mut renderer.device,
-                    texture,
-                    DeviceIntRect::from_size(texture.get_dimensions()),
-                    None,
-                    pbo,
-                );
-            }
-            StagingBufferKind::CpuBuffer { bytes, .. } => {
-                let bpp = texture.get_format().bytes_per_pixel();
-                stats.bytes_uploaded += uploader.upload(
-                    &mut renderer.device,
-                    texture,
-                    batch_buffer.upload_rect,
-                    Some(BATCH_UPLOAD_TEXTURE_SIZE.width * bpp),
-                    None,
-                    bytes.as_ptr(),
-                    bytes.len()
-                );
-                renderer.staging_texture_pool.return_temporary_buffer(bytes);
-            }
-            StagingBufferKind::Image { bytes, stride } => {
-                stats.bytes_uploaded += uploader.upload(
-                    &mut renderer.device,
-                    texture,
-                    batch_buffer.upload_rect,
-                    stride,
-                    None,
-                    bytes.as_ptr(),
-                    bytes.len()
-                );
+        let upload_start_time = zeitstempel::now();
+        for batch_buffer in batch_upload_buffers.into_iter().map(|(_, (_, buffers))| buffers).flatten() {
+            let texture = &batch_upload_textures[batch_buffer.texture_index];
+            match batch_buffer.staging_buffer {
+                StagingBufferKind::Pbo(pbo) => {
+                    stats.bytes_uploaded += uploader.upload_staged(
+                        device,
+                        texture,
+                        DeviceIntRect::from_size(texture.get_dimensions()),
+                        None,
+                        pbo,
+                    );
+                }
+                StagingBufferKind::CpuBuffer { bytes, .. } => {
+                    let bpp = texture.get_format().bytes_per_pixel();
+                    stats.bytes_uploaded += uploader.upload(
+                        device,
+                        texture,
+                        batch_buffer.upload_rect,
+                        Some(BATCH_UPLOAD_TEXTURE_SIZE.width * bpp),
+                        None,
+                        bytes.as_ptr(),
+                        bytes.len()
+                    );
+                    staging_texture_pool.return_temporary_buffer(bytes);
+                }
+                StagingBufferKind::Image { bytes, stride } => {
+                    stats.bytes_uploaded += uploader.upload(
+                        device,
+                        texture,
+                        batch_buffer.upload_rect,
+                        stride,
+                        None,
+                        bytes.as_ptr(),
+                        bytes.len()
+                    );
+                }
             }
         }
+        stats.upload_time += zeitstempel::now() - upload_start_time;
+
+        let flush_start_time = zeitstempel::now();
+        uploader.flush(device);
+        stats.upload_time += zeitstempel::now() - flush_start_time;
     }
-    stats.upload_time += zeitstempel::now() - upload_start_time;
-
-
-    // Flush all uploads, batched or otherwise.
-    let flush_start_time = zeitstempel::now();
-    uploader.flush(&mut renderer.device);
-    stats.upload_time += zeitstempel::now() - flush_start_time;
 
     if !batch_upload_copies.is_empty() {
         // Copy updates that were batch uploaded to their correct destination in the texture cache.
@@ -275,8 +271,11 @@ pub fn upload_to_texture_cache(
         stats.gpu_copy_commands_time += zeitstempel::now() - gpu_copy_start;
     }
 
-    for texture in batch_upload_textures.drain(..) {
-        renderer.staging_texture_pool.return_texture(texture);
+    {
+        let (_, staging_texture_pool) = renderer.upload_state.gl_pools_mut();
+        for texture in batch_upload_textures.drain(..) {
+            staging_texture_pool.return_texture(texture);
+        }
     }
 
     // Update the profile counters. We use add instead of set because
@@ -804,6 +803,85 @@ impl UploadTexturePool {
                 report.upload_staging_textures += texture.0.size_in_bytes();
             }
         }
+    }
+}
+
+pub(super) struct GlRendererUploadState {
+    texture_upload_pbo_pool: UploadPBOPool,
+    staging_texture_pool: UploadTexturePool,
+}
+
+#[cfg(feature = "wgpu_backend")]
+#[allow(dead_code)]
+pub struct WgpuRendererUploadState;
+
+#[cfg_attr(feature = "wgpu_backend", allow(dead_code))]
+pub(super) enum RendererUploadState {
+    Gl(GlRendererUploadState),
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu(WgpuRendererUploadState),
+}
+
+impl RendererUploadState {
+    pub fn new_gl(texture_upload_pbo_pool: UploadPBOPool, staging_texture_pool: UploadTexturePool) -> Self {
+        Self::Gl(GlRendererUploadState {
+            texture_upload_pbo_pool,
+            staging_texture_pool,
+        })
+    }
+
+    fn gl_mut(&mut self) -> &mut GlRendererUploadState {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu upload state is not wired yet"),
+        }
+    }
+
+    fn gl(&self) -> &GlRendererUploadState {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu upload state is not wired yet"),
+        }
+    }
+
+    pub fn gl_pools_mut(&mut self) -> (&mut UploadPBOPool, &mut UploadTexturePool) {
+        let state = self.gl_mut();
+        (&mut state.texture_upload_pbo_pool, &mut state.staging_texture_pool)
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.gl_mut().staging_texture_pool.begin_frame();
+    }
+
+    pub fn end_frame(&mut self, device: &mut Device) {
+        let state = self.gl_mut();
+        state.staging_texture_pool.end_frame(device);
+        state.texture_upload_pbo_pool.end_frame(device);
+    }
+
+    pub fn on_memory_pressure(&mut self, device: &mut Device) {
+        let state = self.gl_mut();
+        state.texture_upload_pbo_pool.on_memory_pressure(device);
+        state.staging_texture_pool.delete_textures(device);
+    }
+
+    pub fn deinit(self, device: &mut Device) {
+        match self {
+            Self::Gl(mut state) => {
+                state.texture_upload_pbo_pool.deinit(device);
+                state.staging_texture_pool.delete_textures(device);
+            }
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => {}
+        }
+    }
+
+    pub fn report_memory_to(&self, report: &mut MemoryReport, size_op_funs: &MallocSizeOfOps) {
+        let state = self.gl();
+        state.staging_texture_pool.report_memory_to(report, size_op_funs);
+        *report += state.texture_upload_pbo_pool.report_memory();
     }
 }
 
