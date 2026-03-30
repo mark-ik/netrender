@@ -129,6 +129,7 @@ pub(crate) mod init;
 
 pub use debug::DebugRenderer;
 pub use shade::{PendingShadersToPrecache, Shaders, SharedShaders};
+use shade::LazilyCompiledShader;
 pub use vertex::{desc, VertexArrayKind, MAX_VERTEX_TEXTURE_WIDTH};
 pub use gpu_buffer::{GpuBuffer, GpuBufferF, GpuBufferBuilderF, GpuBufferI, GpuBufferBuilderI};
 pub use gpu_buffer::{GpuBufferAddress, GpuBufferBuilder, GpuBufferWriterF};
@@ -2303,6 +2304,26 @@ impl Renderer {
         }
 
         // Probably should check for other errors?
+    }
+
+    fn bind_shader<F>(
+        &mut self,
+        projection: &default::Transform3D<f32>,
+        texture_size: Option<DeviceSize>,
+        get_shader: F,
+    )
+    where
+        F: FnOnce(&mut Shaders) -> &mut LazilyCompiledShader,
+    {
+        let mut shaders = self.shaders.borrow_mut();
+        let shader = get_shader(&mut shaders);
+        shader.bind(
+            &mut self.device,
+            projection,
+            texture_size,
+            &mut self.renderer_errors,
+            &mut self.profile,
+        );
     }
 
     fn draw_instanced_batch<T: Clone>(
@@ -4617,13 +4638,7 @@ impl Renderer {
             self.set_blend_mode_premultiplied_alpha(FramebufferKind::Other);
 
             if !target.border_segments_solid.is_empty() {
-                self.shaders.borrow_mut().cs_border_solid().bind(
-                    &mut self.device,
-                    &projection,
-                    None,
-                    &mut self.renderer_errors,
-                    &mut self.profile,
-                );
+                self.bind_shader(&projection, None, |shaders| shaders.cs_border_solid());
 
                 self.draw_instanced_batch(
                     &target.border_segments_solid,
@@ -4634,13 +4649,7 @@ impl Renderer {
             }
 
             if !target.border_segments_complex.is_empty() {
-                self.shaders.borrow_mut().cs_border_segment().bind(
-                    &mut self.device,
-                    &projection,
-                    None,
-                    &mut self.renderer_errors,
-                    &mut self.profile,
-                );
+                self.bind_shader(&projection, None, |shaders| shaders.cs_border_segment());
 
                 self.draw_instanced_batch(
                     &target.border_segments_complex,
@@ -4660,13 +4669,7 @@ impl Renderer {
             self.set_blend(true, FramebufferKind::Other);
             self.set_blend_mode_premultiplied_alpha(FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_line_decoration().bind(
-                &mut self.device,
-                &projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(&projection, None, |shaders| shaders.cs_line_decoration());
 
             self.draw_instanced_batch(
                 &target.line_decorations,
@@ -4684,13 +4687,7 @@ impl Renderer {
 
             self.set_blend(false, FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_fast_linear_gradient().bind(
-                &mut self.device,
-                &projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(&projection, None, |shaders| shaders.cs_fast_linear_gradient());
 
             self.draw_instanced_batch(
                 &target.fast_linear_gradients,
@@ -4706,13 +4703,7 @@ impl Renderer {
 
             self.set_blend(false, FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_linear_gradient().bind(
-                &mut self.device,
-                &projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(&projection, None, |shaders| shaders.cs_linear_gradient());
 
             self.draw_instanced_batch(
                 &target.linear_gradients,
@@ -4728,13 +4719,7 @@ impl Renderer {
 
             self.set_blend(false, FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_radial_gradient().bind(
-                &mut self.device,
-                &projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(&projection, None, |shaders| shaders.cs_radial_gradient());
 
             self.draw_instanced_batch(
                 &target.radial_gradients,
@@ -4750,13 +4735,7 @@ impl Renderer {
 
             self.set_blend(false, FramebufferKind::Other);
 
-            self.shaders.borrow_mut().cs_conic_gradient().bind(
-                &mut self.device,
-                &projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(&projection, None, |shaders| shaders.cs_conic_gradient());
 
             self.draw_instanced_batch(
                 &target.conic_gradients,
@@ -4776,8 +4755,7 @@ impl Renderer {
             let _timer = self.gpu_profiler.start_timer(GPU_TAG_BLUR);
 
             self.set_blend(false, framebuffer_kind);
-            self.shaders.borrow_mut().cs_blur_rgba8()
-                .bind(&mut self.device, &projection, None, &mut self.renderer_errors, &mut self.profile);
+            self.bind_shader(&projection, None, |shaders| shaders.cs_blur_rgba8());
 
             if !target.vertical_blurs.is_empty() {
                 self.draw_blurs(
@@ -4921,13 +4899,7 @@ impl Renderer {
         // draw rounded cornered rectangles
         if !list.slow_rectangles.is_empty() {
             let _gm2 = self.gpu_profiler.start_marker("slow clip rectangles");
-            self.shaders.borrow_mut().cs_clip_rectangle_slow().bind(
-                &mut self.device,
-                projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(projection, None, |shaders| shaders.cs_clip_rectangle_slow());
             self.draw_instanced_batch(
                 &list.slow_rectangles,
                 VertexArrayKind::ClipRect,
@@ -4937,13 +4909,7 @@ impl Renderer {
         }
         if !list.fast_rectangles.is_empty() {
             let _gm2 = self.gpu_profiler.start_marker("fast clip rectangles");
-            self.shaders.borrow_mut().cs_clip_rectangle_fast().bind(
-                &mut self.device,
-                projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+            self.bind_shader(projection, None, |shaders| shaders.cs_clip_rectangle_fast());
             self.draw_instanced_batch(
                 &list.fast_rectangles,
                 VertexArrayKind::ClipRect,
@@ -4956,8 +4922,7 @@ impl Renderer {
         for (mask_texture_id, items) in list.box_shadows.iter() {
             let _gm2 = self.gpu_profiler.start_marker("box-shadows");
             let textures = BatchTextures::composite_rgb(*mask_texture_id);
-            self.shaders.borrow_mut().cs_clip_box_shadow()
-                .bind(&mut self.device, projection, None, &mut self.renderer_errors, &mut self.profile);
+            self.bind_shader(projection, None, |shaders| shaders.cs_clip_box_shadow());
             self.draw_instanced_batch(
                 items,
                 VertexArrayKind::ClipBoxShadow,
