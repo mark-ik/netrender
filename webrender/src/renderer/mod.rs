@@ -2991,17 +2991,15 @@ impl Renderer {
 
         self.profile.inc(profiler::RENDERED_PICTURE_TILES);
         let _gm = self.gpu_profiler.start_marker("picture cache target");
-        let framebuffer_kind = FramebufferKind::Other;
 
         {
             let _timer = self.gpu_profiler.start_timer(GPU_TAG_SETUP_TARGET);
-            self.device.bind_draw_target(draw_target);
-
-            if self.device.get_capabilities().supports_qcom_tiled_rendering {
-                self.device.start_tiling_qcom(target.dirty_rect, 0);
-            }
-
-            self.device.enable_depth_write();
+            let framebuffer_kind = self.begin_draw_target_pass(
+                draw_target,
+                true,
+                Some(target.dirty_rect),
+                0,
+            );
             self.set_blend(false, framebuffer_kind);
 
             let clear_color = target.clear_color.map(|c| c.to_array());
@@ -3059,6 +3057,8 @@ impl Renderer {
             self.device.disable_depth_write();
         }
 
+        let framebuffer_kind = Self::framebuffer_kind_for(draw_target);
+
         match target.kind {
             PictureCacheTargetKind::Draw { ref alpha_batch_container } => {
                 self.draw_alpha_batch_container(
@@ -3100,10 +3100,7 @@ impl Renderer {
             }
         }
 
-        self.device.invalidate_depth_target();
-        if self.device.get_capabilities().supports_qcom_tiled_rendering {
-            self.device.end_tiling_qcom(gl::COLOR_BUFFER_BIT0_QCOM);
-        }
+        self.end_draw_target_pass(true);
     }
 
     /// Draw an alpha batch container into a given draw target. This is used
@@ -4578,29 +4575,16 @@ impl Renderer {
             assert!(with_depth >= target.needs_depth());
         }
 
-        let framebuffer_kind = if draw_target.is_default() {
-            FramebufferKind::Main
-        } else {
-            FramebufferKind::Other
+        let preserve_mask = match target.clear_color {
+            Some(_) => 0,
+            None => gl::COLOR_BUFFER_BIT0_QCOM,
         };
-
-        self.device.bind_draw_target(draw_target);
-
-        if self.device.get_capabilities().supports_qcom_tiled_rendering {
-            let preserve_mask = match target.clear_color {
-                Some(_) => 0,
-                None => gl::COLOR_BUFFER_BIT0_QCOM,
-            };
-            if let Some(used_rect) = target.used_rect {
-                self.device.start_tiling_qcom(used_rect, preserve_mask);
-            }
-        }
-
-        if needs_depth {
-            self.device.enable_depth_write();
-        } else {
-            self.device.disable_depth_write();
-        }
+        let framebuffer_kind = self.begin_draw_target_pass(
+            draw_target,
+            needs_depth,
+            target.used_rect,
+            preserve_mask,
+        );
 
         self.clear_render_target(
             target,
@@ -4854,12 +4838,7 @@ impl Renderer {
             }
         }
 
-        if needs_depth {
-            self.device.invalidate_depth_target();
-        }
-        if self.device.get_capabilities().supports_qcom_tiled_rendering {
-            self.device.end_tiling_qcom(gl::COLOR_BUFFER_BIT0_QCOM);
-        }
+        self.end_draw_target_pass(needs_depth);
 
         if let Some(sampler) = sampler_query {
             self.gpu_profiler.finish_sampler(sampler);
@@ -6069,6 +6048,50 @@ impl Renderer {
         report += self.device.report_memory(self.size_of_ops.as_ref().unwrap(), swgl);
 
         report
+    }
+
+    fn framebuffer_kind_for(draw_target: DrawTarget) -> FramebufferKind {
+        if draw_target.is_default() {
+            FramebufferKind::Main
+        } else {
+            FramebufferKind::Other
+        }
+    }
+
+    fn begin_draw_target_pass(
+        &mut self,
+        draw_target: DrawTarget,
+        needs_depth: bool,
+        tiled_rect: Option<DeviceIntRect>,
+        tiled_preserve_mask: u32,
+    ) -> FramebufferKind {
+        let framebuffer_kind = Self::framebuffer_kind_for(draw_target);
+
+        self.device.bind_draw_target(draw_target);
+
+        if let Some(tiled_rect) = tiled_rect {
+            if self.device.get_capabilities().supports_qcom_tiled_rendering {
+                self.device.start_tiling_qcom(tiled_rect, tiled_preserve_mask);
+            }
+        }
+
+        if needs_depth {
+            self.device.enable_depth_write();
+        } else {
+            self.device.disable_depth_write();
+        }
+
+        framebuffer_kind
+    }
+
+    fn end_draw_target_pass(&mut self, needs_depth: bool) {
+        if needs_depth {
+            self.device.invalidate_depth_target();
+        }
+
+        if self.device.get_capabilities().supports_qcom_tiled_rendering {
+            self.device.end_tiling_qcom(gl::COLOR_BUFFER_BIT0_QCOM);
+        }
     }
 
     // Sets the blend mode. Blend is unconditionally set if the "show overdraw" debugging mode is
