@@ -2326,6 +2326,19 @@ impl Renderer {
         );
     }
 
+    fn bind_composite_shader(
+        &mut self,
+        projection: &default::Transform3D<f32>,
+        texture_size: Option<DeviceSize>,
+        format: CompositeSurfaceFormat,
+        buffer_kind: ImageBufferKind,
+        features: CompositeFeatures,
+    ) {
+        self.bind_shader(projection, texture_size, |shaders| {
+            shaders.get_composite_shader(format, buffer_kind, features)
+        });
+    }
+
     fn draw_instanced_batch<T: Clone>(
         &mut self,
         data: &[T],
@@ -3365,19 +3378,13 @@ impl Renderer {
                     );
 
                     // Bind an appropriate YUV shader for the texture format kind
-                    self.shaders
-                        .borrow_mut()
-                        .get_composite_shader(
-                            CompositeSurfaceFormat::Yuv,
-                            surface.image_buffer_kind,
-                            instance.get_yuv_features(),
-                        ).bind(
-                            &mut self.device,
-                            &projection,
-                            None,
-                            &mut self.renderer_errors,
-                            &mut self.profile,
-                        );
+                    self.bind_composite_shader(
+                        &projection,
+                        None,
+                        CompositeSurfaceFormat::Yuv,
+                        surface.image_buffer_kind,
+                        instance.get_yuv_features(),
+                    );
 
                     ( textures, instance )
                 },
@@ -3395,19 +3402,13 @@ impl Renderer {
                     );
                     let features = instance.get_rgb_features();
 
-                    self.shaders
-                        .borrow_mut()
-                        .get_composite_shader(
-                            CompositeSurfaceFormat::Rgba,
-                            surface.image_buffer_kind,
-                            features,
-                        ).bind(
-                            &mut self.device,
-                            &projection,
-                            None,
-                            &mut self.renderer_errors,
-                            &mut self.profile,
-                        );
+                    self.bind_composite_shader(
+                        &projection,
+                        None,
+                        CompositeSurfaceFormat::Rgba,
+                        surface.image_buffer_kind,
+                        features,
+                    );
 
                     ( textures, instance )
                 },
@@ -3447,19 +3448,13 @@ impl Renderer {
         let mut current_textures = BatchTextures::empty();
         let mut instances = Vec::new();
 
-        self.shaders
-            .borrow_mut()
-            .get_composite_shader(
-                current_shader_params.0,
-                current_shader_params.1,
-                current_shader_params.2,
-            ).bind(
-                &mut self.device,
-                projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
+        self.bind_composite_shader(
+            projection,
+            None,
+            current_shader_params.0,
+            current_shader_params.1,
+            current_shader_params.2,
+        );
 
         for item in tiles_iter {
             let tile = &composite_state.tiles[item.key.tile_index];
@@ -3625,16 +3620,13 @@ impl Renderer {
             }
 
             if shader_params != current_shader_params {
-                self.shaders
-                    .borrow_mut()
-                    .get_composite_shader(shader_params.0, shader_params.1, shader_params.2)
-                    .bind(
-                        &mut self.device,
-                        projection,
-                        shader_params.3,
-                        &mut self.renderer_errors,
-                        &mut self.profile,
-                    );
+                self.bind_composite_shader(
+                    projection,
+                    shader_params.3,
+                    shader_params.0,
+                    shader_params.1,
+                    shader_params.2,
+                );
 
                 current_shader_params = shader_params;
             }
