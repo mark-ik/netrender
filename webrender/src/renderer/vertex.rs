@@ -1273,6 +1273,37 @@ impl RendererVaoState {
         &self.gl().vaos[kind]
     }
 
+    pub fn draw_instanced_batch<T: Clone>(
+        &self,
+        device: &mut Device,
+        data: &[T],
+        kind: VertexArrayKind,
+        enable_instancing: bool,
+        chunk_size: usize,
+    ) -> usize {
+        let vao = self.vao(kind);
+        device.bind_vao(vao);
+
+        let mut draw_calls = 0;
+        for chunk in data.chunks(chunk_size) {
+            if enable_instancing {
+                device.update_vao_instances(vao, chunk, VertexUsageHint::Stream, None);
+                device.draw_indexed_triangles_instanced_u16(6, chunk.len() as i32);
+            } else {
+                device.update_vao_instances(
+                    vao,
+                    chunk,
+                    VertexUsageHint::Stream,
+                    NonZeroUsize::new(4),
+                );
+                device.draw_indexed_triangles(6 * chunk.len() as i32);
+            }
+            draw_calls += 1;
+        }
+
+        draw_calls
+    }
+
     pub fn deinit(self, device: &mut Device) {
         match self {
             Self::Gl(state) => state.vaos.deinit(device),

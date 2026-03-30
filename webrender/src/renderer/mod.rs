@@ -113,7 +113,6 @@ use std::{
     f32,
     ffi::c_void,
     mem,
-    num::NonZeroUsize,
     path::PathBuf,
     rc::Rc,
 };
@@ -2317,9 +2316,6 @@ impl Renderer {
         // the batch.
         debug_assert!(!data.is_empty());
 
-        let vao = self.vaos.vao(vertex_array_kind);
-        self.device.bind_vao(vao);
-
         let chunk_size = if self.debug_flags.contains(DebugFlags::DISABLE_BATCHING) {
             1
         } else if vertex_array_kind == VertexArrayKind::Primitive {
@@ -2328,21 +2324,18 @@ impl Renderer {
             data.len()
         };
 
-        for chunk in data.chunks(chunk_size) {
-            if self.enable_instancing {
-                self.device
-                    .update_vao_instances(vao, chunk, ONE_TIME_USAGE_HINT, None);
-                self.device
-                    .draw_indexed_triangles_instanced_u16(6, chunk.len() as i32);
-            } else {
-                self.device
-                    .update_vao_instances(vao, chunk, ONE_TIME_USAGE_HINT, NonZeroUsize::new(4));
-                self.device
-                    .draw_indexed_triangles(6 * chunk.len() as i32);
-            }
+        let draw_calls = self.vaos.draw_instanced_batch(
+            &mut self.device,
+            data,
+            vertex_array_kind,
+            self.enable_instancing,
+            chunk_size,
+        );
+
+        for _ in 0..draw_calls {
             self.profile.inc(profiler::DRAW_CALLS);
-            stats.total_draw_calls += 1;
         }
+        stats.total_draw_calls += draw_calls;
 
         self.profile.add(profiler::VERTICES, 6 * data.len());
     }
