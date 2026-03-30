@@ -11,7 +11,7 @@ use std::{marker::PhantomData, mem, num::NonZeroUsize, ops};
 use api::units::*;
 use crate::{
     device::{
-        Device, Texture, TextureFilter, TextureUploader, UploadPBOPool, VertexUsageHint, VAO,
+        Device, GpuDevice, Texture, TextureFilter, TextureUploader, UploadPBOPool, VertexUsageHint, VAO,
     },
     frame_builder::Frame,
     gpu_types::{PrimitiveHeaderI, PrimitiveHeaderF, TransformData},
@@ -889,6 +889,31 @@ impl<T> VertexDataTexture<T> {
         self.texture.as_ref().map_or(0, |t| t.size_in_bytes())
     }
 
+    fn ensure_texture<D: GpuDevice<Texture = Texture>>(&mut self, device: &mut D, needed_height: i32) {
+        let existing_height = self
+            .texture
+            .as_ref()
+            .map_or(0, |t| t.get_dimensions().height);
+
+        if needed_height > existing_height
+            || needed_height + VERTEX_TEXTURE_EXTRA_ROWS < existing_height
+        {
+            if let Some(texture) = self.texture.take() {
+                device.delete_texture(texture);
+            }
+
+            let texture = device.create_texture(
+                api::ImageBufferKind::Texture2D,
+                self.format,
+                MAX_VERTEX_TEXTURE_WIDTH as i32,
+                needed_height.max(2),
+                TextureFilter::Nearest,
+                None,
+            );
+            self.texture = Some(texture);
+        }
+    }
+
     pub fn update<'a>(
         &'a mut self,
         device: &mut Device,
@@ -921,10 +946,6 @@ impl<T> VertexDataTexture<T> {
         }
 
         let needed_height = (len / items_per_row) as i32;
-        let existing_height = self
-            .texture
-            .as_ref()
-            .map_or(0, |t| t.get_dimensions().height);
 
         // Create a new texture if needed.
         //
@@ -935,26 +956,7 @@ impl<T> VertexDataTexture<T> {
         // 1), and shrink it if the waste would be more than `VERTEX_TEXTURE_EXTRA_ROWS`
         // rows. This helps with memory overhead, especially because there are several
         // instances of these textures per Renderer.
-        if needed_height > existing_height
-            || needed_height + VERTEX_TEXTURE_EXTRA_ROWS < existing_height
-        {
-            // Drop the existing texture, if any.
-            if let Some(t) = self.texture.take() {
-                device.delete_texture(t);
-            }
-
-            let texture = device.create_texture(
-                api::ImageBufferKind::Texture2D,
-                self.format,
-                MAX_VERTEX_TEXTURE_WIDTH as i32,
-                // Ensure height is at least two to work around
-                // https://bugs.chromium.org/p/angleproject/issues/detail?id=3039
-                needed_height.max(2),
-                TextureFilter::Nearest,
-                None,
-            );
-            self.texture = Some(texture);
-        }
+        self.ensure_texture(device, needed_height);
 
         // Note: the actual width can be larger than the logical one, with a few texels
         // of each row unused at the tail. This is needed because there is still hardware
@@ -983,7 +985,7 @@ impl<T> VertexDataTexture<T> {
         );
     }
 
-    pub fn deinit(mut self, device: &mut Device) {
+    pub fn deinit<D: GpuDevice<Texture = Texture>>(mut self, device: &mut D) {
         if let Some(t) = self.texture.take() {
             device.delete_texture(t);
         }

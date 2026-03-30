@@ -32,7 +32,7 @@ use crate::internal_types::{
     CacheTextureId, RenderTargetInfo,
 };
 use crate::device::{
-    Device, UploadMethod, Texture, DrawTarget, UploadStagingBuffer, TextureFlags, TextureUploader,
+    Device, GpuDevice, UploadMethod, Texture, DrawTarget, UploadStagingBuffer, TextureFlags, TextureUploader,
     TextureFilter,
 };
 use crate::gpu_types::CopyInstance;
@@ -673,7 +673,7 @@ impl UploadTexturePool {
     /// Create or reuse a staging texture.
     ///
     /// See also return_texture.
-    pub fn get_texture(&mut self, device: &mut Device, format: ImageFormat) -> Texture {
+    pub fn get_texture<D: GpuDevice<Texture = Texture>>(&mut self, device: &mut D, format: ImageFormat) -> Texture {
 
         // First try to reuse a texture from the pool.
         // "available" here means hasn't been used for 2 frames to avoid stalls.
@@ -731,7 +731,7 @@ impl UploadTexturePool {
     }
 
     /// Deallocate this pool's CPU and GPU memory.
-    pub fn delete_textures(&mut self, device: &mut Device) {
+    pub fn delete_textures<D: GpuDevice<Texture = Texture>>(&mut self, device: &mut D) {
         for format in &mut self.textures {
             while let Some(texture) = format.pop_back() {
                 device.delete_texture(texture.0)
@@ -741,7 +741,7 @@ impl UploadTexturePool {
     }
 
     /// Deallocate some textures if there are too many for a long time.
-    pub fn end_frame(&mut self, device: &mut Device) {
+    pub fn end_frame<D: GpuDevice<Texture = Texture>>(&mut self, device: &mut D) {
         for format_idx in 0..self.textures.len() {
             // Count the number of reusable staging textures.
             // if it stays high for a large number of frames, truncate it back to 8-ish

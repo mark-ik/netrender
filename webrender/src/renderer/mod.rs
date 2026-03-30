@@ -62,7 +62,7 @@ use crate::composite::TileKind;
 use api::debugger::CompositorDebugInfo;
 use crate::segment::SegmentBuilder;
 use crate::{debug_colors, CompositorInputConfig, CompositorSurfaceUsage};
-use crate::device::{DepthFunction, Device, DrawTarget, ExternalTexture, GpuFrameId, UploadPBOPool};
+use crate::device::{DepthFunction, Device, DrawTarget, ExternalTexture, GpuDevice, GpuFrameId, UploadPBOPool};
 use crate::device::{ReadTarget, ShaderError, Texture, TextureFilter, TextureFlags, TextureSlot, Texel};
 use crate::device::query::{GpuSampler, GpuTimer};
 #[cfg(feature = "capture")]
@@ -522,21 +522,22 @@ struct TextureResolver {
     dummy_cache_texture: Texture,
 }
 
+fn create_dummy_cache_texture<D: GpuDevice<Texture = Texture>>(device: &mut D) -> Texture {
+    let dummy_cache_texture = device.create_texture(
+        ImageBufferKind::Texture2D,
+        ImageFormat::RGBA8,
+        1,
+        1,
+        TextureFilter::Linear,
+        None,
+    );
+    device.upload_texture_immediate(&dummy_cache_texture, &[0xff, 0xff, 0xff, 0xff]);
+    dummy_cache_texture
+}
+
 impl TextureResolver {
     fn new(device: &mut Device) -> TextureResolver {
-        let dummy_cache_texture = device
-            .create_texture(
-                ImageBufferKind::Texture2D,
-                ImageFormat::RGBA8,
-                1,
-                1,
-                TextureFilter::Linear,
-                None,
-            );
-        device.upload_texture_immediate(
-            &dummy_cache_texture,
-            &[0xff, 0xff, 0xff, 0xff],
-        );
+        let dummy_cache_texture = create_dummy_cache_texture(device);
 
         TextureResolver {
             texture_cache_map: FastHashMap::default(),
@@ -966,6 +967,7 @@ pub enum RendererError {
     MaxTextureSize,
     SoftwareRasterizer,
     OutOfMemory,
+    UnsupportedBackend(&'static str),
 }
 
 impl From<ShaderError> for RendererError {

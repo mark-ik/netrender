@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 use api::{ImageBufferKind, ImageFormat};
 
-use super::{GpuFrameId, TextureFilter};
+use super::{GpuDevice, GpuFrameId, Texel, TextureFilter};
 use crate::internal_types::RenderTargetInfo;
 use crate::shader_source::WGSL_SHADERS;
 
@@ -577,6 +577,32 @@ impl WgpuDevice {
             pass.draw_indexed(0..6, 0, 0..1);
         }
         self.queue.submit([encoder.finish()]);
+    }
+}
+
+impl GpuDevice for WgpuDevice {
+    type Texture = WgpuTexture;
+
+    fn create_texture(
+        &mut self,
+        target: ImageBufferKind,
+        format: ImageFormat,
+        width: i32,
+        height: i32,
+        filter: TextureFilter,
+        render_target: Option<RenderTargetInfo>,
+    ) -> Self::Texture {
+        WgpuDevice::create_texture(self, target, format, width, height, filter, render_target)
+    }
+
+    fn upload_texture_immediate<T: Texel>(&mut self, texture: &Self::Texture, pixels: &[T]) {
+        let byte_len = std::mem::size_of_val(pixels);
+        let bytes = unsafe { std::slice::from_raw_parts(pixels.as_ptr() as *const u8, byte_len) };
+        WgpuDevice::upload_texture_immediate(self, texture, bytes)
+    }
+
+    fn delete_texture(&mut self, texture: Self::Texture) {
+        WgpuDevice::delete_texture(self, texture)
     }
 }
 

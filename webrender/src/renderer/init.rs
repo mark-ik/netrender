@@ -13,7 +13,7 @@ use crate::bump_allocator::ChunkPool;
 use crate::render_api::{RenderApiSender, FrameMsg};
 use crate::composite::{CompositorKind, CompositorConfig};
 use crate::device::{
-    UploadMethod, UploadPBOPool, VertexUsageHint, Device, ProgramCache, TextureFilter
+    UploadMethod, UploadPBOPool, VertexUsageHint, Device, GpuDevice, ProgramCache, TextureFilter
 };
 use crate::frame_builder::FrameBuilderConfig;
 use crate::glyph_cache::GlyphCache;
@@ -116,6 +116,12 @@ pub trait AsyncPropertySampler {
 
 pub trait RenderBackendHooks {
     fn init_thread(&self);
+}
+
+pub enum RendererBackend {
+    Gl { gl: Rc<dyn gl::Gl> },
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu,
 }
 
 pub struct WebRenderOptions {
@@ -312,6 +318,20 @@ impl Default for WebRenderOptions {
 pub fn create_webrender_instance(
     gl: Rc<dyn gl::Gl>,
     notifier: Box<dyn RenderNotifier>,
+    options: WebRenderOptions,
+    shaders: Option<&SharedShaders>,
+) -> Result<(Renderer, RenderApiSender), RendererError> {
+    create_webrender_instance_with_backend(
+        RendererBackend::Gl { gl },
+        notifier,
+        options,
+        shaders,
+    )
+}
+
+pub fn create_webrender_instance_with_backend(
+    backend: RendererBackend,
+    notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
@@ -342,22 +362,33 @@ pub fn create_webrender_instance(
 
     let (api_tx, api_rx) = unbounded_channel();
     let (result_tx, result_rx) = unbounded_channel();
-    let gl_type = gl.get_type();
 
-    let mut device = Device::new(
-        gl,
-        options.crash_annotator.clone(),
-        options.resource_override_path.clone(),
-        options.use_optimized_shaders,
-        options.upload_method.clone(),
-        options.batched_upload_threshold,
-        options.cached_programs.take(),
-        options.allow_texture_storage_support,
-        options.allow_texture_swizzling,
-        options.dump_shader_source.take(),
-        options.surface_origin_is_top_left,
-        options.panic_on_gl_error,
-    );
+    let (mut device, gl_type) = match backend {
+        RendererBackend::Gl { gl } => {
+            let gl_type = gl.get_type();
+            let device = Device::new(
+                gl,
+                options.crash_annotator.clone(),
+                options.resource_override_path.clone(),
+                options.use_optimized_shaders,
+                options.upload_method.clone(),
+                options.batched_upload_threshold,
+                options.cached_programs.take(),
+                options.allow_texture_storage_support,
+                options.allow_texture_swizzling,
+                options.dump_shader_source.take(),
+                options.surface_origin_is_top_left,
+                options.panic_on_gl_error,
+            );
+            (device, gl_type)
+        }
+        #[cfg(feature = "wgpu_backend")]
+        RendererBackend::Wgpu => {
+            return Err(RendererError::UnsupportedBackend(
+                "wgpu renderer integration is not available yet",
+            ));
+        }
+    };
 
     let color_cache_formats = device.preferred_color_formats();
     let swizzle_settings = device.swizzle_settings();
@@ -416,84 +447,7 @@ pub fn create_webrender_instance(
     };
 
     let dither_matrix_texture = if options.enable_dithering {
-        let dither_matrix: [u8; 64] = [
-            0,
-            48,
-            12,
-            60,
-            3,
-            51,
-            15,
-            63,
-            32,
-            16,
-            44,
-            28,
-            35,
-            19,
-            47,
-            31,
-            8,
-            56,
-            4,
-            52,
-            11,
-            59,
-            7,
-            55,
-            40,
-            24,
-            36,
-            20,
-            43,
-            27,
-            39,
-            23,
-            2,
-            50,
-            14,
-            62,
-            1,
-            49,
-            13,
-            61,
-            34,
-            18,
-            46,
-            30,
-            33,
-            17,
-            45,
-            29,
-            10,
-            58,
-            6,
-            54,
-            9,
-            57,
-            5,
-            53,
-            42,
-            26,
-            38,
-            22,
-            41,
-            25,
-            37,
-            21,
-        ];
-
-        let texture = device.create_texture(
-            ImageBufferKind::Texture2D,
-            ImageFormat::R8,
-            8,
-            8,
-            TextureFilter::Nearest,
-            None,
-        );
-        device.upload_texture_immediate(&texture, &dither_matrix);
-
-        Some(texture)
+        Some(create_dither_matrix_texture(&mut device))
     } else {
         None
     };
@@ -868,4 +822,28 @@ pub fn create_webrender_instance(
     }
 
     Ok((renderer, sender))
+}
+
+fn create_dither_matrix_texture<D: GpuDevice>(device: &mut D) -> D::Texture {
+    let dither_matrix: [u8; 64] = [
+        0, 48, 12, 60, 3, 51, 15, 63,
+        32, 16, 44, 28, 35, 19, 47, 31,
+        8, 56, 4, 52, 11, 59, 7, 55,
+        40, 24, 36, 20, 43, 27, 39, 23,
+        2, 50, 14, 62, 1, 49, 13, 61,
+        34, 18, 46, 30, 33, 17, 45, 29,
+        10, 58, 6, 54, 9, 57, 5, 53,
+        42, 26, 38, 22, 41, 25, 37, 21,
+    ];
+
+    let texture = device.create_texture(
+        ImageBufferKind::Texture2D,
+        ImageFormat::R8,
+        8,
+        8,
+        TextureFilter::Nearest,
+        None,
+    );
+    device.upload_texture_immediate(&texture, &dither_matrix);
+    texture
 }

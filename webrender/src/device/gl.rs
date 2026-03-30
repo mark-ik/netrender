@@ -4146,6 +4146,30 @@ impl Device {
     }
 }
 
+impl super::GpuDevice for Device {
+    type Texture = Texture;
+
+    fn create_texture(
+        &mut self,
+        target: ImageBufferKind,
+        format: ImageFormat,
+        width: i32,
+        height: i32,
+        filter: TextureFilter,
+        render_target: Option<RenderTargetInfo>,
+    ) -> Self::Texture {
+        Device::create_texture(self, target, format, width, height, filter, render_target)
+    }
+
+    fn upload_texture_immediate<T: Texel>(&mut self, texture: &Self::Texture, pixels: &[T]) {
+        Device::upload_texture_immediate(self, texture, pixels)
+    }
+
+    fn delete_texture(&mut self, texture: Self::Texture) {
+        Device::delete_texture(self, texture)
+    }
+}
+
 pub struct FormatDesc {
     /// Format the texel data is internally stored in within a texture.
     pub internal: gl::GLenum,
