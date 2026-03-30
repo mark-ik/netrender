@@ -6,13 +6,33 @@ use std::{cmp, mem};
 use api::units::*;
 use malloc_size_of::MallocSizeOfOps;
 use crate::{
-    device::{CustomVAO, Device, DrawTarget, Program, ReadTarget, Texture, TextureFilter, UploadPBOPool, VBO},
+    device::{CustomVAO, Device, DrawTarget, GpuDevice, Program, ReadTarget, Texture, TextureFilter, UploadPBOPool, VBO},
     gpu_cache::{GpuBlockData, GpuCacheUpdate, GpuCacheUpdateList},
     internal_types::{FrameId, RenderTargetInfo, Swizzle},
     prim_store::DeferredResolve,
     profiler,
     render_api::MemoryReport,
 };
+
+trait GpuCacheStorageDevice: GpuDevice<Texture = Texture> {
+    fn supports_copy_image_sub_data(&self) -> bool;
+    fn supports_color_buffer_float(&self) -> bool;
+    fn copy_entire_texture(&mut self, dst: &mut Texture, src: &Texture);
+}
+
+impl GpuCacheStorageDevice for Device {
+    fn supports_copy_image_sub_data(&self) -> bool {
+        self.get_capabilities().supports_copy_image_sub_data
+    }
+
+    fn supports_color_buffer_float(&self) -> bool {
+        self.get_capabilities().supports_color_buffer_float
+    }
+
+    fn copy_entire_texture(&mut self, dst: &mut Texture, src: &Texture) {
+        Device::copy_entire_texture(self, dst, src);
+    }
+}
 
 /// Enabling this toggle would force the GPU cache scattered texture to
 /// be resized every frame, which enables GPU debuggers to see if this
@@ -91,7 +111,7 @@ pub struct GpuCacheTexture {
 
 impl GpuCacheTexture {
     /// Ensures that we have an appropriately-sized texture.
-    fn ensure_texture(&mut self, device: &mut Device, height: i32) {
+    fn ensure_texture<D: GpuCacheStorageDevice>(&mut self, device: &mut D, height: i32) {
         // If we already have a texture that works, we're done.
         if self.texture.as_ref().map_or(false, |t| t.get_dimensions().height >= height) {
             if GPU_CACHE_RESIZE_TEST {
@@ -113,8 +133,8 @@ impl GpuCacheTexture {
         // is not. glCopyImageSubData does not require a render target to copy the texture
         // data, and if neither RGBAF32 render targets nor glCopyImageSubData is supported,
         // we simply re-upload the entire contents rather than copying upon resize.
-        let supports_copy_image_sub_data = device.get_capabilities().supports_copy_image_sub_data;
-        let supports_color_buffer_float = device.get_capabilities().supports_color_buffer_float;
+        let supports_copy_image_sub_data = device.supports_copy_image_sub_data();
+        let supports_color_buffer_float = device.supports_color_buffer_float();
         let rt_info = if matches!(self.bus, GpuCacheBus::PixelBuffer { .. })
             && (supports_copy_image_sub_data || !supports_color_buffer_float)
         {
