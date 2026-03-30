@@ -50,7 +50,7 @@ use core::time::Duration;
 
 use crate::pattern::PatternKind;
 use crate::render_api::{DebugCommand, ApiMsg, MemoryReport};
-use crate::batch::{AlphaBatchContainer, BatchKind, BatchFeatures, BatchTextures, BrushBatchKind, ClipBatchList};
+use crate::batch::{AlphaBatchContainer, BatchKind, BatchFeatures, BatchTextures, BrushBatchKind, ClipBatchList, PrimitiveBatch};
 use crate::batch::ClipMaskInstanceList;
 #[cfg(any(feature = "capture", feature = "replay"))]
 use crate::capture::{CaptureConfig, ExternalCaptureImage, PlainExternalImage};
@@ -3494,54 +3494,79 @@ impl Renderer {
         let shaders_rc = self.shaders.clone();
 
         for batch in &alpha_batch_container.alpha_batches {
-            if should_skip_batch(&batch.key.kind, self.debug_flags) {
-                continue;
-            }
-
-            let mut shaders = shaders_rc.borrow_mut();
-            let shader = shaders.get(
-                &batch.key,
-                batch.features | BatchFeatures::ALPHA_PASS,
-                self.debug_flags,
-                &self.device,
-            );
-
-            if batch.key.blend_mode != prev_blend_mode {
-                self.apply_alpha_batch_blend_mode(
-                    batch.key.blend_mode,
-                    framebuffer_kind,
-                );
-                prev_blend_mode = batch.key.blend_mode;
-            }
-
-            if let BatchKind::Brush(BrushBatchKind::MixBlend { task_id, backdrop_id }) = batch.key.kind {
-                debug_assert_eq!(batch.instances.len(), 1);
-                self.handle_readback_composite(
-                    draw_target,
-                    uses_scissor,
-                    &render_tasks[task_id],
-                    &render_tasks[backdrop_id],
-                );
-            }
-
-            let _timer = self.gpu_profiler.start_timer(batch.key.kind.sampler_tag());
-            shader.bind(
-                &mut self.device,
+            self.draw_transparent_batch(
+                batch,
+                draw_target,
+                uses_scissor,
+                framebuffer_kind,
                 projection,
-                None,
-                &mut self.renderer_errors,
-                &mut self.profile,
-            );
-
-            self.draw_instanced_batch(
-                &batch.instances,
-                VertexArrayKind::Primitive,
-                &batch.key.textures,
-                stats
+                render_tasks,
+                stats,
+                &shaders_rc,
+                &mut prev_blend_mode,
             );
         }
 
         self.gpu_profiler.finish_sampler(transparent_sampler);
+    }
+
+    fn draw_transparent_batch(
+        &mut self,
+        batch: &PrimitiveBatch,
+        draw_target: DrawTarget,
+        uses_scissor: bool,
+        framebuffer_kind: FramebufferKind,
+        projection: &default::Transform3D<f32>,
+        render_tasks: &RenderTaskGraph,
+        stats: &mut RendererStats,
+        shaders_rc: &Rc<RefCell<Shaders>>,
+        prev_blend_mode: &mut BlendMode,
+    ) {
+        if should_skip_batch(&batch.key.kind, self.debug_flags) {
+            return;
+        }
+
+        let mut shaders = shaders_rc.borrow_mut();
+        let shader = shaders.get(
+            &batch.key,
+            batch.features | BatchFeatures::ALPHA_PASS,
+            self.debug_flags,
+            &self.device,
+        );
+
+        if batch.key.blend_mode != *prev_blend_mode {
+            self.apply_alpha_batch_blend_mode(
+                batch.key.blend_mode,
+                framebuffer_kind,
+            );
+            *prev_blend_mode = batch.key.blend_mode;
+        }
+
+        if let BatchKind::Brush(BrushBatchKind::MixBlend { task_id, backdrop_id }) = batch.key.kind {
+            debug_assert_eq!(batch.instances.len(), 1);
+            self.handle_readback_composite(
+                draw_target,
+                uses_scissor,
+                &render_tasks[task_id],
+                &render_tasks[backdrop_id],
+            );
+        }
+
+        let _timer = self.gpu_profiler.start_timer(batch.key.kind.sampler_tag());
+        shader.bind(
+            &mut self.device,
+            projection,
+            None,
+            &mut self.renderer_errors,
+            &mut self.profile,
+        );
+
+        self.draw_instanced_batch(
+            &batch.instances,
+            VertexArrayKind::Primitive,
+            &batch.key.textures,
+            stats
+        );
     }
 
     /// Rasterize any external compositor surfaces that require updating
