@@ -31,7 +31,7 @@ use crate::picture_textures::PictureTextures;
 use crate::renderer::{
     debug, gpu_cache, vertex, gl,
     Renderer, DebugOverlayState, BufferDamageTracker, PipelineInfo, TextureResolver,
-    RendererError, ShaderPrecacheFlags, VERTEX_DATA_TEXTURE_COUNT,
+    RendererError, ShaderPrecacheFlags,
     upload::UploadTexturePool,
     shade::{Shaders, SharedShaders},
 };
@@ -475,10 +475,7 @@ fn create_webrender_instance_with_device(
     let staging_texture_pool = UploadTexturePool::new();
     let texture_resolver = TextureResolver::new(&mut device);
 
-    let mut vertex_data_textures = Vec::new();
-    for _ in 0 .. VERTEX_DATA_TEXTURE_COUNT {
-        vertex_data_textures.push(vertex::VertexDataTextures::new());
-    }
+    let vertex_data_textures = vertex::RendererVertexData::new_gl();
 
     // On some (mostly older, integrated) GPUs, the normal GPU texture cache update path
     // doesn't work well when running on ANGLE, causing CPU stalls inside D3D and/or the
@@ -767,7 +764,6 @@ fn create_webrender_instance_with_device(
         gpu_profiler,
         vaos,
         vertex_data_textures,
-        current_vertex_data_textures: 0,
         pipeline_info: PipelineInfo::default(),
         dither_matrix_texture,
         external_image_handler: None,

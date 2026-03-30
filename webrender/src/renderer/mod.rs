@@ -892,8 +892,7 @@ pub struct Renderer {
     vaos: vertex::RendererVAOs,
 
     gpu_cache_texture: gpu_cache::RendererGpuCache,
-    vertex_data_textures: Vec<vertex::VertexDataTextures>,
-    current_vertex_data_textures: usize,
+    vertex_data_textures: vertex::RendererVertexData,
 
     /// When the GPU cache debugger is enabled, we keep track of the live blocks
     /// in the GPU cache so that we can use them for the debug display. This
@@ -5132,13 +5131,11 @@ impl Renderer {
 
         let _timer = self.gpu_profiler.start_timer(GPU_TAG_SETUP_DATA);
 
-        self.vertex_data_textures[self.current_vertex_data_textures].update(
+        self.vertex_data_textures.bind_frame_data(
             &mut self.device,
             &mut self.texture_upload_pbo_pool,
             frame,
         );
-        self.current_vertex_data_textures =
-            (self.current_vertex_data_textures + 1) % VERTEX_DATA_TEXTURE_COUNT;
     }
 
     fn update_native_surfaces(&mut self) {
@@ -6007,9 +6004,7 @@ impl Renderer {
         if let Some(zoom_debug_texture) = self.zoom_debug_texture {
             self.device.delete_texture(zoom_debug_texture);
         }
-        for textures in self.vertex_data_textures.drain(..) {
-            textures.deinit(&mut self.device);
-        }
+        self.vertex_data_textures.deinit(&mut self.device);
         self.texture_upload_pbo_pool.deinit(&mut self.device);
         self.staging_texture_pool.delete_textures(&mut self.device);
         self.texture_resolver.deinit(&mut self.device);
@@ -6054,9 +6049,7 @@ impl Renderer {
         }
 
         // Vertex data GPU memory.
-        for textures in &self.vertex_data_textures {
-            report.vertex_data_textures += textures.size_in_bytes();
-        }
+        self.vertex_data_textures.report_memory_to(&mut report);
 
         // Texture cache and render target GPU memory.
         report += self.texture_resolver.report_memory();

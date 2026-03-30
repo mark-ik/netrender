@@ -16,6 +16,7 @@ use crate::{
     frame_builder::Frame,
     gpu_types::{PrimitiveHeaderI, PrimitiveHeaderF, TransformData},
     internal_types::Swizzle,
+    render_api::MemoryReport,
     render_task::RenderTaskData,
 };
 
@@ -1067,6 +1068,81 @@ impl VertexDataTextures {
         self.prim_header_f_texture.deinit(device);
         self.prim_header_i_texture.deinit(device);
         self.render_task_texture.deinit(device);
+    }
+}
+
+pub(super) struct GlRendererVertexData {
+    textures: Vec<VertexDataTextures>,
+    current: usize,
+}
+
+#[cfg(feature = "wgpu_backend")]
+#[allow(dead_code)]
+pub struct WgpuRendererVertexData;
+
+#[cfg_attr(feature = "wgpu_backend", allow(dead_code))]
+pub(super) enum RendererVertexData {
+    Gl(GlRendererVertexData),
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu(WgpuRendererVertexData),
+}
+
+impl RendererVertexData {
+    pub fn new_gl() -> Self {
+        let mut textures = Vec::new();
+        for _ in 0 .. super::VERTEX_DATA_TEXTURE_COUNT {
+            textures.push(VertexDataTextures::new());
+        }
+
+        Self::Gl(GlRendererVertexData {
+            textures,
+            current: 0,
+        })
+    }
+
+    fn gl(&self) -> &GlRendererVertexData {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu vertex data backend is not wired yet"),
+        }
+    }
+
+    fn gl_mut(&mut self) -> &mut GlRendererVertexData {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu vertex data backend is not wired yet"),
+        }
+    }
+
+    pub fn bind_frame_data(
+        &mut self,
+        device: &mut Device,
+        pbo_pool: &mut UploadPBOPool,
+        frame: &mut Frame,
+    ) {
+        let state = self.gl_mut();
+        state.textures[state.current].update(device, pbo_pool, frame);
+        state.current = (state.current + 1) % super::VERTEX_DATA_TEXTURE_COUNT;
+    }
+
+    pub fn deinit(self, device: &mut Device) {
+        match self {
+            Self::Gl(state) => {
+                for textures in state.textures {
+                    textures.deinit(device);
+                }
+            }
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => {}
+        }
+    }
+
+    pub fn report_memory_to(&self, report: &mut MemoryReport) {
+        for textures in &self.gl().textures {
+            report.vertex_data_textures += textures.size_in_bytes();
+        }
     }
 }
 
