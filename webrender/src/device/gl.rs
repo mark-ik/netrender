@@ -942,6 +942,8 @@ impl UniformLocation {
 
 #[derive(Debug)]
 pub struct Capabilities {
+    /// The GL API family in use for this device.
+    pub gl_type: gl::GlType,
     /// Whether multisampled render targets are supported.
     pub supports_multisampling: bool,
     /// Whether the function `glCopyImageSubData` is available.
@@ -999,6 +1001,8 @@ pub struct Capabilities {
     pub supports_image_external_essl3: bool,
     /// Whether the VAO must be rebound after an attached VBO has been orphaned.
     pub requires_vao_rebind_after_orphaning: bool,
+    /// The version string, as reported by GL.
+    pub version_string: String,
     /// The name of the renderer, as reported by GL
     pub renderer_name: String,
 }
@@ -1466,6 +1470,7 @@ impl Device {
         info!("Renderer: {}", renderer_name);
         let version_string = gl.get_string(gl::VERSION);
         info!("Version: {}", version_string);
+        let gl_type = gl.get_type();
         info!("Max texture size: {}", max_texture_size);
 
         let mut extension_count = [0];
@@ -1894,6 +1899,7 @@ impl Device {
             inside_frame: false,
 
             capabilities: Capabilities {
+                gl_type,
                 supports_multisampling: false, //TODO
                 supports_copy_image_sub_data,
                 supports_color_buffer_float,
@@ -1917,6 +1923,7 @@ impl Device {
                 uses_native_antialiasing,
                 supports_image_external_essl3,
                 requires_vao_rebind_after_orphaning,
+                version_string,
                 renderer_name,
             },
 
@@ -1967,6 +1974,40 @@ impl Device {
 
     pub fn rc_gl(&self) -> &Rc<dyn gl::Gl> {
         &self.gl
+    }
+
+    pub fn gl_type(&self) -> gl::GlType {
+        self.capabilities.gl_type
+    }
+
+    pub fn version_string(&self) -> &str {
+        &self.capabilities.version_string
+    }
+
+    pub fn renderer_name(&self) -> &str {
+        &self.capabilities.renderer_name
+    }
+
+    pub fn get_error(&self) -> gl::GLenum {
+        self.gl.get_error()
+    }
+
+    pub fn start_tiling_qcom(&self, rect: DeviceIntRect, preserve_mask: gl::GLuint) {
+        self.gl.start_tiling_qcom(
+            rect.min.x.max(0) as _,
+            rect.min.y.max(0) as _,
+            rect.width() as _,
+            rect.height() as _,
+            preserve_mask,
+        );
+    }
+
+    pub fn end_tiling_qcom(&self, preserve_mask: gl::GLuint) {
+        self.gl.end_tiling_qcom(preserve_mask);
+    }
+
+    pub fn blend_barrier_advanced(&self) {
+        self.gl.blend_barrier_khr();
     }
 
     pub fn set_parameter(&mut self, param: &Parameter) {

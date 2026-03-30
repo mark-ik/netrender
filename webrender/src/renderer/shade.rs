@@ -46,7 +46,7 @@ fn get_feature_string(kind: ImageBufferKind, texture_external_version: TextureEx
 }
 
 fn has_platform_support(kind: ImageBufferKind, device: &Device) -> bool {
-    match (kind, device.gl().get_type()) {
+    match (kind, device.gl_type()) {
         (ImageBufferKind::Texture2D, _) => true,
         (ImageBufferKind::TextureRect, GlType::Gles) => false,
         (ImageBufferKind::TextureRect, GlType::Gl) => true,
