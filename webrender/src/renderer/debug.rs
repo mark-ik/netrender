@@ -5,11 +5,24 @@
 use api::{ColorU, ImageFormat, ImageBufferKind};
 use api::units::*;
 use crate::debug_font_data;
-use crate::device::{Device, Program, Texture, TextureSlot, VertexDescriptor, ShaderError, VAO};
+use crate::device::{Device, GpuDevice, Program, Texture, TextureSlot, VertexDescriptor, ShaderError, VAO};
 use crate::device::{TextureFilter, VertexAttribute, VertexAttributeKind, VertexUsageHint};
 use euclid::{Point2D, Rect, Size2D, Transform3D, default};
 use crate::internal_types::Swizzle;
 use std::f32;
+
+fn create_debug_font_texture<D: GpuDevice<Texture = Texture>>(device: &mut D) -> Texture {
+    let font_texture = device.create_texture(
+        ImageBufferKind::Texture2D,
+        ImageFormat::R8,
+        debug_font_data::BMP_WIDTH,
+        debug_font_data::BMP_HEIGHT,
+        TextureFilter::Linear,
+        None,
+    );
+    device.upload_texture_immediate(&font_texture, &debug_font_data::FONT_BITMAP);
+    font_texture
+}
 
 #[derive(Debug, Copy, Clone)]
 enum DebugSampler {
@@ -124,18 +137,7 @@ impl DebugRenderer {
         let line_vao = device.create_vao(&DESC_COLOR, 1);
         let tri_vao = device.create_vao(&DESC_COLOR, 1);
 
-        let font_texture = device.create_texture(
-            ImageBufferKind::Texture2D,
-            ImageFormat::R8,
-            debug_font_data::BMP_WIDTH,
-            debug_font_data::BMP_HEIGHT,
-            TextureFilter::Linear,
-            None,
-        );
-        device.upload_texture_immediate(
-            &font_texture,
-            &debug_font_data::FONT_BITMAP
-        );
+        let font_texture = create_debug_font_texture(device);
 
         Ok(DebugRenderer {
             font_vertices: Vec::new(),
