@@ -281,6 +281,27 @@ type CompositeShaderParams = (
     Option<DeviceSize>,
 );
 
+struct CompositeBatchState {
+    shader_params: CompositeShaderParams,
+    textures: BatchTextures,
+    instances: Vec<CompositeInstance>,
+}
+
+impl CompositeBatchState {
+    fn new() -> Self {
+        Self {
+            shader_params: (
+                CompositeSurfaceFormat::Rgba,
+                ImageBufferKind::Texture2D,
+                CompositeFeatures::empty(),
+                None,
+            ),
+            textures: BatchTextures::empty(),
+            instances: Vec::new(),
+        }
+    }
+}
+
 // Key used when adding compositing tiles to the occlusion tracker.
 // Since an entire tile may have a mask, but we may segment that in
 // to masked and non-masked regions, we need to track which of the
@@ -2348,45 +2369,41 @@ impl Renderer {
 
     fn flush_composite_batch(
         &mut self,
-        instances: &mut Vec<CompositeInstance>,
-        textures: &BatchTextures,
+        batch: &mut CompositeBatchState,
         stats: &mut RendererStats,
     ) {
-        if instances.is_empty() {
+        if batch.instances.is_empty() {
             return;
         }
 
         self.draw_instanced_batch(
-            instances,
+            &batch.instances,
             VertexArrayKind::Composite,
-            textures,
+            &batch.textures,
             stats,
         );
-        instances.clear();
+        batch.instances.clear();
     }
 
     fn update_composite_batch_state(
         &mut self,
         projection: &default::Transform3D<f32>,
-        instances: &mut Vec<CompositeInstance>,
-        current_textures: &mut BatchTextures,
-        current_shader_params: &mut CompositeShaderParams,
+        batch: &mut CompositeBatchState,
         next_textures: BatchTextures,
         next_shader_params: CompositeShaderParams,
         stats: &mut RendererStats,
     ) {
-        let flush_batch = !current_textures.is_compatible_with(&next_textures) ||
-            next_shader_params != *current_shader_params;
+        let flush_batch = !batch.textures.is_compatible_with(&next_textures) ||
+            next_shader_params != batch.shader_params;
 
         if flush_batch {
             self.flush_composite_batch(
-                instances,
-                current_textures,
+                batch,
                 stats,
             );
         }
 
-        if next_shader_params != *current_shader_params {
+        if next_shader_params != batch.shader_params {
             self.bind_composite_shader(
                 projection,
                 next_shader_params.3,
@@ -2395,10 +2412,10 @@ impl Renderer {
                 next_shader_params.2,
             );
 
-            *current_shader_params = next_shader_params;
+            batch.shader_params = next_shader_params;
         }
 
-        *current_textures = next_textures;
+        batch.textures = next_textures;
     }
 
     fn build_composite_draw_item(
@@ -3644,21 +3661,14 @@ impl Renderer {
         projection: &default::Transform3D<f32>,
         stats: &mut RendererStats,
     ) {
-        let mut current_shader_params: CompositeShaderParams = (
-            CompositeSurfaceFormat::Rgba,
-            ImageBufferKind::Texture2D,
-            CompositeFeatures::empty(),
-            None,
-        );
-        let mut current_textures = BatchTextures::empty();
-        let mut instances = Vec::new();
+        let mut batch = CompositeBatchState::new();
 
         self.bind_composite_shader(
             projection,
             None,
-            current_shader_params.0,
-            current_shader_params.1,
-            current_shader_params.2,
+            batch.shader_params.0,
+            batch.shader_params.1,
+            batch.shader_params.2,
         );
 
         for item in tiles_iter {
@@ -3673,22 +3683,19 @@ impl Renderer {
 
             self.update_composite_batch_state(
                 projection,
-                &mut instances,
-                &mut current_textures,
-                &mut current_shader_params,
+                &mut batch,
                 textures,
                 shader_params,
                 stats,
             );
 
             // Add instance to current batch
-            instances.push(instance);
+            batch.instances.push(instance);
         }
 
         // Flush the last batch
         self.flush_composite_batch(
-            &mut instances,
-            &current_textures,
+            &mut batch,
             stats,
         );
     }
