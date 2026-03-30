@@ -463,6 +463,7 @@ fn create_webrender_instance_with_device(
     } else {
         None
     };
+    let aux_textures = super::RendererAuxTextures::new_gl(dither_matrix_texture);
 
     let max_primitive_instance_count =
         WebRenderOptions::MAX_INSTANCE_BUFFER_SIZE / mem::size_of::<PrimitiveInstanceData>();
@@ -766,7 +767,7 @@ fn create_webrender_instance_with_device(
         vaos,
         vertex_data_textures,
         pipeline_info: PipelineInfo::default(),
-        dither_matrix_texture,
+        aux_textures,
         external_image_handler: None,
         size_of_ops: make_size_of_ops(),
         cpu_profiles: VecDeque::new(),
@@ -786,7 +787,6 @@ fn create_webrender_instance_with_device(
         owned_external_images: FastHashMap::default(),
         notifications: Vec::new(),
         device_size: None,
-        zoom_debug_texture: None,
         cursor_position: DeviceIntPoint::zero(),
         shared_texture_cache_cleared: false,
         documents_seen: FastHashSet::default(),

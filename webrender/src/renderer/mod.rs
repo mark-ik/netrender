@@ -802,6 +802,90 @@ impl DebugOverlayState {
     }
 }
 
+struct GlRendererAuxTextures {
+    dither_matrix_texture: Option<Texture>,
+    zoom_debug_texture: Option<Texture>,
+}
+
+#[cfg(feature = "wgpu_backend")]
+#[allow(dead_code)]
+struct WgpuRendererAuxTextures;
+
+#[cfg_attr(feature = "wgpu_backend", allow(dead_code))]
+enum RendererAuxTextures {
+    Gl(GlRendererAuxTextures),
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu(WgpuRendererAuxTextures),
+}
+
+impl RendererAuxTextures {
+    fn new_gl(dither_matrix_texture: Option<Texture>) -> Self {
+        Self::Gl(GlRendererAuxTextures {
+            dither_matrix_texture,
+            zoom_debug_texture: None,
+        })
+    }
+
+    fn gl(&self) -> &GlRendererAuxTextures {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu aux textures are not wired yet"),
+        }
+    }
+
+    fn gl_mut(&mut self) -> &mut GlRendererAuxTextures {
+        match self {
+            Self::Gl(state) => state,
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => unreachable!("wgpu aux textures are not wired yet"),
+        }
+    }
+
+    fn dither_texture(&self) -> Option<&Texture> {
+        self.gl().dither_matrix_texture.as_ref()
+    }
+
+    fn ensure_zoom_texture(
+        &mut self,
+        device: &mut Device,
+        source_rect: DeviceIntRect,
+    ) -> &Texture {
+        let state = self.gl_mut();
+        if state.zoom_debug_texture.is_none() {
+            let texture = device.create_texture(
+                ImageBufferKind::Texture2D,
+                ImageFormat::BGRA8,
+                source_rect.width(),
+                source_rect.height(),
+                TextureFilter::Nearest,
+                Some(RenderTargetInfo { has_depth: false }),
+            );
+            state.zoom_debug_texture = Some(texture);
+        }
+        state.zoom_debug_texture.as_ref().unwrap()
+    }
+
+    fn zoom_texture(&self) -> &Texture {
+        self.gl().zoom_debug_texture.as_ref().unwrap()
+    }
+
+    fn deinit(self, device: &mut Device) {
+        match self {
+            Self::Gl(state) => {
+                if let Some(texture) = state.dither_matrix_texture {
+                    device.delete_texture(texture);
+                }
+                if let Some(texture) = state.zoom_debug_texture {
+                    device.delete_texture(texture);
+                }
+            }
+            #[cfg(feature = "wgpu_backend")]
+            Self::Wgpu(..) => {}
+        }
+    }
+}
+
 /// Tracks buffer damage rects over a series of frames.
 #[derive(Debug, Default)]
 pub(crate) struct BufferDamageTracker {
@@ -908,8 +992,7 @@ pub struct Renderer {
     texture_resolver: TextureResolver,
 
     upload_state: RendererUploadState,
-
-    dither_matrix_texture: Option<Texture>,
+    aux_textures: RendererAuxTextures,
 
     /// Optional trait object that allows the client
     /// application to provide external buffers for image data.
@@ -933,9 +1016,6 @@ pub struct Renderer {
     notifications: Vec<NotificationRequest>,
 
     device_size: Option<DeviceIntSize>,
-
-    /// A lazily created texture for the zoom debugging widget.
-    zoom_debug_texture: Option<Texture>,
 
     /// The current mouse position. This is used for debugging
     /// functionality only, such as the debug zoom widget.
@@ -2217,7 +2297,7 @@ impl Renderer {
         );
 
         // TODO: this probably isn't the best place for this.
-        if let Some(ref texture) = self.dither_matrix_texture {
+        if let Some(texture) = self.aux_textures.dither_texture() {
             self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
         }
     }
@@ -4636,7 +4716,7 @@ impl Renderer {
                 &mut self.profile,
             );
 
-            if let Some(ref texture) = self.dither_matrix_texture {
+            if let Some(texture) = self.aux_textures.dither_texture() {
                 self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
             }
 
@@ -4662,7 +4742,7 @@ impl Renderer {
                 &mut self.profile,
             );
 
-            if let Some(ref texture) = self.dither_matrix_texture {
+            if let Some(texture) = self.aux_textures.dither_texture() {
                 self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
             }
 
@@ -4688,7 +4768,7 @@ impl Renderer {
                 &mut self.profile,
             );
 
-            if let Some(ref texture) = self.dither_matrix_texture {
+            if let Some(texture) = self.aux_textures.dither_texture() {
                 self.device.bind_texture(TextureSampler::Dither, texture, Swizzle::default());
             }
 
@@ -5692,18 +5772,7 @@ impl Renderer {
             debug_colors::RED.into(),
         );
 
-        if self.zoom_debug_texture.is_none() {
-            let texture = self.device.create_texture(
-                ImageBufferKind::Texture2D,
-                ImageFormat::BGRA8,
-                source_rect.width(),
-                source_rect.height(),
-                TextureFilter::Nearest,
-                Some(RenderTargetInfo { has_depth: false }),
-            );
-
-            self.zoom_debug_texture = Some(texture);
-        }
+        let zoom_texture = self.aux_textures.ensure_zoom_texture(&mut self.device, source_rect);
 
         // Copy frame buffer into the zoom texture
         let read_target = DrawTarget::new_default(device_size, self.device.surface_origin_is_top_left());
@@ -5711,7 +5780,7 @@ impl Renderer {
             read_target.into(),
             read_target.to_framebuffer_rect(source_rect),
             DrawTarget::from_texture(
-                self.zoom_debug_texture.as_ref().unwrap(),
+                zoom_texture,
                 false,
             ),
             texture_rect,
@@ -5721,7 +5790,7 @@ impl Renderer {
         // Draw the zoom texture back to the framebuffer
         self.device.blit_render_target(
             ReadTarget::from_texture(
-                self.zoom_debug_texture.as_ref().unwrap(),
+                self.aux_textures.zoom_texture(),
             ),
             texture_rect,
             read_target,
@@ -5995,16 +6064,11 @@ impl Renderer {
             compositor.deinit(&mut self.device);
         }
         self.gpu_cache_texture.deinit(&mut self.device);
-        if let Some(dither_matrix_texture) = self.dither_matrix_texture {
-            self.device.delete_texture(dither_matrix_texture);
-        }
-        if let Some(zoom_debug_texture) = self.zoom_debug_texture {
-            self.device.delete_texture(zoom_debug_texture);
-        }
         self.vertex_data_textures.deinit(&mut self.device);
         self.upload_state.deinit(&mut self.device);
         self.texture_resolver.deinit(&mut self.device);
         self.vaos.deinit(&mut self.device);
+        self.aux_textures.deinit(&mut self.device);
         self.debug.deinit(&mut self.device);
 
         if let Ok(shaders) = Rc::try_unwrap(self.shaders) {
