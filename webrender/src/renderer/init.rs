@@ -122,6 +122,9 @@ pub enum RendererBackend {
     Gl { gl: Rc<dyn gl::Gl> },
     #[cfg(feature = "wgpu_backend")]
     Wgpu {
+        /// The wgpu instance that created the surface. Must be provided when
+        /// surface is Some. For headless mode, pass None.
+        instance: Option<wgpu::Instance>,
         /// Window surface for presentation. Pass `None` for headless mode.
         surface: Option<wgpu::Surface<'static>>,
         /// Initial framebuffer width (ignored if surface is None).
@@ -380,8 +383,8 @@ pub fn create_webrender_instance_with_backend(
     shaders: Option<&SharedShaders>,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
     #[cfg(feature = "wgpu_backend")]
-    if let RendererBackend::Wgpu { surface, width, height } = backend {
-        return create_webrender_instance_wgpu(notifier, options, surface, width, height);
+    if let RendererBackend::Wgpu { instance, surface, width, height } = backend {
+        return create_webrender_instance_wgpu(notifier, options, instance, surface, width, height);
     }
 
     let device = backend.into_device(&mut options)?;
@@ -893,6 +896,7 @@ fn create_dither_matrix_texture<D: GpuDevice>(device: &mut D) -> D::Texture {
 pub fn create_webrender_instance_wgpu(
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
+    instance: Option<wgpu::Instance>,
     surface: Option<wgpu::Surface<'static>>,
     surface_width: u32,
     surface_height: u32,
@@ -918,7 +922,9 @@ pub fn create_webrender_instance_wgpu(
 
     // Create the wgpu device — with surface if provided, else headless.
     let wgpu_device = if let Some(surface) = surface {
-        WgpuDevice::new_with_surface(surface, surface_width, surface_height)
+        let inst = instance.as_ref()
+            .expect("wgpu Instance must be provided when surface is Some");
+        WgpuDevice::new_with_surface(inst, surface, surface_width, surface_height)
             .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available for surface"))?
     } else {
         WgpuDevice::new_headless()

@@ -125,14 +125,15 @@ impl WgpuDevice {
 
     /// Create a device with a window surface for presentation.
     ///
-    /// The caller creates the `wgpu::Surface<'static>` from its window handle
-    /// and passes it here along with the initial framebuffer size.
+    /// The caller creates the `wgpu::Instance` and `wgpu::Surface<'static>` from
+    /// its window handle and passes them here along with the initial framebuffer
+    /// size. The instance must be the same one that created the surface.
     pub fn new_with_surface(
+        instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
         width: u32,
         height: u32,
     ) -> Option<Self> {
-        let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
