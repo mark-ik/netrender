@@ -607,7 +607,7 @@ impl super::Renderer {
         // permanently, we can have this code nicer with `BufferUploader` kind
         // of helper, similarly to how `TextureUploader` API is used.
         self.gpu_cache_texture.prepare_for_updates(
-            &mut self.device,
+            self.device.as_mut().unwrap(),
             updated_blocks,
             max_requested_height,
         );
@@ -618,12 +618,12 @@ impl super::Renderer {
                 self.gpu_cache_frame_id = update_list.frame_id
             }
             self.gpu_cache_texture
-                .update(&mut self.device, &update_list);
+                .update(self.device.as_mut().unwrap(), &update_list);
         }
 
         self.profile.start_time(profiler::GPU_CACHE_UPLOAD_TIME);
         let updated_rows = self.gpu_cache_texture.flush(
-            &mut self.device,
+            self.device.as_mut().unwrap(),
             self.upload_state.gl_pools_mut().0
         );
         self.gpu_cache_upload_time += self.profile.end_time(profiler::GPU_CACHE_UPLOAD_TIME);
@@ -640,7 +640,7 @@ impl super::Renderer {
 
         if self.pending_gpu_cache_clear {
             let use_scatter = self.gpu_cache_texture.uses_scatter_updates();
-            let new_cache = match RendererGpuCache::new_gl(&mut self.device, use_scatter) {
+            let new_cache = match RendererGpuCache::new_gl(self.device.as_mut().unwrap(), use_scatter) {
                 Ok(cache) => cache,
                 Err(err) => {
                     self.profile.end_time(profiler::GPU_CACHE_PREPARE_TIME);
@@ -648,7 +648,7 @@ impl super::Renderer {
                 }
             };
             let old_cache = mem::replace(&mut self.gpu_cache_texture, new_cache);
-            old_cache.deinit(&mut self.device);
+            old_cache.deinit(self.device.as_mut().unwrap());
             self.pending_gpu_cache_clear = false;
         }
 
@@ -659,7 +659,7 @@ impl super::Renderer {
 
         // Note: the texture might have changed during the `update`,
         // so we need to bind it here.
-        self.device.bind_texture(
+        self.device.as_mut().unwrap().bind_texture(
             super::TextureSampler::GpuCache,
             self.gpu_cache_texture.texture(),
             Swizzle::default(),
@@ -674,15 +674,15 @@ impl super::Renderer {
         let texture = self.gpu_cache_texture.texture();
         let size = device_size_as_framebuffer_size(texture.get_dimensions());
         let mut texels = vec![0; (size.width * size.height * 16) as usize];
-        self.device.begin_frame();
-        self.device.bind_read_target(ReadTarget::from_texture(texture));
-        self.device.read_pixels_into(
+        self.device.as_mut().unwrap().begin_frame();
+        self.device.as_mut().unwrap().bind_read_target(ReadTarget::from_texture(texture));
+        self.device.as_mut().unwrap().read_pixels_into(
             size.into(),
             api::ImageFormat::RGBAF32,
             &mut texels,
         );
-        self.device.reset_read_target();
-        self.device.end_frame();
+        self.device.as_mut().unwrap().reset_read_target();
+        self.device.as_mut().unwrap().end_frame();
         (texture.get_dimensions(), texels)
     }
 }

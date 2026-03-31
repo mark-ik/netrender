@@ -76,7 +76,7 @@ pub fn upload_to_texture_cache(
 
     let num_updates = update_list.len();
     {
-        let device = &mut renderer.device;
+        let device = renderer.device.as_mut().unwrap();
         let texture_resolver = &renderer.texture_resolver;
         let external_image_handler = &mut renderer.external_image_handler;
         let (texture_upload_pbo_pool, staging_texture_pool) = renderer.upload_state.gl_pools_mut();
@@ -250,7 +250,7 @@ pub fn upload_to_texture_cache(
 
         let gpu_copy_start = zeitstempel::now();
 
-        if renderer.device.use_draw_calls_for_texture_copy() {
+        if renderer.device.as_mut().unwrap().use_draw_calls_for_texture_copy() {
             // Some drivers have a very high CPU overhead when submitting hundreds of small blit
             // commands (low end intel drivers on Windows for example can take take 100+ ms submitting a
             // few hundred blits). In this case we do the copy with batched draw calls.
@@ -512,7 +512,7 @@ fn copy_from_staging_to_cache(
     for copy in batch_upload_copies {
         let dest_texture = &renderer.texture_resolver.texture_cache_map[&copy.dest_texture_id].texture;
 
-        renderer.device.copy_texture_sub_region(
+        renderer.device.as_mut().unwrap().copy_texture_sub_region(
             &batch_upload_textures[copy.src_texture_index],
             copy.src_offset.x as _,
             copy.src_offset.y as _,
@@ -565,13 +565,13 @@ fn copy_from_staging_to_cache_using_draw_calls(
             dst_texture_size = dest_texture.get_dimensions().to_f32();
 
             let draw_target = DrawTarget::from_texture(dest_texture, false);
-            renderer.device.bind_draw_target(draw_target);
+            renderer.device.as_mut().unwrap().bind_draw_target(draw_target);
 
             renderer.shaders
                 .borrow_mut()
                 .ps_copy()
                 .bind(
-                    &mut renderer.device,
+                    renderer.device.as_mut().unwrap(),
                     &Transform3D::identity(),
                     None,
                     &mut renderer.renderer_errors,
@@ -582,7 +582,7 @@ fn copy_from_staging_to_cache_using_draw_calls(
         }
 
         if src_changed {
-            renderer.device.bind_texture(
+            renderer.device.as_mut().unwrap().bind_texture(
                 TextureSampler::Color0,
                 &batch_upload_textures[copy.src_texture_index],
                 Swizzle::default(),

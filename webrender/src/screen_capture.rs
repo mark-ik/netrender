@@ -395,19 +395,19 @@ impl Renderer {
         image_format: ImageFormat,
     ) -> Option<(RecordedFrameHandle, DeviceIntSize)> {
         let device_size = self.device_size()?;
-        self.device.begin_frame();
+        self.device.as_mut().unwrap().begin_frame();
 
         let (handle, _) = self
             .async_frame_recorder
             .get_or_insert_with(AsyncScreenshotGrabber::new_composition_recorder)
             .get_screenshot(
-                &mut self.device,
+                self.device.as_mut().unwrap(),
                 DeviceIntRect::from_size(device_size),
                 device_size,
                 image_format,
             );
 
-        self.device.end_frame();
+        self.device.as_mut().unwrap().end_frame();
 
         Some((RecordedFrameHandle(handle.0), device_size))
     }
@@ -421,7 +421,7 @@ impl Renderer {
     ) -> bool {
         if let Some(async_frame_recorder) = self.async_frame_recorder.as_mut() {
             async_frame_recorder.map_and_recycle_screenshot(
-                &mut self.device,
+                self.device.as_mut().unwrap(),
                 AsyncScreenshotHandle(handle.0),
                 dst_buffer,
                 dst_stride,
@@ -434,9 +434,9 @@ impl Renderer {
     /// Free the data structures used by the composition recorder.
     pub fn release_composition_recorder_structures(&mut self) {
         if let Some(async_frame_recorder) = self.async_frame_recorder.take() {
-            self.device.begin_frame();
-            async_frame_recorder.deinit(&mut self.device);
-            self.device.end_frame();
+            self.device.as_mut().unwrap().begin_frame();
+            async_frame_recorder.deinit(self.device.as_mut().unwrap());
+            self.device.as_mut().unwrap().end_frame();
         }
     }
 
@@ -452,14 +452,14 @@ impl Renderer {
         buffer_size: DeviceIntSize,
         image_format: ImageFormat,
     ) -> (AsyncScreenshotHandle, DeviceIntSize) {
-        self.device.begin_frame();
+        self.device.as_mut().unwrap().begin_frame();
 
         let handle = self
             .async_screenshots
             .get_or_insert_with(AsyncScreenshotGrabber::default)
-            .get_screenshot(&mut self.device, window_rect, buffer_size, image_format);
+            .get_screenshot(self.device.as_mut().unwrap(), window_rect, buffer_size, image_format);
 
-        self.device.end_frame();
+        self.device.as_mut().unwrap().end_frame();
 
         handle
     }
@@ -474,7 +474,7 @@ impl Renderer {
     ) -> bool {
         if let Some(async_screenshots) = self.async_screenshots.as_mut() {
             async_screenshots.map_and_recycle_screenshot(
-                &mut self.device,
+                self.device.as_mut().unwrap(),
                 handle,
                 dst_buffer,
                 dst_stride,
@@ -487,9 +487,9 @@ impl Renderer {
     /// Release the screenshot grabbing structures that the profiler was using.
     pub fn release_profiler_structures(&mut self) {
         if let Some(async_screenshots) = self.async_screenshots.take() {
-            self.device.begin_frame();
-            async_screenshots.deinit(&mut self.device);
-            self.device.end_frame();
+            self.device.as_mut().unwrap().begin_frame();
+            async_screenshots.deinit(self.device.as_mut().unwrap());
+            self.device.as_mut().unwrap().end_frame();
         }
     }
 }

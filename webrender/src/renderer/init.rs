@@ -719,6 +719,17 @@ fn create_webrender_instance_with_device(
         profiler::unregister_thread();
     })?;
 
+    #[cfg(feature = "wgpu_backend")]
+    let wgpu_device = {
+        let dev = crate::device::WgpuDevice::new_headless();
+        if dev.is_some() {
+            info!("wgpu: headless device created alongside GL");
+        } else {
+            warn!("wgpu: no adapter available — wgpu draw paths will be disabled");
+        }
+        dev
+    };
+
     let debug_method = if !options.enable_gpu_markers {
         // The GPU markers are disabled.
         GpuDebugMethod::None
@@ -740,7 +751,7 @@ fn create_webrender_instance_with_device(
     let mut renderer = Renderer {
         result_rx,
         api_tx: api_tx.clone(),
-        device,
+        device: Some(device),
         active_documents: FastHashMap::default(),
         pending_texture_updates: Vec::new(),
         pending_texture_cache_updates: false,
@@ -804,6 +815,8 @@ fn create_webrender_instance_with_device(
         layer_compositor_frame_state_in_prev_frame: None,
         #[cfg(feature = "debugger")]
         debugger: Debugger::new(),
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_device,
     };
 
     // We initially set the flags to default and then now call set_debug_flags
