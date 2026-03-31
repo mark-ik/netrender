@@ -31,6 +31,11 @@ impl WgpuTexture {
     pub fn create_view(&self) -> wgpu::TextureView {
         self.texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
+
+    /// Bytes per pixel for this texture's format.
+    pub fn bytes_per_pixel(&self) -> u32 {
+        wgpu_format_bytes_per_pixel(self.format)
+    }
 }
 
 /// A wgpu-backed shader pipeline.

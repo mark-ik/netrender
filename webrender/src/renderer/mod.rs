@@ -2607,8 +2607,7 @@ impl Renderer {
     }
 
     /// Process texture cache updates in wgpu-only mode.
-    /// Creates/deletes wgpu textures and uploads pixel data via write_texture.
-    /// Copies are not yet supported.
+    /// Creates/deletes wgpu textures, uploads pixel data, and processes copies.
     #[cfg(feature = "wgpu_backend")]
     fn update_texture_cache_wgpu(&mut self) {
         use crate::internal_types::TextureUpdateSource;
@@ -2681,6 +2680,7 @@ impl Renderer {
                     }
                 };
                 for update in updates {
+                    let dummy_data;
                     let data = match update.source {
                         TextureUpdateSource::Bytes { ref data } => {
                             &data[update.offset as usize ..]
@@ -2689,9 +2689,35 @@ impl Renderer {
                             // Skip debug clears for now.
                             continue;
                         }
-                        TextureUpdateSource::External { .. } => {
-                            // External image uploads not yet supported in wgpu mode.
-                            warn!("wgpu: skipping external image upload");
+                        TextureUpdateSource::External { id, channel_index } => {
+                            let handler = self.external_image_handler
+                                .as_mut()
+                                .expect("Found external image, but no handler set!");
+                            let ext_image = handler.lock(id, channel_index, false);
+                            let src = match ext_image.source {
+                                ExternalImageSource::RawData(data) => {
+                                    &data[update.offset as usize ..]
+                                }
+                                ExternalImageSource::Invalid => {
+                                    let bpp = texture.bytes_per_pixel();
+                                    let width = update.stride.map(|s| s as u32)
+                                        .unwrap_or(update.rect.width() as u32 * bpp);
+                                    let total_size = width * update.rect.height() as u32;
+                                    dummy_data = vec![0xFFu8; total_size as usize];
+                                    &dummy_data
+                                }
+                                ExternalImageSource::NativeTexture(eid) => {
+                                    panic!("Unexpected external texture {:?} for the texture cache update of {:?}", eid, id);
+                                }
+                            };
+                            wgpu_dev.upload_texture_sub_rect(
+                                texture,
+                                update.rect,
+                                update.stride,
+                                src,
+                                update.format_override.unwrap_or(api::ImageFormat::BGRA8),
+                            );
+                            handler.unlock(id, channel_index);
                             continue;
                         }
                     };

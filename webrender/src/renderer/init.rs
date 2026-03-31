@@ -999,7 +999,7 @@ pub fn create_webrender_instance_wgpu(
         compositor_kind,
         tile_size_override: None,
         max_surface_override: None,
-        max_depth_ids: 64, // reasonable default, no GL query needed
+        max_depth_ids: 1 << 22, // 24-bit depth minus 2 reserve bits, matching GL path
         max_target_size: max_internal_texture_size,
         force_invalidation: false,
         is_software,
