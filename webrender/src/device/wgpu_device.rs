@@ -579,6 +579,33 @@ impl WgpuDevice {
         self.queue.submit([encoder.finish()]);
     }
 
+    /// Create a render target texture suitable for wgpu composite rendering.
+    /// Uses the internal wgpu device directly (no &mut self needed).
+    pub fn create_render_target(&self, width: u32, height: u32) -> WgpuTexture {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("wgpu composite RT"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        WgpuTexture {
+            texture,
+            width,
+            height,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+        }
+    }
+
     /// Render composite tile instances through the composite pipeline.
     ///
     /// This is the first real draw path that exercises instanced rendering

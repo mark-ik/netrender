@@ -1211,6 +1211,105 @@ impl Renderer {
         self.device_size
     }
 
+    /// Returns true if this Renderer is in wgpu-only mode (no GL device).
+    pub fn is_wgpu_only(&self) -> bool {
+        self.device.is_none()
+    }
+
+    /// Minimal wgpu render path. Processes pending messages from the backend
+    /// and composites the frame via wgpu. Currently only handles solid-color
+    /// tiles (texture cache tiles are skipped).
+    #[cfg(feature = "wgpu_backend")]
+    fn render_wgpu(
+        &mut self,
+        device_size: DeviceIntSize,
+    ) -> Result<RenderResults, Vec<RendererError>> {
+        use crate::composite::CompositeTileSurface;
+
+        let results = RenderResults::default();
+
+        let doc_id = self.active_documents.keys().last().cloned();
+        let Some(doc_id) = doc_id else {
+            return Ok(results);
+        };
+
+        let doc = match self.active_documents.get(&doc_id) {
+            Some(doc) => doc,
+            None => return Ok(results),
+        };
+
+        let wgpu_dev = match self.wgpu_device {
+            Some(ref dev) => dev,
+            None => return Ok(results),
+        };
+
+        // Create or reuse the wgpu render target matching device_size.
+        let rt = wgpu_dev.create_render_target(
+            device_size.width as u32,
+            device_size.height as u32,
+        );
+
+        // Collect solid-color composite tiles into CompositeInstance batches.
+        // Texture-backed tiles are skipped for now (no wgpu texture cache yet).
+        let composite_state = &doc.frame.composite_state;
+        let mut color_instances: Vec<CompositeInstance> = Vec::new();
+
+        for tile in &composite_state.tiles {
+            if let CompositeTileSurface::Color { color } = tile.surface {
+                let tile_rect = composite_state.get_device_rect(
+                    &tile.local_rect,
+                    tile.transform_index,
+                );
+                let transform = composite_state.get_device_transform(tile.transform_index);
+                let flip = (transform.scale.x < 0.0, transform.scale.y < 0.0);
+                let instance = CompositeInstance::new(
+                    tile_rect,
+                    tile_rect, // clip_rect = tile_rect (no clip)
+                    color.premultiplied(),
+                    flip,
+                    None, // no rounded clip
+                );
+                color_instances.push(instance);
+            }
+        }
+
+        if !color_instances.is_empty() {
+            // Marshal instances to bytes
+            let instance_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    color_instances.as_ptr() as *const u8,
+                    color_instances.len() * std::mem::size_of::<CompositeInstance>(),
+                )
+            };
+
+            wgpu_dev.render_composite_instances(
+                &rt,
+                None, // no source texture for solid-color tiles
+                instance_bytes,
+                color_instances.len() as u32,
+                "FAST_PATH,TEXTURE_2D",
+                true, // clear the render target
+            );
+
+            info!(
+                "wgpu: composited {} solid-color tiles ({}x{})",
+                color_instances.len(),
+                device_size.width,
+                device_size.height,
+            );
+        }
+
+        // Drain notifications that expect FrameRendered
+        drain_filter(
+            &mut self.notifications,
+            |n| n.when() == Checkpoint::FrameRendered,
+            |n| n.notify(),
+        );
+        self.notifications.clear();
+
+        Ok(results)
+    }
+
     /// Update the current position of the debug cursor.
     pub fn set_cursor_position(
         &mut self,
@@ -1303,7 +1402,7 @@ impl Renderer {
                     let prev_frame_memory = if let Some(mut prev_doc) = self.active_documents.remove(&document_id) {
                         doc.profile.merge(&mut prev_doc.profile);
 
-                        if prev_doc.frame.must_be_drawn() {
+                        if prev_doc.frame.must_be_drawn() && !self.is_wgpu_only() {
                             prev_doc.render_reasons |= RenderReasons::TEXTURE_CACHE_FLUSH;
                             self.render_impl(
                                 document_id,
@@ -1321,7 +1420,9 @@ impl Renderer {
                     if let Some(memory) = prev_frame_memory {
                         // We just dropped the frame a few lives above. There should be no
                         // live allocations left in the frame's memory.
-                        memory.assert_memory_reusable();
+                        if !self.is_wgpu_only() {
+                            memory.assert_memory_reusable();
+                        }
                     }
 
                     self.active_documents.insert(document_id, doc);
@@ -1372,7 +1473,7 @@ impl Renderer {
                     resource_updates,
                     memory_pressure,
                 } => {
-                    if memory_pressure {
+                    if memory_pressure && !self.is_wgpu_only() {
                         // If a memory pressure event arrives _after_ a new scene has
                         // been published that writes persistent targets (i.e. cached
                         // render tasks to the texture cache, or picture cache tiles)
@@ -1401,26 +1502,33 @@ impl Renderer {
                         }
                     }
 
-                    self.pending_texture_cache_updates |= !resource_updates.texture_updates.updates.is_empty();
-                    self.pending_texture_updates.push(resource_updates.texture_updates);
-                    self.pending_native_surface_updates.extend(resource_updates.native_surface_updates);
-                    self.device.as_mut().unwrap().begin_frame();
+                    if !self.is_wgpu_only() {
+                        self.pending_texture_cache_updates |= !resource_updates.texture_updates.updates.is_empty();
+                        self.pending_texture_updates.push(resource_updates.texture_updates);
+                        self.pending_native_surface_updates.extend(resource_updates.native_surface_updates);
+                        self.device.as_mut().unwrap().begin_frame();
 
-                    self.update_texture_cache();
-                    self.update_native_surfaces();
+                        self.update_texture_cache();
+                        self.update_native_surfaces();
 
-                    // Flush the render target pool on memory pressure.
-                    //
-                    // This needs to be separate from the block below because
-                    // the device module asserts if we delete textures while
-                    // not in a frame.
-                    if memory_pressure {
-                        self.upload_state.on_memory_pressure(self.device.as_mut().unwrap());
+                        // Flush the render target pool on memory pressure.
+                        //
+                        // This needs to be separate from the block below because
+                        // the device module asserts if we delete textures while
+                        // not in a frame.
+                        if memory_pressure {
+                            self.upload_state.on_memory_pressure(self.device.as_mut().unwrap());
+                        }
+
+                        self.device.as_mut().unwrap().end_frame();
                     }
-
-                    self.device.as_mut().unwrap().end_frame();
                 }
                 ResultMsg::RenderDocumentOffscreen(document_id, mut offscreen_doc, resources) => {
+                    if self.is_wgpu_only() {
+                        // Skip offscreen rendering in wgpu-only mode (no GL device).
+                        continue;
+                    }
+
                     // Flush pending operations if needed (See comment in the match arm for
                     // PublishPipelineInfo).
 
@@ -1475,7 +1583,9 @@ impl Renderer {
                     self.pending_shader_updates.push(path);
                 }
                 ResultMsg::SetParameter(ref param) => {
-                    self.device.as_mut().unwrap().set_parameter(param);
+                    if let Some(ref mut device) = self.device {
+                        device.set_parameter(param);
+                    }
                     self.profiler.set_parameter(param);
                 }
                 ResultMsg::DebugOutput(output) => match output {
@@ -1599,6 +1709,12 @@ impl Renderer {
         buffer_age: usize,
     ) -> Result<RenderResults, Vec<RendererError>> {
         self.device_size = Some(device_size);
+
+        // In wgpu-only mode, use the dedicated wgpu render path.
+        #[cfg(feature = "wgpu_backend")]
+        if self.is_wgpu_only() {
+            return self.render_wgpu(device_size);
+        }
 
         // TODO(gw): We want to make the active document that is
         //           being rendered configurable via the public
