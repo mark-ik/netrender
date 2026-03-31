@@ -31,4 +31,4 @@ pub trait GpuDevice {
 #[cfg(feature = "wgpu_backend")]
 mod wgpu_device;
 #[cfg(feature = "wgpu_backend")]
-pub use self::wgpu_device::WgpuDevice;
+pub use self::wgpu_device::{WgpuDevice, WgpuTexture};

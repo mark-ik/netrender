@@ -1172,6 +1172,11 @@ pub struct Renderer {
     /// enabled; will eventually be the sole device for `RendererBackend::Wgpu`.
     #[cfg(feature = "wgpu_backend")]
     pub wgpu_device: Option<WgpuDevice>,
+
+    /// Texture cache map for wgpu-only mode. Maps CacheTextureId to wgpu textures.
+    /// Only populated when device is None (wgpu-only Renderer).
+    #[cfg(feature = "wgpu_backend")]
+    wgpu_texture_cache: FastHashMap<CacheTextureId, crate::device::WgpuTexture>,
 }
 
 #[derive(Debug)]
@@ -1228,6 +1233,9 @@ impl Renderer {
 
         let results = RenderResults::default();
 
+        // Process any pending texture cache updates before rendering.
+        self.update_texture_cache_wgpu();
+
         let doc_id = self.active_documents.keys().last().cloned();
         let Some(doc_id) = doc_id else {
             return Ok(results);
@@ -1253,25 +1261,61 @@ impl Renderer {
         // Texture-backed tiles are skipped for now (no wgpu texture cache yet).
         let composite_state = &doc.frame.composite_state;
         let mut color_instances: Vec<CompositeInstance> = Vec::new();
+        // Group texture-backed tiles by their CacheTextureId.
+        let mut textured_batches: FastHashMap<CacheTextureId, Vec<CompositeInstance>> =
+            FastHashMap::default();
+        let mut skipped_tiles = 0u32;
 
         for tile in &composite_state.tiles {
-            if let CompositeTileSurface::Color { color } = tile.surface {
-                let tile_rect = composite_state.get_device_rect(
-                    &tile.local_rect,
-                    tile.transform_index,
-                );
-                let transform = composite_state.get_device_transform(tile.transform_index);
-                let flip = (transform.scale.x < 0.0, transform.scale.y < 0.0);
-                let instance = CompositeInstance::new(
-                    tile_rect,
-                    tile_rect, // clip_rect = tile_rect (no clip)
-                    color.premultiplied(),
-                    flip,
-                    None, // no rounded clip
-                );
-                color_instances.push(instance);
+            let tile_rect = composite_state.get_device_rect(
+                &tile.local_rect,
+                tile.transform_index,
+            );
+            let transform = composite_state.get_device_transform(tile.transform_index);
+            let flip = (transform.scale.x < 0.0, transform.scale.y < 0.0);
+
+            match tile.surface {
+                CompositeTileSurface::Color { color } => {
+                    let instance = CompositeInstance::new(
+                        tile_rect,
+                        tile_rect,
+                        color.premultiplied(),
+                        flip,
+                        None,
+                    );
+                    color_instances.push(instance);
+                }
+                CompositeTileSurface::Texture {
+                    surface: ResolvedSurfaceTexture::TextureCache { texture }
+                } => {
+                    if let TextureSource::TextureCache(cache_id, _swizzle) = texture {
+                        if self.wgpu_texture_cache.contains_key(&cache_id) {
+                            let instance = CompositeInstance::new(
+                                tile_rect,
+                                tile_rect,
+                                PremultipliedColorF::WHITE,
+                                flip,
+                                None,
+                            );
+                            textured_batches
+                                .entry(cache_id)
+                                .or_insert_with(Vec::new)
+                                .push(instance);
+                        } else {
+                            skipped_tiles += 1;
+                        }
+                    } else {
+                        skipped_tiles += 1;
+                    }
+                }
+                _ => {
+                    // Clear, ExternalSurface, Native — skip for now.
+                    skipped_tiles += 1;
+                }
             }
         }
+
+        let mut need_clear = true;
 
         if !color_instances.is_empty() {
             // Marshal instances to bytes
@@ -1288,12 +1332,41 @@ impl Renderer {
                 instance_bytes,
                 color_instances.len() as u32,
                 "FAST_PATH,TEXTURE_2D",
-                true, // clear the render target
+                need_clear,
             );
+            need_clear = false;
+        }
 
+        // Render texture-backed tile batches.
+        for (cache_id, instances) in &textured_batches {
+            let wgpu_tex = match self.wgpu_texture_cache.get(cache_id) {
+                Some(t) => t,
+                None => continue,
+            };
+            let instance_bytes: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    instances.as_ptr() as *const u8,
+                    instances.len() * std::mem::size_of::<CompositeInstance>(),
+                )
+            };
+            wgpu_dev.render_composite_instances(
+                &rt,
+                Some(wgpu_tex),
+                instance_bytes,
+                instances.len() as u32,
+                "FAST_PATH,TEXTURE_2D",
+                need_clear,
+            );
+            need_clear = false;
+        }
+
+        let total_textured: usize = textured_batches.values().map(|v| v.len()).sum();
+        if !color_instances.is_empty() || total_textured > 0 {
             info!(
-                "wgpu: composited {} solid-color tiles ({}x{})",
+                "wgpu: composited {} color + {} textured tiles ({} skipped, {}x{})",
                 color_instances.len(),
+                total_textured,
+                skipped_tiles,
                 device_size.width,
                 device_size.height,
             );
@@ -1502,7 +1575,14 @@ impl Renderer {
                         }
                     }
 
-                    if !self.is_wgpu_only() {
+                    if self.is_wgpu_only() {
+                        #[cfg(feature = "wgpu_backend")]
+                        {
+                            self.pending_texture_cache_updates |= !resource_updates.texture_updates.updates.is_empty();
+                            self.pending_texture_updates.push(resource_updates.texture_updates);
+                            self.update_texture_cache_wgpu();
+                        }
+                    } else {
                         self.pending_texture_cache_updates |= !resource_updates.texture_updates.updates.is_empty();
                         self.pending_texture_updates.push(resource_updates.texture_updates);
                         self.pending_native_surface_updates.extend(resource_updates.native_surface_updates);
@@ -2491,6 +2571,93 @@ impl Renderer {
         let t = self.profile.end_time(profiler::TEXTURE_CACHE_UPDATE_TIME);
         self.resource_upload_time += t;
         Telemetry::record_texture_cache_update_time(Duration::from_micros((t * 1000.00) as u64));
+
+        drain_filter(
+            &mut self.notifications,
+            |n| { n.when() == Checkpoint::FrameTexturesUpdated },
+            |n| { n.notify(); },
+        );
+    }
+
+    /// Process texture cache updates in wgpu-only mode.
+    /// Creates/deletes wgpu textures and uploads pixel data via write_texture.
+    /// Copies are not yet supported.
+    #[cfg(feature = "wgpu_backend")]
+    fn update_texture_cache_wgpu(&mut self) {
+        use crate::internal_types::TextureUpdateSource;
+
+        let mut pending_texture_updates = mem::replace(&mut self.pending_texture_updates, vec![]);
+        self.pending_texture_cache_updates = false;
+
+        let wgpu_dev = match self.wgpu_device {
+            Some(ref dev) => dev,
+            None => return,
+        };
+
+        for update_list in pending_texture_updates.drain(..) {
+            // Process allocations: create or free wgpu textures.
+            for allocation in &update_list.allocations {
+                match allocation.kind {
+                    TextureCacheAllocationKind::Free => {
+                        // Remove and drop the wgpu texture.
+                        self.wgpu_texture_cache.remove(&allocation.id);
+                    }
+                    TextureCacheAllocationKind::Alloc(ref info) |
+                    TextureCacheAllocationKind::Reset(ref info) => {
+                        // For Reset, remove old texture first.
+                        if matches!(allocation.kind, TextureCacheAllocationKind::Reset(_)) {
+                            self.wgpu_texture_cache.remove(&allocation.id);
+                        }
+                        let texture = wgpu_dev.create_cache_texture(
+                            info.width,
+                            info.height,
+                            info.format,
+                        );
+                        self.wgpu_texture_cache.insert(allocation.id, texture);
+                    }
+                }
+            }
+
+            // Process uploads: write pixel data to wgpu textures.
+            for (texture_id, updates) in update_list.updates {
+                let texture = match self.wgpu_texture_cache.get(&texture_id) {
+                    Some(t) => t,
+                    None => {
+                        warn!("wgpu: texture cache upload for unknown texture {:?}", texture_id);
+                        continue;
+                    }
+                };
+                for update in updates {
+                    let data = match update.source {
+                        TextureUpdateSource::Bytes { ref data } => {
+                            &data[update.offset as usize ..]
+                        }
+                        TextureUpdateSource::DebugClear => {
+                            // Skip debug clears for now.
+                            continue;
+                        }
+                        TextureUpdateSource::External { .. } => {
+                            // External image uploads not yet supported in wgpu mode.
+                            warn!("wgpu: skipping external image upload");
+                            continue;
+                        }
+                    };
+                    wgpu_dev.upload_texture_sub_rect(
+                        texture,
+                        update.rect,
+                        update.stride,
+                        data,
+                        update.format_override.unwrap_or(api::ImageFormat::BGRA8),
+                    );
+                }
+            }
+
+            // Copies not yet implemented for wgpu.
+            if !update_list.copies.is_empty() {
+                warn!("wgpu: {} texture cache copies skipped (not yet implemented)",
+                    update_list.copies.len());
+            }
+        }
 
         drain_filter(
             &mut self.notifications,

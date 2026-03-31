@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 use api::{ImageBufferKind, ImageFormat};
+use api::units::DeviceIntRect;
 
 use super::{GpuDevice, GpuFrameId, Texel, TextureFilter};
 use crate::internal_types::RenderTargetInfo;
@@ -173,6 +174,80 @@ impl WgpuDevice {
                 depth_or_array_layers: 1,
             },
         );
+    }
+
+    /// Upload pixel data to a sub-rectangle of a wgpu texture.
+    pub fn upload_texture_sub_rect(
+        &self,
+        texture: &WgpuTexture,
+        rect: DeviceIntRect,
+        stride: Option<i32>,
+        data: &[u8],
+        format: ImageFormat,
+    ) {
+        let bpp = wgpu_format_bytes_per_pixel(texture.format);
+        let row_bytes = rect.width() as u32 * bpp;
+        let src_stride = stride.map(|s| s as u32).unwrap_or(row_bytes);
+
+        // wgpu requires bytes_per_row to be aligned to 256 for buffer copies,
+        // but write_texture from CPU data has no such constraint.
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: rect.min.x as u32,
+                    y: rect.min.y as u32,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(src_stride),
+                rows_per_image: None,
+            },
+            wgpu::Extent3d {
+                width: rect.width() as u32,
+                height: rect.height() as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        let _ = format; // kept for future format conversion if needed
+    }
+
+    /// Create a wgpu texture suitable for use as a texture cache entry.
+    pub fn create_cache_texture(
+        &self,
+        width: i32,
+        height: i32,
+        format: ImageFormat,
+    ) -> WgpuTexture {
+        let wgpu_format = image_format_to_wgpu(format, self.features);
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("wgpu cache texture"),
+            size: wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        WgpuTexture {
+            texture,
+            width: width as u32,
+            height: height as u32,
+            format: wgpu_format,
+        }
     }
 
     pub fn clear_texture(&self, texture: &WgpuTexture, color: [f64; 4]) {
