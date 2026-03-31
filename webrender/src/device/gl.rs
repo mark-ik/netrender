@@ -638,6 +638,12 @@ impl<'a> Drop for BoundPBO<'a> {
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct FBOId(gl::GLuint);
 
+impl FBOId {
+    pub const fn default() -> Self {
+        FBOId(0)
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Copy, Clone)]
 pub struct RBOId(gl::GLuint);
 

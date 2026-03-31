@@ -1218,7 +1218,7 @@ pub fn create_webrender_instance_wgpu(
         async_frame_recorder: None,
         async_screenshots: None,
         #[cfg(feature = "capture")]
-        read_fbo: crate::device::FBOId(0),
+        read_fbo: crate::device::FBOId::default(),
         #[cfg(feature = "replay")]
         owned_external_images: FastHashMap::default(),
         notifications: Vec::new(),
