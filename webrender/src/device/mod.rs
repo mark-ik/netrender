@@ -4,9 +4,14 @@
 
 use crate::internal_types::RenderTargetInfo;
 
+mod shared;
+pub use self::shared::*;
+
+#[cfg(feature = "gl_backend")]
 mod gl;
 pub mod query_gl;
 
+#[cfg(feature = "gl_backend")]
 pub use self::gl::*;
 pub use self::query_gl as query;
 

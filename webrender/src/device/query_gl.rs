@@ -2,8 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#[cfg(feature = "gl_backend")]
 use gleam::gl;
+#[cfg(feature = "gl_backend")]
 use std::mem;
+#[cfg(feature = "gl_backend")]
 use std::rc::Rc;
 
 use crate::device::GpuFrameId;
@@ -28,12 +31,14 @@ pub struct GpuSampler {
     pub count: u64,
 }
 
+#[cfg(feature = "gl_backend")]
 pub struct QuerySet<T> {
     set: Vec<gl::GLuint>,
     data: Vec<T>,
     pending: gl::GLuint,
 }
 
+#[cfg(feature = "gl_backend")]
 impl<T> QuerySet<T> {
     fn new() -> Self {
         QuerySet {
@@ -66,6 +71,7 @@ impl<T> QuerySet<T> {
     }
 }
 
+#[cfg(feature = "gl_backend")]
 pub struct GpuFrameProfile {
     gl: Option<Rc<dyn gl::Gl>>,
     timers: QuerySet<GpuTimer>,
@@ -75,6 +81,7 @@ pub struct GpuFrameProfile {
     debug_method: GpuDebugMethod,
 }
 
+#[cfg(feature = "gl_backend")]
 impl GpuFrameProfile {
     fn new(gl: Rc<dyn gl::Gl>, debug_method: GpuDebugMethod) -> Self {
         GpuFrameProfile {
@@ -211,6 +218,7 @@ impl GpuFrameProfile {
     }
 }
 
+#[cfg(feature = "gl_backend")]
 impl Drop for GpuFrameProfile {
     fn drop(&mut self) {
         self.disable_timers();
@@ -221,13 +229,20 @@ impl Drop for GpuFrameProfile {
 const NUM_PROFILE_FRAMES: usize = 4;
 
 pub struct GpuProfiler {
+    #[cfg(feature = "gl_backend")]
     gl: Option<Rc<dyn gl::Gl>>,
+    #[cfg(feature = "gl_backend")]
     frames: [GpuFrameProfile; NUM_PROFILE_FRAMES],
+    #[cfg(feature = "gl_backend")]
     next_frame: usize,
-    debug_method: GpuDebugMethod
+    #[cfg(feature = "gl_backend")]
+    debug_method: GpuDebugMethod,
+    #[cfg(not(feature = "gl_backend"))]
+    frame_id: GpuFrameId,
 }
 
 impl GpuProfiler {
+    #[cfg(feature = "gl_backend")]
     pub fn new(gl: Rc<dyn gl::Gl>, debug_method: GpuDebugMethod) -> Self {
         let f = || GpuFrameProfile::new(Rc::clone(&gl), debug_method);
 
@@ -240,98 +255,138 @@ impl GpuProfiler {
         }
     }
 
-    /// Creates a no-op profiler that doesn't require a GL context.
-    /// All profiling methods become no-ops that return dummy guards.
     pub fn new_noop() -> Self {
-        let frames = [
-            GpuFrameProfile::new_noop(),
-            GpuFrameProfile::new_noop(),
-            GpuFrameProfile::new_noop(),
-            GpuFrameProfile::new_noop(),
-        ];
         GpuProfiler {
+            #[cfg(feature = "gl_backend")]
             gl: None,
+            #[cfg(feature = "gl_backend")]
+            frames: [
+                GpuFrameProfile::new_noop(),
+                GpuFrameProfile::new_noop(),
+                GpuFrameProfile::new_noop(),
+                GpuFrameProfile::new_noop(),
+            ],
+            #[cfg(feature = "gl_backend")]
             next_frame: 0,
-            frames,
+            #[cfg(feature = "gl_backend")]
             debug_method: GpuDebugMethod::None,
+            #[cfg(not(feature = "gl_backend"))]
+            frame_id: GpuFrameId::new(0),
         }
     }
 
     pub fn enable_timers(&mut self) {
-        const MAX_TIMERS_PER_FRAME: i32 = 256;
-
-        for frame in &mut self.frames {
-            frame.enable_timers(MAX_TIMERS_PER_FRAME);
+        #[cfg(feature = "gl_backend")]
+        {
+            const MAX_TIMERS_PER_FRAME: i32 = 256;
+            for frame in &mut self.frames {
+                frame.enable_timers(MAX_TIMERS_PER_FRAME);
+            }
         }
     }
 
     pub fn disable_timers(&mut self) {
+        #[cfg(feature = "gl_backend")]
         for frame in &mut self.frames {
             frame.disable_timers();
         }
     }
 
     pub fn enable_samplers(&mut self) {
-        const MAX_SAMPLERS_PER_FRAME: i32 = 16;
-        if cfg!(target_os = "macos") {
-            warn!("Expect macOS driver bugs related to sample queries")
-        }
-
-        for frame in &mut self.frames {
-            frame.enable_samplers(MAX_SAMPLERS_PER_FRAME);
+        #[cfg(feature = "gl_backend")]
+        {
+            const MAX_SAMPLERS_PER_FRAME: i32 = 16;
+            if cfg!(target_os = "macos") {
+                warn!("Expect macOS driver bugs related to sample queries")
+            }
+            for frame in &mut self.frames {
+                frame.enable_samplers(MAX_SAMPLERS_PER_FRAME);
+            }
         }
     }
 
     pub fn disable_samplers(&mut self) {
+        #[cfg(feature = "gl_backend")]
         for frame in &mut self.frames {
             frame.disable_samplers();
         }
     }
 
     pub fn build_samples(&mut self) -> (GpuFrameId, Vec<GpuTimer>, Vec<GpuSampler>) {
-        self.frames[self.next_frame].build_samples()
+        #[cfg(feature = "gl_backend")]
+        { self.frames[self.next_frame].build_samples() }
+        #[cfg(not(feature = "gl_backend"))]
+        { (self.frame_id, Vec::new(), Vec::new()) }
     }
 
     pub fn begin_frame(&mut self, frame_id: GpuFrameId) {
+        #[cfg(feature = "gl_backend")]
         self.frames[self.next_frame].begin_frame(frame_id);
+        #[cfg(not(feature = "gl_backend"))]
+        { self.frame_id = frame_id; }
     }
 
     pub fn end_frame(&mut self) {
-        self.frames[self.next_frame].end_frame();
-        self.next_frame = (self.next_frame + 1) % self.frames.len();
+        #[cfg(feature = "gl_backend")]
+        {
+            self.frames[self.next_frame].end_frame();
+            self.next_frame = (self.next_frame + 1) % self.frames.len();
+        }
     }
 
     pub fn start_timer(&mut self, tag: GpuProfileTag) -> GpuTimeQuery {
-        self.frames[self.next_frame].start_timer(tag)
+        #[cfg(feature = "gl_backend")]
+        { self.frames[self.next_frame].start_timer(tag) }
+        #[cfg(not(feature = "gl_backend"))]
+        { let _ = tag; GpuTimeQuery }
     }
 
     pub fn start_sampler(&mut self, tag: GpuProfileTag) -> GpuSampleQuery {
-        self.frames[self.next_frame].start_sampler(tag)
+        #[cfg(feature = "gl_backend")]
+        self.frames[self.next_frame].start_sampler(tag);
+        #[cfg(not(feature = "gl_backend"))]
+        { let _ = tag; }
+        GpuSampleQuery
     }
 
     pub fn finish_sampler(&mut self, _sampler: GpuSampleQuery) {
+        #[cfg(feature = "gl_backend")]
         self.frames[self.next_frame].finish_sampler()
     }
 
     pub fn start_marker(&mut self, label: &str) -> GpuMarker {
-        match self.gl {
-            Some(ref gl) => GpuMarker::new(gl, label, self.debug_method),
-            None => GpuMarker { gl: None },
+        #[cfg(feature = "gl_backend")]
+        {
+            match self.gl {
+                Some(ref gl) => GpuMarker::new(gl, label, self.debug_method),
+                None => GpuMarker { gl: None },
+            }
         }
+        #[cfg(not(feature = "gl_backend"))]
+        { let _ = label; GpuMarker }
     }
 
     pub fn place_marker(&mut self, label: &str) {
+        #[cfg(feature = "gl_backend")]
         if let Some(ref gl) = self.gl {
             GpuMarker::fire(gl, label, self.debug_method)
         }
+        #[cfg(not(feature = "gl_backend"))]
+        { let _ = label; }
     }
 }
 
+#[cfg(feature = "gl_backend")]
 #[must_use]
 pub struct GpuMarker {
     gl: Option<(Rc<dyn gl::Gl>, GpuDebugMethod)>,
 }
 
+#[cfg(not(feature = "gl_backend"))]
+#[must_use]
+pub struct GpuMarker;
+
+#[cfg(feature = "gl_backend")]
 impl GpuMarker {
     fn new(gl: &Rc<dyn gl::Gl>, message: &str, debug_method: GpuDebugMethod) -> Self {
         let gl = match debug_method {
@@ -357,6 +412,7 @@ impl GpuMarker {
     }
 }
 
+#[cfg(feature = "gl_backend")]
 impl Drop for GpuMarker {
     fn drop(&mut self) {
         if let Some((ref gl, debug_method)) = self.gl {
@@ -369,7 +425,13 @@ impl Drop for GpuMarker {
     }
 }
 
+#[cfg(feature = "gl_backend")]
 #[must_use]
-pub struct GpuTimeQuery(#[allow(dead_code)] GpuMarker);
+pub struct GpuTimeQuery(GpuMarker);
+
+#[cfg(not(feature = "gl_backend"))]
+#[must_use]
+pub struct GpuTimeQuery;
+
 #[must_use]
 pub struct GpuSampleQuery;
