@@ -172,6 +172,134 @@ pub const VERTEX_DATA_TEXTURE_COUNT: usize = 3;
 /// Number of GPU blocks per UV rectangle provided for an image.
 pub const BLOCKS_PER_UV_RECT: usize = 2;
 
+/// Shared helpers for computing the row-major texture layout used to
+/// upload structured data (vertex headers, transforms, render tasks)
+/// into data textures readable by the shader as `texelFetch`.
+///
+/// Both the GL path (`VertexDataTexture::update`) and the wgpu path
+/// (`upload_frame_data_textures`) use the same layout: items are packed
+/// row-by-row into a texture of width `MAX_VERTEX_TEXTURE_WIDTH` texels,
+/// where each item occupies `texels_per_item` consecutive texels (each
+/// texel = 16 bytes = one `vec4`).
+pub(super) mod data_texture_layout {
+    use super::MAX_VERTEX_TEXTURE_WIDTH;
+
+    /// How many texels (vec4s) one item of type T occupies.
+    /// T must be a multiple of 16 bytes (one RGBA32F texel).
+    pub fn texels_per_item<T>() -> usize {
+        let t = std::mem::size_of::<T>() / 16;
+        debug_assert!(std::mem::size_of::<T>() % 16 == 0);
+        debug_assert!(t > 0);
+        t
+    }
+
+    /// How many items fit in one texture row.
+    pub fn items_per_row(texels_per_item: usize) -> usize {
+        debug_assert_ne!(texels_per_item, 0);
+        MAX_VERTEX_TEXTURE_WIDTH / texels_per_item
+    }
+
+    /// Compute the texture height needed for `item_count` items.
+    /// Returns at least 1 so the texture is always valid.
+    pub fn required_height(item_count: usize, items_per_row: usize) -> usize {
+        if item_count == 0 {
+            1
+        } else {
+            (item_count + items_per_row - 1) / items_per_row
+        }
+    }
+
+    /// The logical width in texels for uploading data.
+    /// For a single row, this is just `item_count * texels_per_item`.
+    /// For multiple rows, it is the largest aligned multiple of
+    /// `texels_per_item` that fits in `MAX_VERTEX_TEXTURE_WIDTH`.
+    pub fn logical_width(item_count: usize, texels_per_item: usize, height: usize) -> usize {
+        if height == 1 {
+            item_count * texels_per_item
+        } else {
+            MAX_VERTEX_TEXTURE_WIDTH - (MAX_VERTEX_TEXTURE_WIDTH % texels_per_item)
+        }
+    }
+}
+
+/// Shared GPU cache utilities used by both GL and wgpu backends.
+///
+/// `CacheRow` mirrors one row of the GPU cache texture on the CPU, with
+/// dirty-range tracking for efficient partial uploads.
+///
+/// `for_each_gpu_cache_copy` centralises the `GpuCacheUpdate::Copy`
+/// dispatch so both backends iterate updates through one code path.
+pub(super) mod gpu_cache_utils {
+    use crate::gpu_cache::{GpuBlockData, GpuCacheUpdate, GpuCacheUpdateList};
+    use super::MAX_VERTEX_TEXTURE_WIDTH;
+
+    /// CPU-side mirror of one row of the GPU cache texture,
+    /// with dirty-range tracking for batched uploads.
+    pub struct CacheRow {
+        /// Mirrored block data on CPU for this row.
+        pub cpu_blocks: Box<[GpuBlockData; MAX_VERTEX_TEXTURE_WIDTH]>,
+        /// The first offset in this row that is dirty.
+        min_dirty: u16,
+        /// The last offset in this row that is dirty.
+        max_dirty: u16,
+    }
+
+    impl CacheRow {
+        pub fn new() -> Self {
+            CacheRow {
+                cpu_blocks: Box::new([GpuBlockData::EMPTY; MAX_VERTEX_TEXTURE_WIDTH]),
+                min_dirty: MAX_VERTEX_TEXTURE_WIDTH as _,
+                max_dirty: 0,
+            }
+        }
+
+        pub fn is_dirty(&self) -> bool {
+            self.min_dirty < self.max_dirty
+        }
+
+        pub fn clear_dirty(&mut self) {
+            self.min_dirty = MAX_VERTEX_TEXTURE_WIDTH as _;
+            self.max_dirty = 0;
+        }
+
+        pub fn add_dirty(&mut self, block_offset: usize, block_count: usize) {
+            self.min_dirty = self.min_dirty.min(block_offset as _);
+            self.max_dirty = self.max_dirty.max((block_offset + block_count) as _);
+        }
+
+        pub fn dirty_blocks(&self) -> &[GpuBlockData] {
+            &self.cpu_blocks[self.min_dirty as usize .. self.max_dirty as usize]
+        }
+
+        pub fn min_dirty(&self) -> u16 {
+            self.min_dirty
+        }
+    }
+
+    /// Iterate over `GpuCacheUpdate::Copy` entries in an update list,
+    /// calling `f(row, col_offset, source_blocks)` for each one.
+    ///
+    /// Both the GL (PixelBuffer) and wgpu backends share this dispatch
+    /// logic — only the write-to-storage step differs.
+    pub fn for_each_gpu_cache_copy(
+        list: &GpuCacheUpdateList,
+        mut f: impl FnMut(usize, usize, &[GpuBlockData]),
+    ) {
+        for update in &list.updates {
+            match *update {
+                GpuCacheUpdate::Copy {
+                    block_index,
+                    block_count,
+                    address,
+                } => {
+                    let blocks = &list.blocks[block_index .. block_index + block_count];
+                    f(address.v as usize, address.u as usize, blocks);
+                }
+            }
+        }
+    }
+}
+
 const GPU_TAG_BRUSH_OPACITY: GpuProfileTag = GpuProfileTag {
     label: "B_Opacity",
     color: debug_colors::DARKMAGENTA,
@@ -969,8 +1097,6 @@ impl WgpuGpuCacheState {
 
     /// Apply pending GPU cache update lists (sparse writes into the mirror).
     fn apply_updates(&mut self, updates: &[crate::gpu_cache::GpuCacheUpdateList]) {
-        use crate::gpu_cache::GpuCacheUpdate;
-
         for list in updates {
             // Resize if needed.
             let new_h = list.height as u32;
@@ -983,32 +1109,22 @@ impl WgpuGpuCacheState {
                     *v = [0.0; 4];
                 }
             }
-            for update in &list.updates {
-                match *update {
-                    GpuCacheUpdate::Copy {
-                        block_index,
-                        block_count,
-                        address,
-                    } => {
-                        let dst_start =
-                            address.v as usize * self.width as usize + address.u as usize;
-                        // GpuBlockData is #[repr(C)] { data: [f32; 4] } —
-                        // safe to reinterpret as [f32; 4].
-                        let block_data: &[[f32; 4]] = unsafe {
-                            std::slice::from_raw_parts(
-                                list.blocks.as_ptr() as *const [f32; 4],
-                                list.blocks.len(),
-                            )
-                        };
-                        for i in 0..block_count {
-                            let dst = dst_start + i;
-                            if dst < self.data.len() {
-                                self.data[dst] = block_data[block_index + i];
-                            }
-                        }
+            gpu_cache_utils::for_each_gpu_cache_copy(list, |row, col, blocks| {
+                let dst_start = row * self.width as usize + col;
+                // GpuBlockData wraps [f32; 4] — safe to reinterpret.
+                let block_data: &[[f32; 4]] = unsafe {
+                    std::slice::from_raw_parts(
+                        blocks.as_ptr() as *const [f32; 4],
+                        blocks.len(),
+                    )
+                };
+                for (i, &texel) in block_data.iter().enumerate() {
+                    let dst = dst_start + i;
+                    if dst < self.data.len() {
+                        self.data[dst] = texel;
                     }
                 }
-            }
+            });
         }
     }
 
@@ -1632,32 +1748,14 @@ impl Renderer {
         dev: &WgpuDevice,
         frame: &Frame,
     ) -> WgpuFrameDataTextures {
+        use data_texture_layout as layout;
         let w = MAX_VERTEX_TEXTURE_WIDTH as u32;
 
-        let make_f32_tex = |label: &str, data: &[u8], texels_per_item: usize| -> WgpuTexture {
+        let make_tex = |label: &str, data: &[u8], texels_per_item: usize, format: wgpu::TextureFormat| -> WgpuTexture {
             let item_count = data.len() / (texels_per_item * 16);
-            let items_per_row = w as usize / texels_per_item;
-            let height = if item_count == 0 { 1 } else {
-                ((item_count + items_per_row - 1) / items_per_row) as u32
-            };
-            dev.create_data_texture(
-                label, w, height,
-                wgpu::TextureFormat::Rgba32Float,
-                data,
-            )
-        };
-
-        let make_i32_tex = |label: &str, data: &[u8], texels_per_item: usize| -> WgpuTexture {
-            let item_count = data.len() / (texels_per_item * 16);
-            let items_per_row = w as usize / texels_per_item;
-            let height = if item_count == 0 { 1 } else {
-                ((item_count + items_per_row - 1) / items_per_row) as u32
-            };
-            dev.create_data_texture(
-                label, w, height,
-                wgpu::TextureFormat::Rgba32Sint,
-                data,
-            )
+            let ipr = layout::items_per_row(texels_per_item);
+            let height = layout::required_height(item_count, ipr) as u32;
+            dev.create_data_texture(label, w, height, format, data)
         };
 
         // PrimitiveHeaderF: LayoutRect + LayoutRect = 32 bytes = 2 texels
@@ -1667,7 +1765,7 @@ impl Renderer {
                 frame.prim_headers.headers_float.len() * std::mem::size_of::<crate::gpu_types::PrimitiveHeaderF>(),
             )
         };
-        let prim_headers_f = make_f32_tex("prim_headers_f", prim_f_bytes, 2);
+        let prim_headers_f = make_tex("prim_headers_f", prim_f_bytes, 2, wgpu::TextureFormat::Rgba32Float);
 
         // PrimitiveHeaderI: 8 x i32 = 32 bytes = 2 texels (i32)
         let prim_i_bytes: &[u8] = unsafe {
@@ -1676,7 +1774,7 @@ impl Renderer {
                 frame.prim_headers.headers_int.len() * std::mem::size_of::<crate::gpu_types::PrimitiveHeaderI>(),
             )
         };
-        let prim_headers_i = make_i32_tex("prim_headers_i", prim_i_bytes, 2);
+        let prim_headers_i = make_tex("prim_headers_i", prim_i_bytes, 2, wgpu::TextureFormat::Rgba32Sint);
 
         // TransformData: two 4x4 matrices = 128 bytes = 8 texels
         let transforms_bytes: &[u8] = unsafe {
@@ -1685,7 +1783,7 @@ impl Renderer {
                 frame.transform_palette.len() * std::mem::size_of::<crate::gpu_types::TransformData>(),
             )
         };
-        let transform_palette = make_f32_tex("transform_palette", transforms_bytes, 8);
+        let transform_palette = make_tex("transform_palette", transforms_bytes, 8, wgpu::TextureFormat::Rgba32Float);
 
         // RenderTaskData: FLOATS_PER_RENDER_TASK_INFO f32s = 3 texels (12 floats)
         let tasks_bytes: &[u8] = unsafe {
@@ -1694,7 +1792,7 @@ impl Renderer {
                 frame.render_tasks.task_data.len() * std::mem::size_of::<crate::render_task::RenderTaskData>(),
             )
         };
-        let render_tasks = make_f32_tex("render_tasks", tasks_bytes, 3);
+        let render_tasks = make_tex("render_tasks", tasks_bytes, 3, wgpu::TextureFormat::Rgba32Float);
 
         // GPU buffer F (float)
         let gpu_buf_f = if !frame.gpu_buffer_f.is_empty() {

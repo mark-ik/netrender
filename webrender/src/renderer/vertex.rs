@@ -921,10 +921,10 @@ impl<T> VertexDataTexture<T> {
         texture_uploader: &mut TextureUploader<'a>,
         data: &mut FrameVec<T>,
     ) {
-        debug_assert!(mem::size_of::<T>() % 16 == 0);
-        let texels_per_item = mem::size_of::<T>() / 16;
-        let items_per_row = MAX_VERTEX_TEXTURE_WIDTH / texels_per_item;
-        debug_assert_ne!(items_per_row, 0);
+        use super::data_texture_layout as layout;
+
+        let texels_per_item = layout::texels_per_item::<T>();
+        let items_per_row = layout::items_per_row(texels_per_item);
 
         // Ensure we always end up with a texture when leaving this method.
         let mut len = data.len();
@@ -964,11 +964,7 @@ impl<T> VertexDataTexture<T> {
         // (like Intel iGPUs) that prefers power-of-two sizes of textures ([1]).
         //
         // [1] https://software.intel.com/en-us/articles/opengl-performance-tips-power-of-two-textures-have-better-performance
-        let logical_width = if needed_height == 1 {
-            data.len() * texels_per_item
-        } else {
-            MAX_VERTEX_TEXTURE_WIDTH - (MAX_VERTEX_TEXTURE_WIDTH % texels_per_item)
-        };
+        let logical_width = layout::logical_width(data.len(), texels_per_item, needed_height as usize);
 
         let rect = DeviceIntRect::from_size(
             DeviceIntSize::new(logical_width as i32, needed_height),

@@ -39,44 +39,7 @@ impl GpuCacheStorageDevice for Device {
 /// is performed correctly.
 const GPU_CACHE_RESIZE_TEST: bool = false;
 
-/// Tracks the state of each row in the GPU cache texture.
-struct CacheRow {
-    /// Mirrored block data on CPU for this row. We store a copy of
-    /// the data on the CPU side to improve upload batching.
-    cpu_blocks: Box<[GpuBlockData; super::MAX_VERTEX_TEXTURE_WIDTH]>,
-    /// The first offset in this row that is dirty.
-    min_dirty: u16,
-    /// The last offset in this row that is dirty.
-    max_dirty: u16,
-}
-
-impl CacheRow {
-    fn new() -> Self {
-        CacheRow {
-            cpu_blocks: Box::new([GpuBlockData::EMPTY; super::MAX_VERTEX_TEXTURE_WIDTH]),
-            min_dirty: super::MAX_VERTEX_TEXTURE_WIDTH as _,
-            max_dirty: 0,
-        }
-    }
-
-    fn is_dirty(&self) -> bool {
-        return self.min_dirty < self.max_dirty;
-    }
-
-    fn clear_dirty(&mut self) {
-        self.min_dirty = super::MAX_VERTEX_TEXTURE_WIDTH as _;
-        self.max_dirty = 0;
-    }
-
-    fn add_dirty(&mut self, block_offset: usize, block_count: usize) {
-        self.min_dirty = self.min_dirty.min(block_offset as _);
-        self.max_dirty = self.max_dirty.max((block_offset + block_count) as _);
-    }
-
-    fn dirty_blocks(&self) -> &[GpuBlockData] {
-        return &self.cpu_blocks[self.min_dirty as usize .. self.max_dirty as usize];
-    }
-}
+use super::gpu_cache_utils::{CacheRow, for_each_gpu_cache_copy};
 
 /// Backend-specific GPU cache update machinery.
 enum GpuCacheBackend {
@@ -319,34 +282,17 @@ impl GpuCacheTexture {
     fn update(&mut self, device: &mut Device, updates: &GpuCacheUpdateList) {
         match self.backend {
             GpuCacheBackend::PixelBuffer { ref mut rows, .. } => {
-                for update in &updates.updates {
-                    match *update {
-                        GpuCacheUpdate::Copy {
-                            block_index,
-                            block_count,
-                            address,
-                        } => {
-                            let row = address.v as usize;
-
-                            // Ensure that the CPU-side shadow copy of the GPU cache data has enough
-                            // rows to apply this patch.
-                            while rows.len() <= row {
-                                // Add a new row.
-                                rows.push(CacheRow::new());
-                            }
-
-                            // Copy the blocks from the patch array in the shadow CPU copy.
-                            let block_offset = address.u as usize;
-                            let data = &mut rows[row].cpu_blocks;
-                            for i in 0 .. block_count {
-                                data[block_offset + i] = updates.blocks[block_index + i];
-                            }
-
-                            // This row is dirty (needs to be updated in GPU texture).
-                            rows[row].add_dirty(block_offset, block_count);
-                        }
+                for_each_gpu_cache_copy(updates, |row_idx, col, blocks| {
+                    // Ensure enough rows for this patch.
+                    while rows.len() <= row_idx {
+                        rows.push(CacheRow::new());
                     }
-                }
+                    // Copy blocks into the CPU-side shadow.
+                    rows[row_idx].cpu_blocks[col .. col + blocks.len()]
+                        .copy_from_slice(blocks);
+                    // Mark dirty for batched upload.
+                    rows[row_idx].add_dirty(col, blocks.len());
+                });
             }
             GpuCacheBackend::Scatter {
                 ref buf_position,
@@ -405,7 +351,7 @@ impl GpuCacheTexture {
 
                     let blocks = row.dirty_blocks();
                     let rect = DeviceIntRect::from_origin_and_size(
-                        DeviceIntPoint::new(row.min_dirty as i32, row_index as i32),
+                        DeviceIntPoint::new(row.min_dirty() as i32, row_index as i32),
                         DeviceIntSize::new(blocks.len() as i32, 1),
                     );
 
