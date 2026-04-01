@@ -23,6 +23,7 @@ use api::{ColorF, ColorU};
 #[cfg(feature = "debugger")]
 use api::debugger::{ProfileCounterUpdate, ProfileCounterId};
 use glyph_rasterizer::profiler::GlyphRasterizeProfiler;
+#[cfg(feature = "gl_backend")]
 use crate::renderer::DebugRenderer;
 use crate::device::query::GpuTimer;
 use euclid::{Point2D, Rect, Size2D, vec2, default};
@@ -860,7 +861,10 @@ impl Profiler {
     pub fn get(&self, id: usize) -> Option<f64> {
         self.counters[id].get()
     }
+}
 
+#[cfg(feature = "gl_backend")]
+impl Profiler {
     fn draw_counters(
         counters: &[Counter],
         selected: &[usize],
@@ -1447,7 +1451,9 @@ impl Profiler {
             }
         }
     }
+}
 
+impl Profiler {
     #[cfg(feature = "capture")]
     pub fn dump_stats(&self, sink: &mut dyn std::io::Write) -> std::io::Result<()> {
         for counter in &self.counters {

@@ -124,6 +124,7 @@ mod resource_cache;
 mod scene;
 mod scene_builder_thread;
 mod scene_building;
+#[cfg(feature = "gl_backend")]
 mod screen_capture;
 mod segment;
 mod spatial_node;
@@ -163,6 +164,7 @@ extern crate bincode;
 extern crate byteorder;
 pub extern crate euclid;
 extern crate rustc_hash;
+#[cfg(feature = "gl_backend")]
 extern crate gleam;
 extern crate num_traits;
 extern crate plane_split;
@@ -181,22 +183,37 @@ extern crate webrender_build;
 
 #[doc(hidden)]
 pub use crate::composite::{LayerCompositor, CompositorInputConfig, CompositorSurfaceUsage, ClipRadius};
-pub use crate::composite::{CompositorConfig, Compositor, CompositorCapabilities, CompositorSurfaceTransform};
+pub use crate::composite::{CompositorConfig, CompositorCapabilities, CompositorSurfaceTransform};
+#[cfg(feature = "gl_backend")]
+pub use crate::composite::Compositor;
 pub use crate::composite::{NativeSurfaceId, NativeTileId, NativeSurfaceInfo, PartialPresentCompositor};
-pub use crate::composite::{MappableCompositor, MappedTileInfo, SWGLCompositeSurfaceInfo, WindowVisibility, WindowProperties};
+#[cfg(feature = "gl_backend")]
+pub use crate::composite::MappableCompositor;
+pub use crate::composite::{MappedTileInfo, SWGLCompositeSurfaceInfo, WindowVisibility, WindowProperties};
+#[cfg(feature = "gl_backend")]
 pub use crate::device::{UploadMethod, VertexUsageHint, get_gl_target, get_unoptimized_shader_source};
+#[cfg(feature = "gl_backend")]
 pub use crate::device::{ProgramBinary, ProgramCache, ProgramCacheObserver, FormatDesc, ShaderError};
+#[cfg(feature = "gl_backend")]
 pub use crate::device::Device;
 pub use crate::profiler::{ProfilerHooks, set_profiler_hooks};
 pub use crate::renderer::{
     CpuProfile, DebugFlags, GpuProfile, GraphicsApi,
-    GraphicsApiInfo, PendingShadersToPrecache, PipelineInfo, Renderer, RendererError, RenderResults,
-    RendererStats, Shaders, SharedShaders, ShaderPrecacheFlags,
-    MAX_VERTEX_TEXTURE_WIDTH,
+    GraphicsApiInfo, PipelineInfo, Renderer, RendererError, RenderResults,
+    RendererStats, MAX_VERTEX_TEXTURE_WIDTH,
 };
-pub use crate::renderer::init::{WebRenderOptions, RendererBackend, create_webrender_instance, create_webrender_instance_with_backend, AsyncPropertySampler, SceneBuilderHooks, RenderBackendHooks, ONE_TIME_USAGE_HINT};
+#[cfg(feature = "gl_backend")]
+pub use crate::renderer::{
+    PendingShadersToPrecache, Shaders, SharedShaders, ShaderPrecacheFlags,
+};
+pub use crate::renderer::init::{WebRenderOptions, RendererBackend, create_webrender_instance_with_backend, AsyncPropertySampler, SceneBuilderHooks, RenderBackendHooks};
+#[cfg(feature = "gl_backend")]
+pub use crate::renderer::init::ONE_TIME_USAGE_HINT;
+#[cfg(feature = "gl_backend")]
+pub use crate::renderer::init::create_webrender_instance;
 pub use crate::hit_test::SharedHitTester;
 pub use crate::internal_types::FastHashMap;
+#[cfg(feature = "gl_backend")]
 pub use crate::screen_capture::{AsyncScreenshotHandle, RecordedFrameHandle};
 pub use crate::texture_cache::TextureCacheConfig;
 pub use api as webrender_api;

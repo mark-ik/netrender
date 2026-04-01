@@ -15,6 +15,7 @@ use crate::prim_store::DeferredResolve;
 use crate::resource_cache::{ImageRequest, ResourceCache};
 use crate::util::{extract_inner_rect_safe, Preallocator, ScaleOffset};
 use crate::tile_cache::PictureCacheDebugInfo;
+#[cfg(feature = "gl_backend")]
 use crate::device::Device;
 use crate::space::SpaceMapper;
 use std::{ops, u64, os::raw::c_void};
@@ -336,6 +337,7 @@ pub enum CompositorConfig {
     /// Use a native OS compositor to draw tiles. This requires clients to implement
     /// the Compositor trait, but can be significantly more power efficient on operating
     /// systems that support it.
+    #[cfg(feature = "gl_backend")]
     Native {
         /// A client provided interface to a native / OS compositor.
         compositor: Box<dyn Compositor>,
@@ -343,6 +345,7 @@ pub enum CompositorConfig {
 }
 
 impl CompositorConfig {
+    #[cfg(feature = "gl_backend")]
     pub fn compositor(&mut self) -> Option<&mut Box<dyn Compositor>> {
         match self {
             CompositorConfig::Native { ref mut compositor, .. } => {
@@ -356,6 +359,7 @@ impl CompositorConfig {
 
     pub fn partial_present(&mut self) -> Option<&mut Box<dyn PartialPresentCompositor>> {
         match self {
+            #[cfg(feature = "gl_backend")]
             CompositorConfig::Native { .. } => {
                 None
             }
@@ -370,6 +374,7 @@ impl CompositorConfig {
 
     pub fn layer_compositor(&mut self) -> Option<&mut Box<dyn LayerCompositor>> {
         match self {
+            #[cfg(feature = "gl_backend")]
             CompositorConfig::Native { .. } => {
                 None
             }
@@ -1440,6 +1445,7 @@ impl ClipRadius {
     pub const EMPTY: ClipRadius = ClipRadius { top_left: 0, top_right: 0, bottom_left: 0, bottom_right: 0 };
 }
 
+#[cfg(feature = "gl_backend")]
 /// Defines an interface to a native (OS level) compositor. If supplied
 /// by the client application, then picture cache slices will be
 /// composited by the OS compositor, rather than drawn via WR batches.
@@ -1689,6 +1695,7 @@ pub struct SWGLCompositeSurfaceInfo {
     pub size: DeviceIntSize,
 }
 
+#[cfg(feature = "gl_backend")]
 /// A Compositor variant that supports mapping tiles into CPU memory.
 pub trait MappableCompositor: Compositor {
     /// Map a tile's underlying buffer so it can be used as the backing for
