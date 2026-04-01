@@ -960,7 +960,7 @@ impl<'a> SceneBuilder<'a> {
             instance_id,
         );
         self.build_spatial_tree_for_display_list(
-            &root_pipeline.display_list.display_list,
+            &root_pipeline.display_list,
             root_pipeline_id,
             instance_id,
         );
@@ -1345,7 +1345,7 @@ impl<'a> SceneBuilder<'a> {
         self.iframe_size.push(bounds.size());
 
         self.build_spatial_tree_for_display_list(
-            &pipeline.display_list.display_list,
+            &pipeline.display_list,
             iframe_pipeline_id,
             instance_id,
         );
@@ -1961,11 +1961,6 @@ impl<'a> SceneBuilder<'a> {
             DisplayItem::PopStackingContext |
             DisplayItem::Iframe(_) => {
                 unreachable!("Handled in `build_all`")
-            }
-
-            DisplayItem::ReuseItems(key) |
-            DisplayItem::RetainedItems(key) => {
-                unreachable!("Iterator logic error: {:?}", key);
             }
 
             DisplayItem::PushShadow(info) => {
