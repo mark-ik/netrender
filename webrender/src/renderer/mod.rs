@@ -1693,8 +1693,6 @@ impl Renderer {
             b: self.clear_color.b as f64,
             a: self.clear_color.a as f64,
         };
-        let mut pending_surface_clear: Option<wgpu::Color> = Some(surface_clear);
-
         // Diagnostic: log tile breakdown on first few frames.
         if !composite_state.tiles.is_empty() || skipped_tiles > 0 {
             info!(
@@ -1727,38 +1725,80 @@ impl Renderer {
             }
         }
 
-        if !color_instances.is_empty() {
-            let instance_bytes = crate::device::as_byte_slice(&color_instances);
+        // All composite draws to the surface share a single render pass.
+        let has_composite_work = !color_instances.is_empty() || !textured_batches.is_empty();
+        if has_composite_work {
+            let surface_fmt = wgpu_dev.surface_format()
+                .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
+            let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(w, h);
+            let mut encoder = wgpu_dev.take_encoder();
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("composite pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &target_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(surface_clear),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
 
-            wgpu_dev.render_composite_instances_to_view(
-                &target_view,
-                w,
-                h,
-                None, // samples white dummy texture; vColor provides tile color
-                instance_bytes,
-                color_instances.len() as u32,
-                crate::device::WgpuShaderVariant::Composite,
-                pending_surface_clear.take(),
-            );
-        }
+                // Color tiles: use the Composite shader with no source texture.
+                if !color_instances.is_empty() {
+                    let instance_bytes = crate::device::as_byte_slice(&color_instances);
+                    let textures = crate::device::TextureBindings::default();
+                    wgpu_dev.record_draw(
+                        &mut pass,
+                        crate::device::WgpuShaderVariant::Composite,
+                        crate::device::WgpuBlendMode::PremultipliedAlpha,
+                        crate::device::WgpuDepthState::None,
+                        surface_fmt,
+                        w,
+                        h,
+                        &textures,
+                        &transform_buf,
+                        &tex_size_buf,
+                        instance_bytes,
+                        color_instances.len() as u32,
+                        None,
+                    );
+                }
 
-        // Render texture-backed tile batches.
-        for (cache_id, instances) in &textured_batches {
-            let wgpu_tex = match self.wgpu_texture_cache.get(cache_id) {
-                Some(t) => t,
-                None => continue,
-            };
-            let instance_bytes = crate::device::as_byte_slice(instances.as_slice());
-            wgpu_dev.render_composite_instances_to_view(
-                &target_view,
-                w,
-                h,
-                Some(wgpu_tex),
-                instance_bytes,
-                instances.len() as u32,
-                crate::device::WgpuShaderVariant::CompositeFastPath,
-                pending_surface_clear.take(),
-            );
+                // Texture-backed tile batches: use CompositeFastPath with source texture.
+                for (cache_id, instances) in &textured_batches {
+                    let source_view = match self.wgpu_texture_cache.get(cache_id) {
+                        Some(t) => t.create_view(),
+                        None => continue,
+                    };
+                    let instance_bytes = crate::device::as_byte_slice(instances.as_slice());
+                    let textures = crate::device::TextureBindings {
+                        color0: Some(&source_view),
+                        ..Default::default()
+                    };
+                    wgpu_dev.record_draw(
+                        &mut pass,
+                        crate::device::WgpuShaderVariant::CompositeFastPath,
+                        crate::device::WgpuBlendMode::PremultipliedAlpha,
+                        crate::device::WgpuDepthState::None,
+                        surface_fmt,
+                        w,
+                        h,
+                        &textures,
+                        &transform_buf,
+                        &tex_size_buf,
+                        instance_bytes,
+                        instances.len() as u32,
+                        None,
+                    );
+                }
+            } // render pass dropped
+            wgpu_dev.return_encoder(encoder);
         }
 
         let total_textured: usize = textured_batches.values().map(|v| v.len()).sum();
@@ -2043,75 +2083,115 @@ impl Renderer {
                     },
                     None => wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
                 };
-                let mut pending_clear: Option<wgpu::Color> = Some(tile_clear_color);
+                // Create per-target uniform buffers (shared by all draws to this target).
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
 
-                // Helper closure to draw a single batch.
-                macro_rules! draw_batch {
-                    ($batch:expr, $is_alpha:expr, $depth_state:expr) => {{
-                        let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
-                        let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
+                // Take the encoder so we can create a single render pass for
+                // all batches targeting this tile.  While the encoder is out,
+                // wgpu_dev remains usable for pipeline / buffer / bind-group work.
+                let mut encoder = wgpu_dev.take_encoder();
 
-                        let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
-                            match $batch.key.textures.input.colors[i] {
-                                TextureSource::TextureCache(id, _swizzle) => {
-                                    self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
-                                }
-                                _ => None,
-                            }
-                        });
-
-                        let textures = TextureBindings {
-                            color0: color_views[0].as_ref(),
-                            color1: color_views[1].as_ref(),
-                            color2: color_views[2].as_ref(),
-                            gpu_cache: draw_ctx.gpu_cache,
-                            transform_palette: Some(draw_ctx.transform_palette),
-                            render_tasks: Some(draw_ctx.render_tasks),
-                            prim_headers_f: Some(draw_ctx.prim_headers_f),
-                            prim_headers_i: Some(draw_ctx.prim_headers_i),
-                            dither: draw_ctx.dither,
-                            gpu_buffer_f: draw_ctx.gpu_buffer_f,
-                            gpu_buffer_i: draw_ctx.gpu_buffer_i,
-                            ..Default::default()
-                        };
-
-                        let wgpu_blend = Self::blend_mode_to_wgpu(&$batch.key.blend_mode);
-                        let wgpu_dev = self.wgpu_device.as_mut().unwrap();
-                        wgpu_dev.draw_instanced(
-                            variant,
-                            wgpu_blend,
-                            $depth_state,
-                            &target_view,
-                            target_w,
-                            target_h,
-                            target_fmt,
-                            &textures,
-                            instance_bytes,
-                            $batch.instances.len() as u32,
-                            pending_clear.take(),
-                            scissor,
-                            depth_ref,
-                        );
-                        batches_drawn += 1;
-                    }};
-                }
-
-                // Opaque batches: front-to-back (reverse order) with depth write.
-                if has_opaque {
-                    for batch in alpha_batch_container.opaque_batches.iter().rev() {
-                        draw_batch!(batch, false, WgpuDepthState::WriteAndTest);
-                    }
-                }
-
-                // Alpha batches: back-to-front (forward order) with depth test only.
-                let alpha_depth = if has_opaque {
-                    WgpuDepthState::TestOnly
+                let depth_attachment = if has_opaque {
+                    depth_ref.map(|dv| wgpu::RenderPassDepthStencilAttachment {
+                        view: dv,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    })
                 } else {
-                    WgpuDepthState::None
+                    None
                 };
-                for batch in alpha_batch_container.alpha_batches.iter() {
-                    draw_batch!(batch, true, alpha_depth);
-                }
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("picture cache pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &target_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(tile_clear_color),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: depth_attachment,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+
+                    // Record all batches into this single render pass.
+                    macro_rules! record_batch {
+                        ($batch:expr, $is_alpha:expr, $depth_state:expr) => {{
+                            let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
+                            let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
+
+                            let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                                match $batch.key.textures.input.colors[i] {
+                                    TextureSource::TextureCache(id, _swizzle) => {
+                                        self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                    }
+                                    _ => None,
+                                }
+                            });
+
+                            let textures = TextureBindings {
+                                color0: color_views[0].as_ref(),
+                                color1: color_views[1].as_ref(),
+                                color2: color_views[2].as_ref(),
+                                gpu_cache: draw_ctx.gpu_cache,
+                                transform_palette: Some(draw_ctx.transform_palette),
+                                render_tasks: Some(draw_ctx.render_tasks),
+                                prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                dither: draw_ctx.dither,
+                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                ..Default::default()
+                            };
+
+                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                            wgpu_dev.record_draw(
+                                &mut pass,
+                                variant,
+                                Self::blend_mode_to_wgpu(&$batch.key.blend_mode),
+                                $depth_state,
+                                target_fmt,
+                                target_w,
+                                target_h,
+                                &textures,
+                                &transform_buf,
+                                &tex_size_buf,
+                                instance_bytes,
+                                $batch.instances.len() as u32,
+                                scissor,
+                            );
+                            batches_drawn += 1;
+                        }};
+                    }
+
+                    // Opaque batches: front-to-back (reverse order) with depth write.
+                    if has_opaque {
+                        for batch in alpha_batch_container.opaque_batches.iter().rev() {
+                            record_batch!(batch, false, WgpuDepthState::WriteAndTest);
+                        }
+                    }
+
+                    // Alpha batches: back-to-front (forward order) with depth test only.
+                    let alpha_depth = if has_opaque {
+                        WgpuDepthState::TestOnly
+                    } else {
+                        WgpuDepthState::None
+                    };
+                    for batch in alpha_batch_container.alpha_batches.iter() {
+                        record_batch!(batch, true, alpha_depth);
+                    }
+                } // render pass dropped here
+
+                // Return the encoder to WgpuDevice.
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                wgpu_dev.return_encoder(encoder);
 
             }
 
@@ -2152,62 +2232,95 @@ impl Renderer {
                 let target_w = target_wgpu.width;
                 let target_h = target_wgpu.height;
 
-                // cs_* cache target tasks: borders, gradients, blurs, etc.
-                if has_cs_tasks {
-                    Self::draw_cache_target_tasks_wgpu(
-                        self.wgpu_device.as_mut().unwrap(),
-                        &draw_ctx,
-                        target,
-                        &target_view,
-                        target_w,
-                        target_h,
-                        target_fmt,
-                        &mut batches_drawn,
-                    );
-                }
+                // All draws to this texture cache target share a single render pass.
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
+                let mut encoder = wgpu_dev.take_encoder();
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("texture cache pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &target_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load, // no clear — cache targets are pre-cleared
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
 
-                // Clip masks: primary (overwrite), then secondary (multiplicative).
-                if has_primary {
-                    Self::draw_clip_batch_list_wgpu(
-                        self.wgpu_device.as_mut().unwrap(),
-                        &draw_ctx,
-                        &target.clip_batcher.primary_clips,
-                        &target_view,
-                        target_w,
-                        target_h,
-                        target_fmt,
-                        WgpuBlendMode::None,
-                        &mut batches_drawn,
-                    );
-                }
-                if has_secondary {
-                    Self::draw_clip_batch_list_wgpu(
-                        self.wgpu_device.as_mut().unwrap(),
-                        &draw_ctx,
-                        &target.clip_batcher.secondary_clips,
-                        &target_view,
-                        target_w,
-                        target_h,
-                        target_fmt,
-                        WgpuBlendMode::MultiplyClipMask,
-                        &mut batches_drawn,
-                    );
-                }
+                    // cs_* cache target tasks: borders, gradients, blurs, etc.
+                    if has_cs_tasks {
+                        Self::draw_cache_target_tasks_wgpu(
+                            self.wgpu_device.as_mut().unwrap(),
+                            &draw_ctx,
+                            target,
+                            &mut pass,
+                            target_w,
+                            target_h,
+                            target_fmt,
+                            &transform_buf,
+                            &tex_size_buf,
+                            &mut batches_drawn,
+                        );
+                    }
 
-                // Quad batches (prim_instances indexed by PatternKind).
-                if has_quads {
-                    Self::draw_quad_batches_wgpu(
-                        self.wgpu_device.as_mut().unwrap(),
-                        &draw_ctx,
-                        &target.prim_instances,
-                        &target.prim_instances_with_scissor,
-                        &target_view,
-                        target_w,
-                        target_h,
-                        target_fmt,
-                        &mut batches_drawn,
-                    );
-                }
+                    // Clip masks: primary (overwrite), then secondary (multiplicative).
+                    if has_primary {
+                        Self::draw_clip_batch_list_wgpu(
+                            self.wgpu_device.as_mut().unwrap(),
+                            &draw_ctx,
+                            &target.clip_batcher.primary_clips,
+                            &mut pass,
+                            target_w,
+                            target_h,
+                            target_fmt,
+                            &transform_buf,
+                            &tex_size_buf,
+                            WgpuBlendMode::None,
+                            &mut batches_drawn,
+                        );
+                    }
+                    if has_secondary {
+                        Self::draw_clip_batch_list_wgpu(
+                            self.wgpu_device.as_mut().unwrap(),
+                            &draw_ctx,
+                            &target.clip_batcher.secondary_clips,
+                            &mut pass,
+                            target_w,
+                            target_h,
+                            target_fmt,
+                            &transform_buf,
+                            &tex_size_buf,
+                            WgpuBlendMode::MultiplyClipMask,
+                            &mut batches_drawn,
+                        );
+                    }
+
+                    // Quad batches (prim_instances indexed by PatternKind).
+                    if has_quads {
+                        Self::draw_quad_batches_wgpu(
+                            self.wgpu_device.as_mut().unwrap(),
+                            &draw_ctx,
+                            &target.prim_instances,
+                            &target.prim_instances_with_scissor,
+                            &mut pass,
+                            target_w,
+                            target_h,
+                            target_fmt,
+                            &transform_buf,
+                            &tex_size_buf,
+                            &mut batches_drawn,
+                        );
+                    }
+                } // render pass dropped
+
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                wgpu_dev.return_encoder(encoder);
             }
         }
 
@@ -2332,10 +2445,12 @@ impl Renderer {
         wgpu_dev: &mut crate::device::WgpuDevice,
         ctx: &WgpuDrawContext<'_>,
         list: &ClipBatchList,
-        target_view: &wgpu::TextureView,
+        pass: &mut wgpu::RenderPass<'_>,
         target_w: u32,
         target_h: u32,
         target_format: wgpu::TextureFormat,
+        transform_buf: &wgpu::Buffer,
+        tex_size_buf: &wgpu::Buffer,
         blend_mode: crate::device::WgpuBlendMode,
         batches_drawn: &mut u32,
     ) {
@@ -2349,20 +2464,20 @@ impl Renderer {
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
-            wgpu_dev.draw_instanced(
+            wgpu_dev.record_draw(
+                pass,
                 crate::device::WgpuShaderVariant::CsClipRectangle,
                 blend_mode,
                 crate::device::WgpuDepthState::None,
-                target_view,
+                target_format,
                 target_w,
                 target_h,
-                target_format,
                 &textures,
+                transform_buf,
+                tex_size_buf,
                 instance_bytes,
                 list.slow_rectangles.len() as u32,
-                None,  // don't clear — clip masks are pre-cleared
                 None,  // no scissor for clip masks
-                None,  // no depth
             );
             *batches_drawn += 1;
         }
@@ -2375,20 +2490,20 @@ impl Renderer {
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
-            wgpu_dev.draw_instanced(
+            wgpu_dev.record_draw(
+                pass,
                 crate::device::WgpuShaderVariant::CsClipRectangleFastPath,
                 blend_mode,
                 crate::device::WgpuDepthState::None,
-                target_view,
+                target_format,
                 target_w,
                 target_h,
-                target_format,
                 &textures,
+                transform_buf,
+                tex_size_buf,
                 instance_bytes,
                 list.fast_rectangles.len() as u32,
-                None,
                 None, // no scissor for clip masks
-                None, // no depth
             );
             *batches_drawn += 1;
         }
@@ -2408,20 +2523,20 @@ impl Renderer {
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
-            wgpu_dev.draw_instanced(
+            wgpu_dev.record_draw(
+                pass,
                 crate::device::WgpuShaderVariant::CsClipBoxShadow,
                 blend_mode,
                 crate::device::WgpuDepthState::None,
-                target_view,
+                target_format,
                 target_w,
                 target_h,
-                target_format,
                 &textures,
+                transform_buf,
+                tex_size_buf,
                 instance_bytes,
                 items.len() as u32,
-                None,
                 None, // no scissor for clip masks
-                None, // no depth
             );
             *batches_drawn += 1;
         }
@@ -2440,10 +2555,12 @@ impl Renderer {
             (DeviceIntRect, PatternKind),
             FastHashMap<TextureSource, FrameVec<crate::gpu_types::PrimitiveInstanceData>>,
         >,
-        target_view: &wgpu::TextureView,
+        pass: &mut wgpu::RenderPass<'_>,
         target_w: u32,
         target_h: u32,
         target_format: wgpu::TextureFormat,
+        transform_buf: &wgpu::Buffer,
+        tex_size_buf: &wgpu::Buffer,
         batches_drawn: &mut u32,
     ) {
         use crate::device::{TextureBindings, WgpuBlendMode};
@@ -2487,20 +2604,20 @@ impl Renderer {
                     gpu_buffer_i: ctx.gpu_buffer_i,
                     ..Default::default()
                 };
-                wgpu_dev.draw_instanced(
+                wgpu_dev.record_draw(
+                    pass,
                     variant,
                     WgpuBlendMode::None, // opaque quads
                     crate::device::WgpuDepthState::None,
-                    target_view,
+                    target_format,
                     target_w,
                     target_h,
-                    target_format,
                     &textures,
+                    transform_buf,
+                    tex_size_buf,
                     instance_bytes,
                     instances.len() as u32,
-                    None,  // no clear for opaque quads
                     None, // no scissor for opaque quads
-                    None, // no depth
                 );
                 *batches_drawn += 1;
             }
@@ -2531,20 +2648,20 @@ impl Renderer {
                     gpu_buffer_i: ctx.gpu_buffer_i,
                     ..Default::default()
                 };
-                wgpu_dev.draw_instanced(
+                wgpu_dev.record_draw(
+                    pass,
                     variant,
                     WgpuBlendMode::PremultipliedAlpha,
                     crate::device::WgpuDepthState::None,
-                    target_view,
+                    target_format,
                     target_w,
                     target_h,
-                    target_format,
                     &textures,
+                    transform_buf,
+                    tex_size_buf,
                     instance_bytes,
                     instances.len() as u32,
-                    None,
                     scissor,
-                    None, // no depth
                 );
                 *batches_drawn += 1;
             }
@@ -2558,10 +2675,12 @@ impl Renderer {
         wgpu_dev: &mut crate::device::WgpuDevice,
         ctx: &WgpuDrawContext<'_>,
         target: &crate::render_target::RenderTarget,
-        target_view: &wgpu::TextureView,
+        pass: &mut wgpu::RenderPass<'_>,
         target_w: u32,
         target_h: u32,
         target_format: wgpu::TextureFormat,
+        transform_buf: &wgpu::Buffer,
+        tex_size_buf: &wgpu::Buffer,
         batches_drawn: &mut u32,
     ) {
         use crate::device::{TextureBindings, WgpuBlendMode};
@@ -2572,25 +2691,25 @@ impl Renderer {
             ..Default::default()
         };
 
-        // Helper: marshal instance data to bytes and draw with explicit blend mode.
+        // Helper: marshal instance data to bytes and record draw with explicit blend mode.
         macro_rules! draw_cs_blend {
             ($variant:expr, $instances:expr, $textures:expr, $blend:expr) => {
                 if !$instances.is_empty() {
                     let instance_bytes = crate::device::as_byte_slice($instances.as_slice());
-                    wgpu_dev.draw_instanced(
+                    wgpu_dev.record_draw(
+                        pass,
                         $variant,
                         $blend,
                         crate::device::WgpuDepthState::None,
-                        target_view,
+                        target_format,
                         target_w,
                         target_h,
-                        target_format,
                         &$textures,
+                        transform_buf,
+                        tex_size_buf,
                         instance_bytes,
                         $instances.len() as u32,
                         None,
-                        None,
-                        None, // no depth
                     );
                     *batches_drawn += 1;
                 }
@@ -2641,20 +2760,20 @@ impl Renderer {
                 ..Default::default()
             };
             let instance_bytes = crate::device::as_byte_slice(blurs.as_slice());
-            wgpu_dev.draw_instanced(
+            wgpu_dev.record_draw(
+                pass,
                 WgpuShaderVariant::CsBlurColor,
-                WgpuBlendMode::None, // blur writes opaque to cache
+                WgpuBlendMode::None,
                 crate::device::WgpuDepthState::None,
-                target_view,
+                target_format,
                 target_w,
                 target_h,
-                target_format,
                 &textures,
+                transform_buf,
+                tex_size_buf,
                 instance_bytes,
                 blurs.len() as u32,
                 None,
-                None,
-                None, // no depth
             );
             *batches_drawn += 1;
         }
@@ -2676,20 +2795,20 @@ impl Renderer {
                 ..Default::default()
             };
             let instance_bytes = crate::device::as_byte_slice(scalings.as_slice());
-            wgpu_dev.draw_instanced(
+            wgpu_dev.record_draw(
+                pass,
                 WgpuShaderVariant::CsScale,
-                WgpuBlendMode::None, // scaling writes opaque to cache
+                WgpuBlendMode::None,
                 crate::device::WgpuDepthState::None,
-                target_view,
+                target_format,
                 target_w,
                 target_h,
-                target_format,
                 &textures,
+                transform_buf,
+                tex_size_buf,
                 instance_bytes,
                 scalings.len() as u32,
                 None,
-                None,
-                None, // no depth
             );
             *batches_drawn += 1;
         }

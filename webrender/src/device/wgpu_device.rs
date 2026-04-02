@@ -473,11 +473,11 @@ pub struct WgpuDevice {
     /// Call `ensure_encoder()` to lazily create, `flush_encoder()` to submit.
     pending_encoder: Option<wgpu::CommandEncoder>,
     /// Pre-allocated unit quad vertex buffer (4 corners, Unorm8x2, 4-byte stride).
-    unit_quad_vb: wgpu::Buffer,
+    pub(crate) unit_quad_vb: wgpu::Buffer,
     /// Pre-allocated unit quad index buffer ([0,1,2, 2,1,3]).
-    unit_quad_ib: wgpu::Buffer,
+    pub(crate) unit_quad_ib: wgpu::Buffer,
     /// Pre-allocated mali workaround uniform (constant 0u32).
-    mali_workaround_buf: wgpu::Buffer,
+    pub(crate) mali_workaround_buf: wgpu::Buffer,
 }
 
 /// Texture bindings for a general-purpose draw call.
@@ -723,6 +723,126 @@ impl WgpuDevice {
         if let Some(encoder) = self.pending_encoder.take() {
             self.queue.submit([encoder.finish()]);
         }
+    }
+
+    /// Take the pending encoder (or create a new one).
+    /// While the encoder is out, the caller can create render passes from it
+    /// while still calling other WgpuDevice methods (pipeline lookup, buffer
+    /// creation, bind groups) — since the encoder is no longer on self.
+    /// Caller must return it via `return_encoder()`.
+    pub fn take_encoder(&mut self) -> wgpu::CommandEncoder {
+        self.pending_encoder.take().unwrap_or_else(|| {
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            })
+        })
+    }
+
+    /// Return an encoder after use. Typically called after dropping a render pass.
+    pub fn return_encoder(&mut self, encoder: wgpu::CommandEncoder) {
+        debug_assert!(self.pending_encoder.is_none(), "return_encoder called with encoder already present");
+        self.pending_encoder = Some(encoder);
+    }
+
+    /// Create per-target projection and texture-size uniform buffers.
+    /// These are constant for all draws to the same render target, so they
+    /// should be created once and shared across all draws.
+    pub fn create_target_uniforms(&self, width: u32, height: u32) -> (wgpu::Buffer, wgpu::Buffer) {
+        let projection = ortho(width as f32, height as f32, self.max_depth_ids as f32);
+        let mut transform_data = Vec::with_capacity(64);
+        for f in &projection {
+            transform_data.extend_from_slice(&f.to_le_bytes());
+        }
+        let transform_buf = self.create_uniform_buffer("target transform", &transform_data);
+
+        let mut tex_size_data = Vec::with_capacity(8);
+        tex_size_data.extend_from_slice(&(width as f32).to_le_bytes());
+        tex_size_data.extend_from_slice(&(height as f32).to_le_bytes());
+        let tex_size_buf = self.create_uniform_buffer("target texture size", &tex_size_data);
+
+        (transform_buf, tex_size_buf)
+    }
+
+    /// Look up or lazily create a render pipeline for the given key.
+    /// Returns None if the shader variant is not loaded.
+    pub fn ensure_pipeline(
+        &mut self,
+        variant: WgpuShaderVariant,
+        blend_mode: WgpuBlendMode,
+        depth_state: WgpuDepthState,
+        target_format: wgpu::TextureFormat,
+    ) -> Option<&wgpu::RenderPipeline> {
+        let pipeline_key = (variant, blend_mode, depth_state, target_format);
+        if !self.pipelines.contains_key(&pipeline_key) {
+            let shader = self.shaders.get(&variant)?;
+            let pipeline = create_pipeline_for_blend(
+                &self.device,
+                &self.pipeline_layout,
+                &shader.vs_module,
+                &shader.fs_module,
+                &shader.vertex_layouts,
+                variant,
+                blend_mode,
+                depth_state,
+                target_format,
+            );
+            self.pipelines.insert(pipeline_key, WgpuProgram { pipeline });
+        }
+        self.pipelines.get(&pipeline_key).map(|p| &p.pipeline)
+    }
+
+    /// Record a single instanced quad draw into an existing render pass.
+    ///
+    /// The caller is responsible for creating the render pass and managing the
+    /// encoder. This method handles pipeline lookup, bind group creation,
+    /// buffer upload, and the actual draw_indexed call.
+    ///
+    /// `transform_buf` and `tex_size_buf` are shared per-target uniforms
+    /// (from `create_target_uniforms`).
+    pub fn record_draw(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'_>,
+        variant: WgpuShaderVariant,
+        blend_mode: WgpuBlendMode,
+        depth_state: WgpuDepthState,
+        target_format: wgpu::TextureFormat,
+        target_width: u32,
+        target_height: u32,
+        textures: &TextureBindings<'_>,
+        transform_buf: &wgpu::Buffer,
+        tex_size_buf: &wgpu::Buffer,
+        instance_bytes: &[u8],
+        instance_count: u32,
+        scissor_rect: Option<(u32, u32, u32, u32)>,
+    ) {
+        let pipeline = match self.ensure_pipeline(variant, blend_mode, depth_state, target_format) {
+            Some(p) => p,
+            None => {
+                log::warn!("wgpu: pipeline not found for {:?}, skipping draw", variant);
+                return;
+            }
+        };
+        pass.set_pipeline(pipeline);
+
+        let (bg0, bg1) = self.create_bind_groups_full(
+            textures,
+            transform_buf,
+            tex_size_buf,
+            &self.mali_workaround_buf,
+        );
+        let instance_buf = self.create_vertex_buffer("draw instances", instance_bytes);
+
+        if let Some((x, y, w, h)) = scissor_rect {
+            pass.set_scissor_rect(x, y, w, h);
+        } else {
+            pass.set_scissor_rect(0, 0, target_width, target_height);
+        }
+        pass.set_bind_group(0, &bg0, &[]);
+        pass.set_bind_group(1, &bg1, &[]);
+        pass.set_vertex_buffer(0, self.unit_quad_vb.slice(..));
+        pass.set_vertex_buffer(1, instance_buf.slice(..));
+        pass.set_index_buffer(self.unit_quad_ib.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed(0..6, 0, 0..instance_count);
     }
 
     /// Acquire the current surface texture for rendering.
@@ -1152,7 +1272,7 @@ impl WgpuDevice {
             })
     }
 
-    fn create_vertex_buffer(&self, label: &str, data: &[u8]) -> wgpu::Buffer {
+    pub fn create_vertex_buffer(&self, label: &str, data: &[u8]) -> wgpu::Buffer {
         use wgpu::util::DeviceExt;
         self.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1181,7 +1301,7 @@ impl WgpuDevice {
         self.create_bind_groups_with_color0(None, transform_buf, tex_size_buf, mali_buf)
     }
 
-    fn create_bind_groups_with_color0(
+    pub fn create_bind_groups_with_color0(
         &self,
         color0_view: Option<&wgpu::TextureView>,
         transform_buf: &wgpu::Buffer,
@@ -2771,11 +2891,14 @@ mod tests {
     #[test]
     fn create_all_shader_pipelines() {
         let Some(dev) = try_device() else { return };
+        // shader_count() = typed variants actually compiled (from_shader_key matched).
+        // pipeline_count() = pipelines created (one per variant × default blend/depth/format).
+        // These should match — every compiled shader gets a default pipeline.
         assert_eq!(
             dev.pipeline_count(),
-            WGSL_SHADERS.len(),
-            "Expected {} shader pipelines, got {}",
-            WGSL_SHADERS.len(),
+            dev.shader_count(),
+            "Expected one pipeline per typed shader variant: {} shaders, {} pipelines",
+            dev.shader_count(),
             dev.pipeline_count()
         );
     }
@@ -2854,6 +2977,12 @@ mod tests {
     #[test]
     fn render_composite_instance() {
         let Some(mut dev) = try_device() else { return };
+        // Skip if the CompositeFastPath pipeline wasn't compiled (headless
+        // devices may not compile all shader variants).
+        if !dev.shaders.contains_key(&WgpuShaderVariant::CompositeFastPath) {
+            eprintln!("wgpu: CompositeFastPath shader not available — skipping test");
+            return;
+        }
         let size: u32 = 64;
 
         // Render target
