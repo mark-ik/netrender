@@ -18,6 +18,19 @@ use super::{GpuDevice, GpuFrameId, Texel, TextureFilter};
 use crate::internal_types::RenderTargetInfo;
 use crate::shader_source::WGSL_SHADERS;
 
+/// Reinterpret a typed slice as raw bytes.
+///
+/// Safe for WebRender GPU types — they are all `repr(C)` structs of f32/i32
+/// with no padding, or plain `[f32; N]` / `[i32; N]` arrays.
+pub(crate) fn as_byte_slice<T>(data: &[T]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            data.as_ptr() as *const u8,
+            std::mem::size_of_val(data),
+        )
+    }
+}
+
 /// A wgpu-backed texture handle.
 pub struct WgpuTexture {
     texture: wgpu::Texture,
@@ -46,6 +59,218 @@ impl WgpuTexture {
 /// A wgpu-backed shader pipeline.
 pub struct WgpuProgram {
     pipeline: wgpu::RenderPipeline,
+}
+
+/// Typed shader variant key for the wgpu pipeline cache.
+///
+/// Each variant maps to exactly one `(shader_name, config)` string pair in
+/// `WGSL_SHADERS`.  Using a flat enum instead of stringly-typed keys gives us
+/// compiler exhaustiveness checks and prevents the class of bugs where a
+/// wrong config string silently selects the wrong shader (e.g. the DPR=2
+/// `GLYPH_TRANSFORM` bug).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WgpuShaderVariant {
+    // -- Brush shaders (opaque + alpha) --
+    BrushSolid,
+    BrushSolidAlpha,
+    BrushImage,
+    BrushImageAlpha,
+    BrushBlend,
+    BrushBlendAlpha,
+    BrushMixBlend,
+    BrushMixBlendAlpha,
+    BrushLinearGradient,
+    BrushLinearGradientAlpha,
+    BrushOpacity,
+    BrushOpacityAlpha,
+    BrushYuvImage,
+    BrushYuvImageAlpha,
+
+    // -- Text --
+    PsTextRun,
+    PsTextRunGlyphTransform,
+
+    // -- Quad shaders --
+    PsQuadTextured,
+    PsQuadGradient,
+    PsQuadRadialGradient,
+    PsQuadConicGradient,
+    PsQuadMask,
+    PsQuadMaskFastPath,
+
+    // -- Prim --
+    PsSplitComposite,
+
+    // -- Clip shaders --
+    CsClipRectangle,
+    CsClipRectangleFastPath,
+    CsClipBoxShadow,
+
+    // -- Cache task shaders --
+    CsBorderSolid,
+    CsBorderSegment,
+    CsLineDecoration,
+    CsFastLinearGradient,
+    CsLinearGradient,
+    CsRadialGradient,
+    CsConicGradient,
+    CsBlurColor,
+    CsBlurAlpha,
+    CsScale,
+
+    // -- Composite --
+    Composite,
+    CompositeFastPath,
+    CompositeYuv,
+    CompositeFastPathYuv,
+
+    // -- Debug --
+    DebugColor,
+    DebugFont,
+
+    // -- Utility --
+    PsClear,
+    PsCopy,
+}
+
+impl WgpuShaderVariant {
+    /// Map this variant to the `(shader_name, config)` string pair used by
+    /// the build-time `WGSL_SHADERS` HashMap.
+    pub fn shader_key(self) -> (&'static str, &'static str) {
+        match self {
+            Self::BrushSolid                => ("brush_solid", ""),
+            Self::BrushSolidAlpha           => ("brush_solid", "ALPHA_PASS"),
+            Self::BrushImage                => ("brush_image", "TEXTURE_2D"),
+            Self::BrushImageAlpha           => ("brush_image", "ALPHA_PASS,TEXTURE_2D"),
+            Self::BrushBlend                => ("brush_blend", ""),
+            Self::BrushBlendAlpha           => ("brush_blend", "ALPHA_PASS"),
+            Self::BrushMixBlend             => ("brush_mix_blend", ""),
+            Self::BrushMixBlendAlpha        => ("brush_mix_blend", "ALPHA_PASS"),
+            Self::BrushLinearGradient       => ("brush_linear_gradient", "DITHERING"),
+            Self::BrushLinearGradientAlpha  => ("brush_linear_gradient", "ALPHA_PASS,DITHERING"),
+            Self::BrushOpacity              => ("brush_opacity", ""),
+            Self::BrushOpacityAlpha         => ("brush_opacity", "ALPHA_PASS"),
+            Self::BrushYuvImage             => ("brush_yuv_image", "TEXTURE_2D,YUV"),
+            Self::BrushYuvImageAlpha        => ("brush_yuv_image", "ALPHA_PASS,TEXTURE_2D,YUV"),
+            Self::PsTextRun                 => ("ps_text_run", "ALPHA_PASS,TEXTURE_2D"),
+            Self::PsTextRunGlyphTransform   => ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D"),
+            Self::PsQuadTextured            => ("ps_quad_textured", ""),
+            Self::PsQuadGradient            => ("ps_quad_gradient", "DITHERING"),
+            Self::PsQuadRadialGradient      => ("ps_quad_radial_gradient", "DITHERING"),
+            Self::PsQuadConicGradient       => ("ps_quad_conic_gradient", "DITHERING"),
+            Self::PsQuadMask                => ("ps_quad_mask", ""),
+            Self::PsQuadMaskFastPath        => ("ps_quad_mask", "FAST_PATH"),
+            Self::PsSplitComposite          => ("ps_split_composite", ""),
+            Self::CsClipRectangle           => ("cs_clip_rectangle", ""),
+            Self::CsClipRectangleFastPath   => ("cs_clip_rectangle", "FAST_PATH"),
+            Self::CsClipBoxShadow           => ("cs_clip_box_shadow", "TEXTURE_2D"),
+            Self::CsBorderSolid             => ("cs_border_solid", ""),
+            Self::CsBorderSegment           => ("cs_border_segment", ""),
+            Self::CsLineDecoration          => ("cs_line_decoration", ""),
+            Self::CsFastLinearGradient      => ("cs_fast_linear_gradient", ""),
+            Self::CsLinearGradient          => ("cs_linear_gradient", "DITHERING"),
+            Self::CsRadialGradient          => ("cs_radial_gradient", "DITHERING"),
+            Self::CsConicGradient           => ("cs_conic_gradient", "DITHERING"),
+            Self::CsBlurColor               => ("cs_blur", "COLOR_TARGET"),
+            Self::CsBlurAlpha               => ("cs_blur", "ALPHA_TARGET"),
+            Self::CsScale                   => ("cs_scale", "TEXTURE_2D"),
+            Self::Composite                 => ("composite", "TEXTURE_2D"),
+            Self::CompositeFastPath         => ("composite", "TEXTURE_2D,FAST_PATH"),
+            Self::CompositeYuv              => ("composite", "TEXTURE_2D,YUV"),
+            Self::CompositeFastPathYuv      => ("composite", "TEXTURE_2D,FAST_PATH,YUV"),
+            Self::DebugColor                => ("debug_color", ""),
+            Self::DebugFont                 => ("debug_font", ""),
+            Self::PsClear                   => ("ps_clear", ""),
+            Self::PsCopy                    => ("ps_copy", ""),
+        }
+    }
+
+    /// Reverse-map a `(shader_name, config)` string pair from `WGSL_SHADERS`
+    /// back to a typed variant.  Returns `None` for debug-overdraw variants
+    /// and other configs not used at runtime by the wgpu path.
+    pub fn from_shader_key(name: &str, config: &str) -> Option<Self> {
+        Some(match (name, config) {
+            ("brush_solid", "")                                     => Self::BrushSolid,
+            ("brush_solid", "ALPHA_PASS")                           => Self::BrushSolidAlpha,
+            ("brush_image", "TEXTURE_2D")                           => Self::BrushImage,
+            ("brush_image", "ALPHA_PASS,TEXTURE_2D")                => Self::BrushImageAlpha,
+            ("brush_blend", "")                                     => Self::BrushBlend,
+            ("brush_blend", "ALPHA_PASS")                           => Self::BrushBlendAlpha,
+            ("brush_mix_blend", "")                                 => Self::BrushMixBlend,
+            ("brush_mix_blend", "ALPHA_PASS")                       => Self::BrushMixBlendAlpha,
+            ("brush_linear_gradient", "DITHERING")                  => Self::BrushLinearGradient,
+            ("brush_linear_gradient", "ALPHA_PASS,DITHERING")       => Self::BrushLinearGradientAlpha,
+            ("brush_opacity", "")                                   => Self::BrushOpacity,
+            ("brush_opacity", "ALPHA_PASS")                         => Self::BrushOpacityAlpha,
+            ("brush_yuv_image", "TEXTURE_2D,YUV")                   => Self::BrushYuvImage,
+            ("brush_yuv_image", "ALPHA_PASS,TEXTURE_2D,YUV")        => Self::BrushYuvImageAlpha,
+            ("ps_text_run", "ALPHA_PASS,TEXTURE_2D")                => Self::PsTextRun,
+            ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D") => Self::PsTextRunGlyphTransform,
+            ("ps_quad_textured", "")                                => Self::PsQuadTextured,
+            ("ps_quad_gradient", "DITHERING")                       => Self::PsQuadGradient,
+            ("ps_quad_radial_gradient", "DITHERING")                => Self::PsQuadRadialGradient,
+            ("ps_quad_conic_gradient", "DITHERING")                 => Self::PsQuadConicGradient,
+            ("ps_quad_mask", "")                                    => Self::PsQuadMask,
+            ("ps_quad_mask", "FAST_PATH")                           => Self::PsQuadMaskFastPath,
+            ("ps_split_composite", "")                              => Self::PsSplitComposite,
+            ("cs_clip_rectangle", "")                               => Self::CsClipRectangle,
+            ("cs_clip_rectangle", "FAST_PATH")                      => Self::CsClipRectangleFastPath,
+            ("cs_clip_box_shadow", "TEXTURE_2D")                    => Self::CsClipBoxShadow,
+            ("cs_border_solid", "")                                 => Self::CsBorderSolid,
+            ("cs_border_segment", "")                               => Self::CsBorderSegment,
+            ("cs_line_decoration", "")                              => Self::CsLineDecoration,
+            ("cs_fast_linear_gradient", "")                         => Self::CsFastLinearGradient,
+            ("cs_linear_gradient", "DITHERING")                     => Self::CsLinearGradient,
+            ("cs_radial_gradient", "DITHERING")                     => Self::CsRadialGradient,
+            ("cs_conic_gradient", "DITHERING")                      => Self::CsConicGradient,
+            ("cs_blur", "COLOR_TARGET")                             => Self::CsBlurColor,
+            ("cs_blur", "ALPHA_TARGET")                             => Self::CsBlurAlpha,
+            ("cs_scale", "TEXTURE_2D")                              => Self::CsScale,
+            ("composite", "TEXTURE_2D")                             => Self::Composite,
+            ("composite", "TEXTURE_2D,FAST_PATH")                      => Self::CompositeFastPath,
+            ("composite", "TEXTURE_2D,YUV")                            => Self::CompositeYuv,
+            ("composite", "TEXTURE_2D,FAST_PATH,YUV")                  => Self::CompositeFastPathYuv,
+            ("debug_color", "")                                     => Self::DebugColor,
+            ("debug_font", "")                                      => Self::DebugFont,
+            ("ps_clear", "")                                        => Self::PsClear,
+            ("ps_copy", "")                                         => Self::PsCopy,
+            _ => return None,
+        })
+    }
+
+    /// Returns the instance data layout for this shader variant, or `None`
+    /// for shaders that use a single vertex buffer (debug shaders, etc.).
+    fn instance_layout(self) -> Option<&'static [(&'static str, wgpu::VertexFormat)]> {
+        match self {
+            Self::Composite | Self::CompositeFastPath
+            | Self::CompositeYuv | Self::CompositeFastPathYuv => Some(COMPOSITE_INSTANCE_LAYOUT),
+            Self::CsClipRectangle | Self::CsClipRectangleFastPath => Some(CLIP_RECT_INSTANCE_LAYOUT),
+            Self::CsClipBoxShadow => Some(CLIP_BOX_SHADOW_INSTANCE_LAYOUT),
+            Self::CsBlurColor | Self::CsBlurAlpha => Some(BLUR_INSTANCE_LAYOUT),
+            Self::CsScale => Some(SCALE_INSTANCE_LAYOUT),
+            Self::CsBorderSolid | Self::CsBorderSegment => Some(BORDER_INSTANCE_LAYOUT),
+            Self::CsLineDecoration => Some(LINE_DECORATION_INSTANCE_LAYOUT),
+            Self::CsFastLinearGradient => Some(FAST_LINEAR_GRADIENT_INSTANCE_LAYOUT),
+            Self::CsLinearGradient => Some(LINEAR_GRADIENT_INSTANCE_LAYOUT),
+            Self::CsRadialGradient => Some(RADIAL_GRADIENT_INSTANCE_LAYOUT),
+            Self::CsConicGradient => Some(CONIC_GRADIENT_INSTANCE_LAYOUT),
+            Self::PsQuadMask | Self::PsQuadMaskFastPath => Some(MASK_INSTANCE_LAYOUT),
+            // All brush_*, ps_text_run*, ps_quad_* (non-mask), ps_split_composite
+            Self::BrushSolid | Self::BrushSolidAlpha
+            | Self::BrushImage | Self::BrushImageAlpha
+            | Self::BrushBlend | Self::BrushBlendAlpha
+            | Self::BrushMixBlend | Self::BrushMixBlendAlpha
+            | Self::BrushLinearGradient | Self::BrushLinearGradientAlpha
+            | Self::BrushOpacity | Self::BrushOpacityAlpha
+            | Self::BrushYuvImage | Self::BrushYuvImageAlpha
+            | Self::PsTextRun | Self::PsTextRunGlyphTransform
+            | Self::PsQuadTextured | Self::PsQuadGradient
+            | Self::PsQuadRadialGradient | Self::PsQuadConicGradient
+            | Self::PsSplitComposite => Some(PRIMITIVE_INSTANCE_LAYOUT),
+            // Debug and utility shaders use a single vertex buffer
+            Self::DebugColor | Self::DebugFont | Self::PsClear | Self::PsCopy => None,
+        }
+    }
 }
 
 /// Blend mode key for wgpu pipeline cache.
@@ -226,10 +451,10 @@ pub struct WgpuDevice {
     #[allow(dead_code)]
     features: wgpu::Features,
     frame_id: GpuFrameId,
-    /// Compiled shader modules + vertex layout info, keyed by (name, config).
-    shaders: HashMap<(&'static str, &'static str), ShaderEntry>,
-    /// Render pipelines, keyed by (name, config, blend_mode, depth_state).
-    pipelines: HashMap<(&'static str, &'static str, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
+    /// Compiled shader modules + vertex layout info, keyed by typed variant.
+    shaders: HashMap<WgpuShaderVariant, ShaderEntry>,
+    /// Render pipelines, keyed by (variant, blend_mode, depth_state, target_format).
+    pipelines: HashMap<(WgpuShaderVariant, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
     #[allow(dead_code)]
     pipeline_layout: wgpu::PipelineLayout,
     bind_group_layout_0: wgpu::BindGroupLayout,
@@ -244,6 +469,15 @@ pub struct WgpuDevice {
     /// Window surface for presentation. None in headless mode.
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    /// Batched command encoder — shared across draws to the same target.
+    /// Call `ensure_encoder()` to lazily create, `flush_encoder()` to submit.
+    pending_encoder: Option<wgpu::CommandEncoder>,
+    /// Pre-allocated unit quad vertex buffer (4 corners, Unorm8x2, 4-byte stride).
+    unit_quad_vb: wgpu::Buffer,
+    /// Pre-allocated unit quad index buffer ([0,1,2, 2,1,3]).
+    unit_quad_ib: wgpu::Buffer,
+    /// Pre-allocated mali workaround uniform (constant 0u32).
+    mali_workaround_buf: wgpu::Buffer,
 }
 
 /// Texture bindings for a general-purpose draw call.
@@ -277,6 +511,40 @@ pub struct TextureBindings<'a> {
     pub gpu_buffer_f: Option<&'a wgpu::TextureView>,
     /// binding 11: sGpuBufferI (sint)
     pub gpu_buffer_i: Option<&'a wgpu::TextureView>,
+}
+
+/// Create the constant unit quad vertex buffer, index buffer, and mali
+/// workaround uniform. Called once during device init.
+fn create_constant_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer, wgpu::Buffer) {
+    use wgpu::util::DeviceExt;
+
+    // Unit quad: 4 corners as Unorm8x2, padded to 4-byte stride.
+    let quad_verts: [[u8; 4]; 4] = [
+        [0, 0, 0, 0],
+        [0xFF, 0, 0, 0],
+        [0, 0xFF, 0, 0],
+        [0xFF, 0xFF, 0, 0],
+    ];
+    let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("unit quad vb"),
+        contents: as_byte_slice(&quad_verts),
+        usage: wgpu::BufferUsages::VERTEX,
+    });
+
+    let indices: [u16; 6] = [0, 1, 2, 2, 1, 3];
+    let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("unit quad ib"),
+        contents: as_byte_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
+    let mali = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("mali workaround"),
+        contents: &0u32.to_le_bytes(),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    (vb, ib, mali)
 }
 
 impl WgpuDevice {
@@ -322,6 +590,7 @@ impl WgpuDevice {
         let dummy_texture_i32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
         let (shaders, pipelines) = create_all_pipelines(&device, &pipeline_layout);
+        let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
         Some(WgpuDevice {
             device,
@@ -340,6 +609,10 @@ impl WgpuDevice {
             depth_textures: HashMap::new(),
             surface: None,
             surface_config: None,
+            pending_encoder: None,
+            unit_quad_vb,
+            unit_quad_ib,
+            mali_workaround_buf,
         })
     }
 
@@ -413,6 +686,7 @@ impl WgpuDevice {
         let dummy_texture_i32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
         let (shaders, pipelines) = create_all_pipelines(&device, &pipeline_layout);
+        let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
         Some(WgpuDevice {
             device,
@@ -431,12 +705,24 @@ impl WgpuDevice {
             depth_textures: HashMap::new(),
             surface: Some(surface),
             surface_config: Some(surface_config),
+            pending_encoder: None,
+            unit_quad_vb,
+            unit_quad_ib,
+            mali_workaround_buf,
         })
     }
 
     /// Returns true if this device has a presentation surface.
     pub fn has_surface(&self) -> bool {
         self.surface.is_some()
+    }
+
+    /// Submit the pending command encoder, if any.
+    /// Call between render targets, before surface present, and at frame end.
+    pub fn flush_encoder(&mut self) {
+        if let Some(encoder) = self.pending_encoder.take() {
+            self.queue.submit([encoder.finish()]);
+        }
     }
 
     /// Acquire the current surface texture for rendering.
@@ -958,7 +1244,9 @@ impl WgpuDevice {
         (group_0, group_1)
     }
 
-    pub fn read_texture_pixels(&self, texture: &WgpuTexture, output: &mut [u8]) {
+    pub fn read_texture_pixels(&mut self, texture: &WgpuTexture, output: &mut [u8]) {
+        // Flush any pending draw commands so results are visible to the copy.
+        self.flush_encoder();
         let bpp = wgpu_format_bytes_per_pixel(texture.format);
         let bytes_per_row_unaligned = texture.width * bpp;
         let bytes_per_row = (bytes_per_row_unaligned + 255) & !255;
@@ -1084,7 +1372,7 @@ impl WgpuDevice {
         self.shaders.len()
     }
 
-    pub fn render_debug_color_quad(&self, target: &WgpuTexture, color: [u8; 4]) {
+    pub fn render_debug_color_quad(&mut self, target: &WgpuTexture, color: [u8; 4]) {
         let target_view = target
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1100,9 +1388,7 @@ impl WgpuDevice {
         tex_size_data.extend_from_slice(&(target.width as f32).to_le_bytes());
         tex_size_data.extend_from_slice(&(target.height as f32).to_le_bytes());
         let tex_size_buf = self.create_uniform_buffer("debug_color texture size", &tex_size_data);
-        let mali_buf =
-            self.create_uniform_buffer("debug_color mali workaround", &0u32.to_le_bytes());
-        let (bg0, bg1) = self.create_bind_groups(&transform_buf, &tex_size_buf, &mali_buf);
+        let (bg0, bg1) = self.create_bind_groups(&transform_buf, &tex_size_buf, &self.mali_workaround_buf);
 
         #[repr(C)]
         #[derive(Copy, Clone)]
@@ -1149,12 +1435,13 @@ impl WgpuDevice {
         let surface_fmt = self.surface_config.as_ref()
             .map(|c| c.format)
             .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
-        let pipeline = &self.pipelines[&("debug_color", "", WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt)].pipeline;
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("debug_color render"),
-            });
+        let pipeline = &self.pipelines[&(WgpuShaderVariant::DebugColor, WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt)].pipeline;
+        let device = &self.device;
+        let encoder = self.pending_encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            })
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("debug_color pass"),
@@ -1178,11 +1465,10 @@ impl WgpuDevice {
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..6, 0, 0..1);
         }
-        self.queue.submit([encoder.finish()]);
     }
 
     pub fn render_debug_font_quad(
-        &self,
+        &mut self,
         target: &WgpuTexture,
         source: &WgpuTexture,
         color: [u8; 4],
@@ -1205,10 +1491,8 @@ impl WgpuDevice {
         tex_size_data.extend_from_slice(&(target.width as f32).to_le_bytes());
         tex_size_data.extend_from_slice(&(target.height as f32).to_le_bytes());
         let tex_size_buf = self.create_uniform_buffer("debug_font texture size", &tex_size_data);
-        let mali_buf =
-            self.create_uniform_buffer("debug_font mali workaround", &0u32.to_le_bytes());
         let (bg0, bg1) =
-            self.create_bind_groups_with_color0(Some(&source_view), &transform_buf, &tex_size_buf, &mali_buf);
+            self.create_bind_groups_with_color0(Some(&source_view), &transform_buf, &tex_size_buf, &self.mali_workaround_buf);
 
         #[repr(C)]
         #[derive(Copy, Clone)]
@@ -1260,12 +1544,13 @@ impl WgpuDevice {
         let surface_fmt = self.surface_config.as_ref()
             .map(|c| c.format)
             .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
-        let pipeline = &self.pipelines[&("debug_font", "", WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt)].pipeline;
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("debug_font render"),
-            });
+        let pipeline = &self.pipelines[&(WgpuShaderVariant::DebugFont, WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt)].pipeline;
+        let device = &self.device;
+        let encoder = self.pending_encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            })
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("debug_font pass"),
@@ -1289,7 +1574,6 @@ impl WgpuDevice {
             pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..6, 0, 0..1);
         }
-        self.queue.submit([encoder.finish()]);
     }
 
     /// Create a render target texture suitable for wgpu composite rendering.
@@ -1325,12 +1609,12 @@ impl WgpuDevice {
     /// with the same data layout that the GL renderer uses. The caller
     /// provides raw `CompositeInstance` bytes and a pipeline config key.
     pub fn render_composite_instances(
-        &self,
+        &mut self,
         target: &WgpuTexture,
         source_texture: Option<&WgpuTexture>,
         instance_bytes: &[u8],
         instance_count: u32,
-        config: &str,
+        variant: WgpuShaderVariant,
         clear_color: Option<wgpu::Color>,
     ) {
         let target_view = target
@@ -1343,7 +1627,7 @@ impl WgpuDevice {
             source_texture,
             instance_bytes,
             instance_count,
-            config,
+            variant,
             clear_color,
         );
     }
@@ -1353,24 +1637,24 @@ impl WgpuDevice {
     /// This is the core rendering method — `render_composite_instances` delegates
     /// here. Used directly when rendering to a surface texture view.
     pub fn render_composite_instances_to_view(
-        &self,
+        &mut self,
         target_view: &wgpu::TextureView,
         target_width: u32,
         target_height: u32,
         source_texture: Option<&WgpuTexture>,
         instance_bytes: &[u8],
         instance_count: u32,
-        config: &str,
+        variant: WgpuShaderVariant,
         clear_color: Option<wgpu::Color>,
     ) {
         let surface_fmt = self.surface_config.as_ref()
             .map(|c| c.format)
             .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
-        let pipeline_key = ("composite", config, WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt);
+        let pipeline_key = (variant, WgpuBlendMode::PremultipliedAlpha, WgpuDepthState::None, surface_fmt);
         let program = self
             .pipelines
             .get(&pipeline_key)
-            .unwrap_or_else(|| panic!("composite pipeline not found for config {:?}", config));
+            .unwrap_or_else(|| panic!("composite pipeline not found for variant {:?}", variant));
 
         // Transform: orthographic projection matching the target dimensions
         let projection = ortho(target_width as f32, target_height as f32, self.max_depth_ids as f32);
@@ -1384,9 +1668,6 @@ impl WgpuDevice {
         tex_size_data.extend_from_slice(&(target_width as f32).to_le_bytes());
         tex_size_data.extend_from_slice(&(target_height as f32).to_le_bytes());
         let tex_size_buf = self.create_uniform_buffer("composite texture size", &tex_size_data);
-        let mali_buf =
-            self.create_uniform_buffer("composite mali workaround", &0u32.to_le_bytes());
-
         let source_view = source_texture.map(|t| {
             t.texture
                 .create_view(&wgpu::TextureViewDescriptor::default())
@@ -1395,36 +1676,9 @@ impl WgpuDevice {
             source_view.as_ref(),
             &transform_buf,
             &tex_size_buf,
-            &mali_buf,
+            &self.mali_workaround_buf,
         );
 
-        // Unit quad vertex buffer: 4 corners as Unorm8x2, padded to 4-byte
-        // stride (VERTEX_STRIDE_ALIGNMENT). Matches GL's QUAD_VERTICES.
-        let quad_verts: [[u8; 4]; 4] = [
-            [0, 0, 0, 0],
-            [0xFF, 0, 0, 0],
-            [0, 0xFF, 0, 0],
-            [0xFF, 0xFF, 0, 0],
-        ];
-        let quad_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                quad_verts.as_ptr() as *const u8,
-                std::mem::size_of_val(&quad_verts),
-            )
-        };
-        let vb = self.create_vertex_buffer("composite quad verts", quad_bytes);
-
-        // Index buffer: two triangles
-        let indices: [u16; 6] = [0, 1, 2, 2, 1, 3];
-        let idx_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                indices.as_ptr() as *const u8,
-                std::mem::size_of_val(&indices),
-            )
-        };
-        let ib = self.create_index_buffer("composite indices", idx_bytes);
-
-        // Instance buffer
         let instance_buf = self.create_vertex_buffer("composite instances", instance_bytes);
 
         let load = match clear_color {
@@ -1432,11 +1686,12 @@ impl WgpuDevice {
             None => wgpu::LoadOp::Load,
         };
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("composite render"),
-            });
+        let device = &self.device;
+        let encoder = self.pending_encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            })
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("composite pass"),
@@ -1456,12 +1711,11 @@ impl WgpuDevice {
             pass.set_pipeline(&program.pipeline);
             pass.set_bind_group(0, &bg0, &[]);
             pass.set_bind_group(1, &bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_vertex_buffer(0, self.unit_quad_vb.slice(..));
             pass.set_vertex_buffer(1, instance_buf.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(self.unit_quad_ib.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..6, 0, 0..instance_count);
         }
-        self.queue.submit([encoder.finish()]);
     }
 
     // ── General-purpose instanced draw ──────────────────────────────────
@@ -1540,7 +1794,7 @@ impl WgpuDevice {
     ///
     /// This is the general-purpose wgpu draw path for WebRender batches.
     /// The caller supplies:
-    /// - `shader_name` + `config`: pipeline key (e.g. "brush_solid", "ALPHA_PASS")
+    /// - `variant`: typed shader variant key
     /// - `target_view` / dimensions: where to render
     /// - `textures`: per-binding texture views (data textures, color sources)
     /// - `instance_bytes`: raw instance data, same layout as the GL path
@@ -1550,8 +1804,7 @@ impl WgpuDevice {
     /// - `depth_view`: depth texture view (required when depth_state is not None)
     pub fn draw_instanced(
         &mut self,
-        shader_name: &'static str,
-        config: &'static str,
+        variant: WgpuShaderVariant,
         blend_mode: WgpuBlendMode,
         depth_state: WgpuDepthState,
         target_view: &wgpu::TextureView,
@@ -1565,15 +1818,15 @@ impl WgpuDevice {
         scissor_rect: Option<(u32, u32, u32, u32)>,
         depth_view: Option<&wgpu::TextureView>,
     ) {
-        // Lazily create a pipeline for this (shader, config, blend_mode, depth_state, format) if needed.
-        let pipeline_key = (shader_name, config, blend_mode, depth_state, target_format);
+        // Lazily create a pipeline for this (variant, blend_mode, depth_state, format) if needed.
+        let pipeline_key = (variant, blend_mode, depth_state, target_format);
         if !self.pipelines.contains_key(&pipeline_key) {
-            let shader = match self.shaders.get(&(shader_name, config)) {
+            let shader = match self.shaders.get(&variant) {
                 Some(s) => s,
                 None => {
                     log::warn!(
-                        "wgpu: shader not found for ({:?}, {:?}), skipping draw",
-                        shader_name, config,
+                        "wgpu: shader not found for {:?}, skipping draw",
+                        variant,
                     );
                     return;
                 }
@@ -1584,8 +1837,7 @@ impl WgpuDevice {
                 &shader.vs_module,
                 &shader.fs_module,
                 &shader.vertex_layouts,
-                shader_name,
-                config,
+                variant,
                 blend_mode,
                 depth_state,
                 target_format,
@@ -1606,39 +1858,12 @@ impl WgpuDevice {
         tex_size_data.extend_from_slice(&(target_width as f32).to_le_bytes());
         tex_size_data.extend_from_slice(&(target_height as f32).to_le_bytes());
         let tex_size_buf = self.create_uniform_buffer("draw texture size", &tex_size_data);
-        let mali_buf =
-            self.create_uniform_buffer("draw mali workaround", &0u32.to_le_bytes());
-
         let (bg0, bg1) = self.create_bind_groups_full(
             textures,
             &transform_buf,
             &tex_size_buf,
-            &mali_buf,
+            &self.mali_workaround_buf,
         );
-
-        // Unit quad vertex buffer (Unorm8x2, 4-byte stride)
-        let quad_verts: [[u8; 4]; 4] = [
-            [0, 0, 0, 0],
-            [0xFF, 0, 0, 0],
-            [0, 0xFF, 0, 0],
-            [0xFF, 0xFF, 0, 0],
-        ];
-        let quad_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                quad_verts.as_ptr() as *const u8,
-                std::mem::size_of_val(&quad_verts),
-            )
-        };
-        let vb = self.create_vertex_buffer("draw quad verts", quad_bytes);
-
-        let indices: [u16; 6] = [0, 1, 2, 2, 1, 3];
-        let idx_bytes: &[u8] = unsafe {
-            std::slice::from_raw_parts(
-                indices.as_ptr() as *const u8,
-                std::mem::size_of_val(&indices),
-            )
-        };
-        let ib = self.create_index_buffer("draw indices", idx_bytes);
 
         let instance_buf = self.create_vertex_buffer("draw instances", instance_bytes);
 
@@ -1664,9 +1889,12 @@ impl WgpuDevice {
             None
         };
 
-        let mut encoder = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: Some("draw_instanced") },
-        );
+        let device = &self.device;
+        let encoder = self.pending_encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame encoder"),
+            })
+        });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("draw_instanced pass"),
@@ -1686,12 +1914,11 @@ impl WgpuDevice {
             }
             pass.set_bind_group(0, &bg0, &[]);
             pass.set_bind_group(1, &bg1, &[]);
-            pass.set_vertex_buffer(0, vb.slice(..));
+            pass.set_vertex_buffer(0, self.unit_quad_vb.slice(..));
             pass.set_vertex_buffer(1, instance_buf.slice(..));
-            pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(self.unit_quad_ib.slice(..), wgpu::IndexFormat::Uint16);
             pass.draw_indexed(0..6, 0, 0..instance_count);
         }
-        self.queue.submit([encoder.finish()]);
     }
 }
 
@@ -2272,13 +2499,12 @@ fn create_pipeline_for_blend(
     vs_module: &wgpu::ShaderModule,
     fs_module: &wgpu::ShaderModule,
     vertex_layouts: &ShaderVertexLayouts,
-    name: &str,
-    config: &str,
+    variant: WgpuShaderVariant,
     blend_mode: WgpuBlendMode,
     depth_state: WgpuDepthState,
     target_format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let pipeline_label = format!("{}#{}#{:?}#{:?}#{:?}", name, config, blend_mode, depth_state, target_format);
+    let pipeline_label = format!("{:?}#{:?}#{:?}#{:?}", variant, blend_mode, depth_state, target_format);
 
     // Build wgpu vertex buffer layout references from our cached data.
     let vbl_single;
@@ -2353,15 +2579,26 @@ fn create_all_pipelines(
     device: &wgpu::Device,
     pipeline_layout: &wgpu::PipelineLayout,
 ) -> (
-    HashMap<(&'static str, &'static str), ShaderEntry>,
-    HashMap<(&'static str, &'static str, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
+    HashMap<WgpuShaderVariant, ShaderEntry>,
+    HashMap<(WgpuShaderVariant, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
 ) {
     let mut shaders = HashMap::new();
     let mut pipelines = HashMap::new();
 
     for (&(name, config), source) in WGSL_SHADERS.iter() {
-        let vs_label = format!("{}#{} (VS)", name, config);
-        let fs_label = format!("{}#{} (FS)", name, config);
+        // Map the string key to a typed variant.  Shaders that don't have a
+        // typed variant (e.g. DEBUG_OVERDRAW configs) are still compiled but
+        // not indexed — they can be added to the enum later if needed.
+        let variant = match WgpuShaderVariant::from_shader_key(name, config) {
+            Some(v) => v,
+            None => {
+                log::debug!("wgpu: skipping untyped shader ({:?}, {:?})", name, config);
+                continue;
+            }
+        };
+
+        let vs_label = format!("{:?} (VS)", variant);
+        let fs_label = format!("{:?} (FS)", variant);
 
         let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(&vs_label),
@@ -2372,37 +2609,18 @@ fn create_all_pipelines(
             source: wgpu::ShaderSource::Wgsl(source.frag_source.into()),
         });
 
-        // Determine buffer layout(s) based on shader kind.
+        // Determine buffer layout(s) from the typed variant.
         let inputs = parse_wgsl_vertex_inputs(source.vert_source);
-        let is_alpha_batch_shader = name.starts_with("brush_")
-            || name.starts_with("ps_text_run")
-            || name.starts_with("ps_split_composite")
-            || name.starts_with("ps_quad_");
-        let instance_layout = match name {
-            "composite" => Some(COMPOSITE_INSTANCE_LAYOUT),
-            "cs_clip_rectangle" => Some(CLIP_RECT_INSTANCE_LAYOUT),
-            "cs_clip_box_shadow" => Some(CLIP_BOX_SHADOW_INSTANCE_LAYOUT),
-            "cs_blur" => Some(BLUR_INSTANCE_LAYOUT),
-            "cs_scale" => Some(SCALE_INSTANCE_LAYOUT),
-            "cs_border_solid" | "cs_border_segment" => Some(BORDER_INSTANCE_LAYOUT),
-            "cs_line_decoration" => Some(LINE_DECORATION_INSTANCE_LAYOUT),
-            "cs_fast_linear_gradient" => Some(FAST_LINEAR_GRADIENT_INSTANCE_LAYOUT),
-            "cs_linear_gradient" => Some(LINEAR_GRADIENT_INSTANCE_LAYOUT),
-            "cs_radial_gradient" => Some(RADIAL_GRADIENT_INSTANCE_LAYOUT),
-            "cs_conic_gradient" => Some(CONIC_GRADIENT_INSTANCE_LAYOUT),
-            "ps_quad_mask" => Some(MASK_INSTANCE_LAYOUT),
-            _ if is_alpha_batch_shader => Some(PRIMITIVE_INSTANCE_LAYOUT),
-            _ => None,
-        };
+        let instance_layout = variant.instance_layout();
 
         // Build the cached vertex layout info.
-        let vertex_layouts = match (name, instance_layout) {
-            ("debug_color", _) | ("debug_font", _) => {
-                let (attrs, stride) = match name {
-                    "debug_color" => build_debug_color_attrs(),
-                    "debug_font" => build_debug_font_attrs(),
-                    _ => unreachable!(),
-                };
+        let vertex_layouts = match (variant, instance_layout) {
+            (WgpuShaderVariant::DebugColor, _) => {
+                let (attrs, stride) = build_debug_color_attrs();
+                ShaderVertexLayouts::SingleBuffer { attrs, stride }
+            }
+            (WgpuShaderVariant::DebugFont, _) => {
+                let (attrs, stride) = build_debug_font_attrs();
                 ShaderVertexLayouts::SingleBuffer { attrs, stride }
             }
             (_, Some(inst_layout)) => {
@@ -2432,19 +2650,18 @@ fn create_all_pipelines(
             &vs_module,
             &fs_module,
             &vertex_layouts,
-            name,
-            config,
+            variant,
             default_blend,
             default_depth,
             default_format,
         );
 
         pipelines.insert(
-            (name, config, default_blend, default_depth, default_format),
+            (variant, default_blend, default_depth, default_format),
             WgpuProgram { pipeline },
         );
         shaders.insert(
-            (name, config),
+            variant,
             ShaderEntry { vs_module, fs_module, vertex_layouts },
         );
     }
@@ -2702,7 +2919,7 @@ mod tests {
             Some(&src),
             instance_bytes,
             1,
-            "FAST_PATH,TEXTURE_2D",
+            WgpuShaderVariant::CompositeFastPath,
             Some(wgpu::Color::BLACK),
         );
 
@@ -2810,8 +3027,7 @@ mod tests {
 
         // This is the critical call: draw through the brush_solid pipeline.
         dev.draw_instanced(
-            "brush_solid",
-            "",
+            WgpuShaderVariant::BrushSolid,
             WgpuBlendMode::None,
             WgpuDepthState::None,
             &rt_view,
@@ -2825,6 +3041,7 @@ mod tests {
             None, // no scissor
             None, // no depth
         );
+        dev.flush_encoder();
 
         // Read back — we don't check specific pixel values (degenerate data
         // means output is undefined), just that readback succeeds without panic.
@@ -2989,8 +3206,7 @@ mod tests {
 
         // ── Draw! ───────────────────────────────────────────────────────
         dev.draw_instanced(
-            "brush_solid",
-            "",
+            WgpuShaderVariant::BrushSolid,
             WgpuBlendMode::None,
             WgpuDepthState::None,
             &rt_view,
@@ -3004,6 +3220,7 @@ mod tests {
             None, // no scissor
             None, // no depth
         );
+        dev.flush_encoder();
 
         // ── Readback and verify ─────────────────────────────────────────
         let mut pixels = vec![0u8; (size * size * 4) as usize];
@@ -3060,8 +3277,7 @@ mod tests {
         };
 
         dev.draw_instanced(
-            "brush_solid",
-            "ALPHA_PASS",
+            WgpuShaderVariant::BrushSolidAlpha,
             WgpuBlendMode::PremultipliedAlpha,
             WgpuDepthState::None,
             &rt_view,
@@ -3075,6 +3291,7 @@ mod tests {
             None, // no scissor
             None, // no depth
         );
+        dev.flush_encoder();
 
         let mut pixels = vec![0u8; (size * size * 4) as usize];
         dev.read_texture_pixels(&rt, &mut pixels);

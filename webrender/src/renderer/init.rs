@@ -859,6 +859,10 @@ fn create_webrender_instance_with_device(
         wgpu_texture_cache: FastHashMap::default(),
         #[cfg(feature = "wgpu_backend")]
         wgpu_gpu_cache: super::WgpuGpuCacheState::new(),
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_dither_texture: None,
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_frame_data: None,
     };
 
     // We initially set the flags to default and then now call set_debug_flags
@@ -946,7 +950,7 @@ pub fn create_webrender_instance_wgpu(
     let (result_tx, result_rx) = unbounded_channel();
 
     // Create the wgpu device — with surface if provided, else headless.
-    let wgpu_device = if let Some(surface) = surface {
+    let mut wgpu_device = if let Some(surface) = surface {
         let inst = instance.as_ref()
             .expect("wgpu Instance must be provided when surface is Some");
         WgpuDevice::new_with_surface(inst, surface, surface_width, surface_height)
@@ -983,6 +987,11 @@ pub fn create_webrender_instance_wgpu(
     let upload_state = RendererUploadState::Wgpu(super::upload::WgpuRendererUploadState);
     #[cfg(feature = "gl_backend")]
     let gpu_cache_texture = gpu_cache::RendererGpuCache::Wgpu(gpu_cache::WgpuGpuCacheTexture);
+    let dither_tex = if options.enable_dithering {
+        Some(create_dither_matrix_texture(&mut wgpu_device))
+    } else {
+        None
+    };
     #[cfg(feature = "gl_backend")]
     let aux_textures = super::RendererAuxTextures::Wgpu(super::WgpuRendererAuxTextures);
     #[cfg(feature = "gl_backend")]
@@ -1292,6 +1301,8 @@ pub fn create_webrender_instance_wgpu(
         wgpu_device: Some(wgpu_device),
         wgpu_texture_cache: FastHashMap::default(),
         wgpu_gpu_cache: super::WgpuGpuCacheState::new(),
+        wgpu_dither_texture: dither_tex,
+        wgpu_frame_data: None,
     };
 
     renderer.set_debug_flags(debug_flags);
