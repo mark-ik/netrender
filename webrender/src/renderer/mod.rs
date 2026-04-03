@@ -1999,7 +1999,7 @@ impl Renderer {
         frame_textures: &WgpuFrameDataTextures,
         gpu_cache_view: Option<&wgpu::TextureView>,
     ) {
-        use crate::device::{TextureBindings, WgpuBlendMode, WgpuDepthState};
+        use crate::device::{TextureBindings, WgpuBlendMode, WgpuDepthState, WgpuShaderVariant};
 
         if self.wgpu_device.is_none() {
             return;
@@ -2252,9 +2252,10 @@ impl Renderer {
                     || !target.svg_filters.is_empty()
                     || !target.svg_nodes.is_empty();
                 let has_alpha_batches = !target.alpha_batch_containers.is_empty();
+                let has_clip_masks = !target.clip_masks.is_empty();
                 let needs_depth = target.needs_depth();
 
-                if !has_primary && !has_secondary && !has_quads && !has_cs_tasks && !has_alpha_batches {
+                if !has_primary && !has_secondary && !has_quads && !has_cs_tasks && !has_alpha_batches && !has_clip_masks {
                     continue;
                 }
 
@@ -2326,6 +2327,107 @@ impl Renderer {
                                 height: h,
                                 depth_or_array_layers: 1,
                             },
+                        );
+                    }
+                }
+
+                // Resolve ops: parent-picture to child-target copies (backdrop-filter,
+                // picture-cache surface resolution). Like blits, these must happen
+                // outside the render pass via copy_texture_to_texture.
+                for resolve_op in &target.resolve_ops {
+                    let dest_task = &frame.render_tasks[resolve_op.dest_task_id];
+                    let dest_info = match dest_task.kind {
+                        RenderTaskKind::Picture(ref info) => info,
+                        _ => continue,
+                    };
+                    let dest_task_rect = dest_task.get_target_rect().to_f32();
+                    // Use content_size for blur-expanded dest targets.
+                    let dest_task_rect = DeviceRect::from_origin_and_size(
+                        dest_task_rect.min,
+                        dest_info.content_size.to_f32(),
+                    );
+
+                    for &src_task_id in &resolve_op.src_task_ids {
+                        let src_task = &frame.render_tasks[src_task_id];
+                        let src_info = match src_task.kind {
+                            RenderTaskKind::Picture(ref info) => info,
+                            _ => continue,
+                        };
+                        let src_task_rect = src_task.get_target_rect().to_f32();
+
+                        // Compute intersection in layout space then scale to device pixels.
+                        let wanted = DeviceRect::from_origin_and_size(
+                            dest_info.content_origin,
+                            dest_task_rect.size().to_f32(),
+                        ).cast_unit() * dest_info.device_pixel_scale.inverse();
+
+                        let avail = DeviceRect::from_origin_and_size(
+                            src_info.content_origin,
+                            src_task_rect.size().to_f32(),
+                        ).cast_unit() * src_info.device_pixel_scale.inverse();
+
+                        let int_rect = match wanted.intersection(&avail) {
+                            Some(r) => r,
+                            None => continue,
+                        };
+
+                        let src_int_rect = (int_rect * src_info.device_pixel_scale).cast_unit();
+                        let dest_int_rect = (int_rect * dest_info.device_pixel_scale).cast_unit();
+
+                        let src_origin = src_task_rect.min.to_f32()
+                            + src_int_rect.min.to_vector()
+                            - src_info.content_origin.to_vector();
+                        let src = DeviceIntRect::from_origin_and_size(
+                            src_origin.to_i32(),
+                            src_int_rect.size().round().to_i32(),
+                        );
+
+                        let dest_origin = dest_task_rect.min.to_f32()
+                            + dest_int_rect.min.to_vector()
+                            - dest_info.content_origin.to_vector();
+                        let dest = DeviceIntRect::from_origin_and_size(
+                            dest_origin.to_i32(),
+                            dest_int_rect.size().round().to_i32(),
+                        );
+
+                        let w = dest.width() as u32;
+                        let h = dest.height() as u32;
+                        if w == 0 || h == 0 { continue; }
+
+                        let src_tex_id = src_task.get_target_texture();
+                        let dst_tex_id = dest_task.get_target_texture();
+                        if src_tex_id == dst_tex_id { continue; }
+
+                        let src_tex = match self.wgpu_texture_cache.get(&src_tex_id) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        let dst_tex = match self.wgpu_texture_cache.get(&dst_tex_id) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+
+                        let sx = src.min.x.max(0) as u32;
+                        let sy = src.min.y.max(0) as u32;
+                        let dx = dest.min.x.max(0) as u32;
+                        let dy = dest.min.y.max(0) as u32;
+                        if sx + w > src_tex.width || sy + h > src_tex.height { continue; }
+                        if dx + w > dst_tex.width || dy + h > dst_tex.height { continue; }
+
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &src_tex.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: sx, y: sy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &dst_tex.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                         );
                     }
                 }
@@ -2501,6 +2603,220 @@ impl Renderer {
                             for batch in alpha_batch_container.alpha_batches.iter() {
                                 record_alpha_batch!(batch, true, alpha_depth);
                             }
+                        }
+                    }
+
+                    // ClipMaskInstanceList: GPU-driven mask instances (ps_quad_mask
+                    // and ps_quad_textured with MultiplyClipMask blend).
+                    if has_clip_masks {
+                        let masks = &target.clip_masks;
+
+                        // Emit one draw for a slice of MaskInstance into either
+                        // PsQuadMask or PsQuadMaskFastPath.
+                        macro_rules! record_mask_instances {
+                            ($instances:expr, $variant:expr) => {{
+                                if !$instances.is_empty() {
+                                    let instance_bytes = crate::device::as_byte_slice($instances.as_slice());
+                                    let textures = TextureBindings {
+                                        gpu_cache: draw_ctx.gpu_cache,
+                                        transform_palette: Some(draw_ctx.transform_palette),
+                                        render_tasks: Some(draw_ctx.render_tasks),
+                                        prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                        prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                        dither: draw_ctx.dither,
+                                        gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                        gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                        ..Default::default()
+                                    };
+                                    let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                                    wgpu_dev.record_draw(
+                                        &mut pass,
+                                        $variant,
+                                        WgpuBlendMode::MultiplyClipMask,
+                                        WgpuDepthState::None,
+                                        target_fmt,
+                                        target_w,
+                                        target_h,
+                                        &textures,
+                                        &transform_buf,
+                                        &tex_size_buf,
+                                        instance_bytes,
+                                        $instances.len() as u32,
+                                        None,
+                                    );
+                                    batches_drawn += 1;
+                                }
+                            }};
+                        }
+
+                        // Fast path (no SDF lookup).
+                        record_mask_instances!(&masks.mask_instances_fast, WgpuShaderVariant::PsQuadMaskFastPath);
+                        // With per-draw scissor.
+                        for (scissor_rect, instances) in &masks.mask_instances_fast_with_scissor {
+                            if instances.is_empty() { continue; }
+                            let instance_bytes = crate::device::as_byte_slice(instances.as_slice());
+                            let textures = TextureBindings {
+                                gpu_cache: draw_ctx.gpu_cache,
+                                transform_palette: Some(draw_ctx.transform_palette),
+                                render_tasks: Some(draw_ctx.render_tasks),
+                                prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                dither: draw_ctx.dither,
+                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                ..Default::default()
+                            };
+                            let scissor = Some((
+                                scissor_rect.min.x.max(0) as u32,
+                                scissor_rect.min.y.max(0) as u32,
+                                scissor_rect.width() as u32,
+                                scissor_rect.height() as u32,
+                            ));
+                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                            wgpu_dev.record_draw(
+                                &mut pass,
+                                WgpuShaderVariant::PsQuadMaskFastPath,
+                                WgpuBlendMode::MultiplyClipMask,
+                                WgpuDepthState::None,
+                                target_fmt,
+                                target_w,
+                                target_h,
+                                &textures,
+                                &transform_buf,
+                                &tex_size_buf,
+                                instance_bytes,
+                                instances.len() as u32,
+                                scissor,
+                            );
+                            batches_drawn += 1;
+                        }
+
+                        // Slow path (SDF / rounded clip).
+                        record_mask_instances!(&masks.mask_instances_slow, WgpuShaderVariant::PsQuadMask);
+                        // With per-draw scissor.
+                        for (scissor_rect, instances) in &masks.mask_instances_slow_with_scissor {
+                            if instances.is_empty() { continue; }
+                            let instance_bytes = crate::device::as_byte_slice(instances.as_slice());
+                            let textures = TextureBindings {
+                                gpu_cache: draw_ctx.gpu_cache,
+                                transform_palette: Some(draw_ctx.transform_palette),
+                                render_tasks: Some(draw_ctx.render_tasks),
+                                prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                dither: draw_ctx.dither,
+                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                ..Default::default()
+                            };
+                            let scissor = Some((
+                                scissor_rect.min.x.max(0) as u32,
+                                scissor_rect.min.y.max(0) as u32,
+                                scissor_rect.width() as u32,
+                                scissor_rect.height() as u32,
+                            ));
+                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                            wgpu_dev.record_draw(
+                                &mut pass,
+                                WgpuShaderVariant::PsQuadMask,
+                                WgpuBlendMode::MultiplyClipMask,
+                                WgpuDepthState::None,
+                                target_fmt,
+                                target_w,
+                                target_h,
+                                &textures,
+                                &transform_buf,
+                                &tex_size_buf,
+                                instance_bytes,
+                                instances.len() as u32,
+                                scissor,
+                            );
+                            batches_drawn += 1;
+                        }
+
+                        // Image-based masks (ps_quad_textured with texture lookup).
+                        for (texture_source, prim_instances) in &masks.image_mask_instances {
+                            if prim_instances.is_empty() { continue; }
+                            let instance_bytes = crate::device::as_byte_slice(prim_instances.as_slice());
+                            let color0 = match *texture_source {
+                                TextureSource::TextureCache(id, _) => {
+                                    self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                }
+                                _ => None,
+                            };
+                            let textures = TextureBindings {
+                                color0: color0.as_ref(),
+                                gpu_cache: draw_ctx.gpu_cache,
+                                transform_palette: Some(draw_ctx.transform_palette),
+                                render_tasks: Some(draw_ctx.render_tasks),
+                                prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                dither: draw_ctx.dither,
+                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                ..Default::default()
+                            };
+                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                            wgpu_dev.record_draw(
+                                &mut pass,
+                                WgpuShaderVariant::PsQuadTextured,
+                                WgpuBlendMode::MultiplyClipMask,
+                                WgpuDepthState::None,
+                                target_fmt,
+                                target_w,
+                                target_h,
+                                &textures,
+                                &transform_buf,
+                                &tex_size_buf,
+                                instance_bytes,
+                                prim_instances.len() as u32,
+                                None,
+                            );
+                            batches_drawn += 1;
+                        }
+                        for ((scissor_rect, texture_source), prim_instances) in &masks.image_mask_instances_with_scissor {
+                            if prim_instances.is_empty() { continue; }
+                            let instance_bytes = crate::device::as_byte_slice(prim_instances.as_slice());
+                            let color0 = match *texture_source {
+                                TextureSource::TextureCache(id, _) => {
+                                    self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                }
+                                _ => None,
+                            };
+                            let textures = TextureBindings {
+                                color0: color0.as_ref(),
+                                gpu_cache: draw_ctx.gpu_cache,
+                                transform_palette: Some(draw_ctx.transform_palette),
+                                render_tasks: Some(draw_ctx.render_tasks),
+                                prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                dither: draw_ctx.dither,
+                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                ..Default::default()
+                            };
+                            let scissor = Some((
+                                scissor_rect.min.x.max(0) as u32,
+                                scissor_rect.min.y.max(0) as u32,
+                                scissor_rect.width() as u32,
+                                scissor_rect.height() as u32,
+                            ));
+                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                            wgpu_dev.record_draw(
+                                &mut pass,
+                                WgpuShaderVariant::PsQuadTextured,
+                                WgpuBlendMode::MultiplyClipMask,
+                                WgpuDepthState::None,
+                                target_fmt,
+                                target_w,
+                                target_h,
+                                &textures,
+                                &transform_buf,
+                                &tex_size_buf,
+                                instance_bytes,
+                                prim_instances.len() as u32,
+                                scissor,
+                            );
+                            batches_drawn += 1;
                         }
                     }
                 } // render pass dropped
