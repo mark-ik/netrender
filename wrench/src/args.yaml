@@ -90,6 +90,18 @@ subcommands:
               long: surface
               help: 'What rendered surface to save as PNG, one of: screen, gpu-cache'
               takes_value: true
+          - keyframes:
+              short: k
+              long: keyframes
+              takes_value: true
+              help: Provide a keyframes file (shared with show subcommand)
+          - list-resources:
+              long: list-resources
+              help: List the resources used by this render
+          - watch:
+              short: w
+              long: watch
+              help: Watch the given file, reloading whenever it changes
           - INPUT:
               help: The input YAML file
               required: true

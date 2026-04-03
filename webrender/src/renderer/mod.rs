@@ -2909,6 +2909,11 @@ impl Renderer {
     }
 
     pub fn required_texture_stride_alignment(&self, format: ImageFormat) -> usize {
+        #[cfg(feature = "wgpu_backend")]
+        if self.is_wgpu_only() {
+            let _ = format;
+            return 1;
+        }
         #[cfg(feature = "gl_backend")]
         { self.device.as_ref().unwrap().required_pbo_stride().num_bytes(format).get() }
         #[cfg(not(feature = "gl_backend"))]
@@ -8139,6 +8144,17 @@ impl Renderer {
     pub fn report_memory(&self, swgl: *mut c_void) -> MemoryReport {
         let mut report = MemoryReport::default();
 
+        #[cfg(feature = "wgpu_backend")]
+        if self.is_wgpu_only() {
+            // Render task CPU memory is available in wgpu mode.
+            for (_id, doc) in &self.active_documents {
+                let frame_alloc_stats = doc.frame.allocator_memory.get_stats();
+                report.frame_allocator += frame_alloc_stats.reserved_bytes;
+                report.render_tasks += doc.frame.render_tasks.report_memory();
+            }
+            return report;
+        }
+
         // GPU cache CPU memory.
         self.gpu_cache_texture.report_memory_to(&mut report, self.size_of_ops.as_ref().unwrap());
 
@@ -8500,6 +8516,11 @@ impl Renderer {
         use api::ExternalImageData;
         use crate::render_api::CaptureBits;
 
+        if self.device.is_none() {
+            warn!("save_capture: GL device not available (wgpu mode), skipping");
+            return;
+        }
+
         let root = config.resource_root();
 
         self.device.as_mut().unwrap().begin_frame();
@@ -8635,6 +8656,11 @@ impl Renderer {
         plain_externals: Vec<PlainExternalImage>,
     ) {
         use std::{fs::File, io::Read};
+
+        if self.device.is_none() {
+            warn!("load_capture: GL device not available (wgpu mode), skipping");
+            return;
+        }
 
         info!("loading external buffer-backed images");
         assert!(self.texture_resolver.external_images.is_empty());
