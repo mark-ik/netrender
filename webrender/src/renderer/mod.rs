@@ -1600,6 +1600,7 @@ impl Renderer {
                     );
                     self.wgpu_frame_data = Some(ft);
                 }
+
             }
         }
 
@@ -1730,9 +1731,14 @@ impl Renderer {
         }
 
         // All composite draws to the surface share a single render pass.
+        // Always clear the render target to the configured clear color,
+        // even when there are no tiles to draw (e.g. blank scenes).
         let has_composite_work = !color_instances.is_empty() || !textured_batches.is_empty();
-        if has_composite_work {
-            let surface_fmt = wgpu_dev.surface_format()
+        {
+            // Use the readback texture format, not the surface format,
+            // since the composite pass renders into the offscreen RT.
+            let surface_fmt = self.wgpu_readback_texture.as_ref()
+                .map(|t| t.format())
                 .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
             let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(w, h);
             let mut encoder = wgpu_dev.take_encoder();
@@ -1754,7 +1760,7 @@ impl Renderer {
                 });
 
                 // Color tiles: use the Composite shader with no source texture.
-                if !color_instances.is_empty() {
+                if has_composite_work && !color_instances.is_empty() {
                     let instance_bytes = crate::device::as_byte_slice(&color_instances);
                     let textures = crate::device::TextureBindings::default();
                     wgpu_dev.record_draw(
@@ -2413,6 +2419,16 @@ impl Renderer {
                     GlyphFormat::TransformedAlpha |
                     GlyphFormat::TransformedSubpixel => WgpuShaderVariant::PsTextRunGlyphTransform,
                     _ => WgpuShaderVariant::PsTextRun,
+                }
+            }
+            BatchKind::Quad(pattern_kind) => {
+                use crate::pattern::PatternKind;
+                match pattern_kind {
+                    PatternKind::ColorOrTexture => WgpuShaderVariant::PsQuadTextured,
+                    PatternKind::Gradient => WgpuShaderVariant::PsQuadGradient,
+                    PatternKind::RadialGradient => WgpuShaderVariant::PsQuadRadialGradient,
+                    PatternKind::ConicGradient => WgpuShaderVariant::PsQuadConicGradient,
+                    PatternKind::Mask => WgpuShaderVariant::PsQuadMask,
                 }
             }
             _ => {

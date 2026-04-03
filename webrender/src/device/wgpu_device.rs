@@ -198,8 +198,10 @@ impl WgpuShaderVariant {
             ("brush_blend", "ALPHA_PASS")                           => Self::BrushBlendAlpha,
             ("brush_mix_blend", "")                                 => Self::BrushMixBlend,
             ("brush_mix_blend", "ALPHA_PASS")                       => Self::BrushMixBlendAlpha,
-            ("brush_linear_gradient", "DITHERING")                  => Self::BrushLinearGradient,
-            ("brush_linear_gradient", "ALPHA_PASS,DITHERING")       => Self::BrushLinearGradientAlpha,
+            ("brush_linear_gradient", "DITHERING")
+            | ("brush_linear_gradient", "")                         => Self::BrushLinearGradient,
+            ("brush_linear_gradient", "ALPHA_PASS,DITHERING")
+            | ("brush_linear_gradient", "ALPHA_PASS")               => Self::BrushLinearGradientAlpha,
             ("brush_opacity", "")                                   => Self::BrushOpacity,
             ("brush_opacity", "ALPHA_PASS")                         => Self::BrushOpacityAlpha,
             ("brush_yuv_image", "TEXTURE_2D,YUV")                   => Self::BrushYuvImage,
@@ -207,9 +209,12 @@ impl WgpuShaderVariant {
             ("ps_text_run", "ALPHA_PASS,TEXTURE_2D")                => Self::PsTextRun,
             ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D") => Self::PsTextRunGlyphTransform,
             ("ps_quad_textured", "")                                => Self::PsQuadTextured,
-            ("ps_quad_gradient", "DITHERING")                       => Self::PsQuadGradient,
-            ("ps_quad_radial_gradient", "DITHERING")                => Self::PsQuadRadialGradient,
-            ("ps_quad_conic_gradient", "DITHERING")                 => Self::PsQuadConicGradient,
+            ("ps_quad_gradient", "DITHERING")
+            | ("ps_quad_gradient", "")                              => Self::PsQuadGradient,
+            ("ps_quad_radial_gradient", "DITHERING")
+            | ("ps_quad_radial_gradient", "")                       => Self::PsQuadRadialGradient,
+            ("ps_quad_conic_gradient", "DITHERING")
+            | ("ps_quad_conic_gradient", "")                        => Self::PsQuadConicGradient,
             ("ps_quad_mask", "")                                    => Self::PsQuadMask,
             ("ps_quad_mask", "FAST_PATH")                           => Self::PsQuadMaskFastPath,
             ("ps_split_composite", "")                              => Self::PsSplitComposite,
@@ -220,16 +225,21 @@ impl WgpuShaderVariant {
             ("cs_border_segment", "")                               => Self::CsBorderSegment,
             ("cs_line_decoration", "")                              => Self::CsLineDecoration,
             ("cs_fast_linear_gradient", "")                         => Self::CsFastLinearGradient,
-            ("cs_linear_gradient", "DITHERING")                     => Self::CsLinearGradient,
-            ("cs_radial_gradient", "DITHERING")                     => Self::CsRadialGradient,
-            ("cs_conic_gradient", "DITHERING")                      => Self::CsConicGradient,
+            ("cs_linear_gradient", "DITHERING")
+            | ("cs_linear_gradient", "")                            => Self::CsLinearGradient,
+            ("cs_radial_gradient", "DITHERING")
+            | ("cs_radial_gradient", "")                            => Self::CsRadialGradient,
+            ("cs_conic_gradient", "DITHERING")
+            | ("cs_conic_gradient", "")                             => Self::CsConicGradient,
             ("cs_blur", "COLOR_TARGET")                             => Self::CsBlurColor,
             ("cs_blur", "ALPHA_TARGET")                             => Self::CsBlurAlpha,
             ("cs_scale", "TEXTURE_2D")                              => Self::CsScale,
             ("composite", "TEXTURE_2D")                             => Self::Composite,
-            ("composite", "TEXTURE_2D,FAST_PATH")                      => Self::CompositeFastPath,
+            ("composite", "TEXTURE_2D,FAST_PATH")
+            | ("composite", "FAST_PATH,TEXTURE_2D")                    => Self::CompositeFastPath,
             ("composite", "TEXTURE_2D,YUV")                            => Self::CompositeYuv,
-            ("composite", "TEXTURE_2D,FAST_PATH,YUV")                  => Self::CompositeFastPathYuv,
+            ("composite", "TEXTURE_2D,FAST_PATH,YUV")
+            | ("composite", "FAST_PATH,TEXTURE_2D,YUV")               => Self::CompositeFastPathYuv,
             ("debug_color", "")                                     => Self::DebugColor,
             ("debug_font", "")                                      => Self::DebugFont,
             ("ps_clear", "")                                        => Self::PsClear,
