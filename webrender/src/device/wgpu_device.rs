@@ -117,6 +117,8 @@ pub enum WgpuShaderVariant {
     CsBlurColor,
     CsBlurAlpha,
     CsScale,
+    CsSvgFilter,
+    CsSvgFilterNode,
 
     // -- Composite --
     Composite,
@@ -174,6 +176,8 @@ impl WgpuShaderVariant {
             Self::CsBlurColor               => ("cs_blur", "COLOR_TARGET"),
             Self::CsBlurAlpha               => ("cs_blur", "ALPHA_TARGET"),
             Self::CsScale                   => ("cs_scale", "TEXTURE_2D"),
+            Self::CsSvgFilter              => ("cs_svg_filter", ""),
+            Self::CsSvgFilterNode          => ("cs_svg_filter_node", ""),
             Self::Composite                 => ("composite", "TEXTURE_2D"),
             Self::CompositeFastPath         => ("composite", "TEXTURE_2D,FAST_PATH"),
             Self::CompositeYuv              => ("composite", "TEXTURE_2D,YUV"),
@@ -198,10 +202,8 @@ impl WgpuShaderVariant {
             ("brush_blend", "ALPHA_PASS")                           => Self::BrushBlendAlpha,
             ("brush_mix_blend", "")                                 => Self::BrushMixBlend,
             ("brush_mix_blend", "ALPHA_PASS")                       => Self::BrushMixBlendAlpha,
-            ("brush_linear_gradient", "DITHERING")
-            | ("brush_linear_gradient", "")                         => Self::BrushLinearGradient,
-            ("brush_linear_gradient", "ALPHA_PASS,DITHERING")
-            | ("brush_linear_gradient", "ALPHA_PASS")               => Self::BrushLinearGradientAlpha,
+            ("brush_linear_gradient", "DITHERING")                  => Self::BrushLinearGradient,
+            ("brush_linear_gradient", "ALPHA_PASS,DITHERING")       => Self::BrushLinearGradientAlpha,
             ("brush_opacity", "")                                   => Self::BrushOpacity,
             ("brush_opacity", "ALPHA_PASS")                         => Self::BrushOpacityAlpha,
             ("brush_yuv_image", "TEXTURE_2D,YUV")                   => Self::BrushYuvImage,
@@ -209,12 +211,9 @@ impl WgpuShaderVariant {
             ("ps_text_run", "ALPHA_PASS,TEXTURE_2D")                => Self::PsTextRun,
             ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D") => Self::PsTextRunGlyphTransform,
             ("ps_quad_textured", "")                                => Self::PsQuadTextured,
-            ("ps_quad_gradient", "DITHERING")
-            | ("ps_quad_gradient", "")                              => Self::PsQuadGradient,
-            ("ps_quad_radial_gradient", "DITHERING")
-            | ("ps_quad_radial_gradient", "")                       => Self::PsQuadRadialGradient,
-            ("ps_quad_conic_gradient", "DITHERING")
-            | ("ps_quad_conic_gradient", "")                        => Self::PsQuadConicGradient,
+            ("ps_quad_gradient", "DITHERING")                       => Self::PsQuadGradient,
+            ("ps_quad_radial_gradient", "DITHERING")                => Self::PsQuadRadialGradient,
+            ("ps_quad_conic_gradient", "DITHERING")                 => Self::PsQuadConicGradient,
             ("ps_quad_mask", "")                                    => Self::PsQuadMask,
             ("ps_quad_mask", "FAST_PATH")                           => Self::PsQuadMaskFastPath,
             ("ps_split_composite", "")                              => Self::PsSplitComposite,
@@ -225,21 +224,18 @@ impl WgpuShaderVariant {
             ("cs_border_segment", "")                               => Self::CsBorderSegment,
             ("cs_line_decoration", "")                              => Self::CsLineDecoration,
             ("cs_fast_linear_gradient", "")                         => Self::CsFastLinearGradient,
-            ("cs_linear_gradient", "DITHERING")
-            | ("cs_linear_gradient", "")                            => Self::CsLinearGradient,
-            ("cs_radial_gradient", "DITHERING")
-            | ("cs_radial_gradient", "")                            => Self::CsRadialGradient,
-            ("cs_conic_gradient", "DITHERING")
-            | ("cs_conic_gradient", "")                             => Self::CsConicGradient,
+            ("cs_linear_gradient", "DITHERING")                     => Self::CsLinearGradient,
+            ("cs_radial_gradient", "DITHERING")                     => Self::CsRadialGradient,
+            ("cs_conic_gradient", "DITHERING")                      => Self::CsConicGradient,
             ("cs_blur", "COLOR_TARGET")                             => Self::CsBlurColor,
             ("cs_blur", "ALPHA_TARGET")                             => Self::CsBlurAlpha,
             ("cs_scale", "TEXTURE_2D")                              => Self::CsScale,
+            ("cs_svg_filter", "")                                      => Self::CsSvgFilter,
+            ("cs_svg_filter_node", "")                                 => Self::CsSvgFilterNode,
             ("composite", "TEXTURE_2D")                             => Self::Composite,
-            ("composite", "TEXTURE_2D,FAST_PATH")
-            | ("composite", "FAST_PATH,TEXTURE_2D")                    => Self::CompositeFastPath,
+            ("composite", "TEXTURE_2D,FAST_PATH")                      => Self::CompositeFastPath,
             ("composite", "TEXTURE_2D,YUV")                            => Self::CompositeYuv,
-            ("composite", "TEXTURE_2D,FAST_PATH,YUV")
-            | ("composite", "FAST_PATH,TEXTURE_2D,YUV")               => Self::CompositeFastPathYuv,
+            ("composite", "TEXTURE_2D,FAST_PATH,YUV")                  => Self::CompositeFastPathYuv,
             ("debug_color", "")                                     => Self::DebugColor,
             ("debug_font", "")                                      => Self::DebugFont,
             ("ps_clear", "")                                        => Self::PsClear,
@@ -258,6 +254,8 @@ impl WgpuShaderVariant {
             Self::CsClipBoxShadow => Some(CLIP_BOX_SHADOW_INSTANCE_LAYOUT),
             Self::CsBlurColor | Self::CsBlurAlpha => Some(BLUR_INSTANCE_LAYOUT),
             Self::CsScale => Some(SCALE_INSTANCE_LAYOUT),
+            Self::CsSvgFilter => Some(SVG_FILTER_INSTANCE_LAYOUT),
+            Self::CsSvgFilterNode => Some(SVG_FILTER_NODE_INSTANCE_LAYOUT),
             Self::CsBorderSolid | Self::CsBorderSegment => Some(BORDER_INSTANCE_LAYOUT),
             Self::CsLineDecoration => Some(LINE_DECORATION_INSTANCE_LAYOUT),
             Self::CsFastLinearGradient => Some(FAST_LINEAR_GRADIENT_INSTANCE_LAYOUT),
@@ -599,7 +597,7 @@ impl WgpuDevice {
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let dummy_texture_i32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
-        let (shaders, pipelines) = create_all_pipelines(&device, &pipeline_layout);
+        let (shaders, pipelines) = create_all_pipelines_threaded(&device, &pipeline_layout);
         let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
         Some(WgpuDevice {
@@ -695,7 +693,7 @@ impl WgpuDevice {
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let dummy_texture_i32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
-        let (shaders, pipelines) = create_all_pipelines(&device, &pipeline_layout);
+        let (shaders, pipelines) = create_all_pipelines_threaded(&device, &pipeline_layout);
         let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
         Some(WgpuDevice {
@@ -731,7 +729,21 @@ impl WgpuDevice {
     /// Call between render targets, before surface present, and at frame end.
     pub fn flush_encoder(&mut self) {
         if let Some(encoder) = self.pending_encoder.take() {
-            self.queue.submit([encoder.finish()]);
+            self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                encoder.finish()
+            })) {
+                Ok(cmd) => {
+                    self.queue.submit([cmd]);
+                }
+                Err(_) => {
+                    log::error!("wgpu flush_encoder: encoder.finish() panicked (invalid encoder)");
+                }
+            }
+            let err = pollster::block_on(self.device.pop_error_scope());
+            if let Some(e) = err {
+                log::error!("wgpu flush_encoder validation error: {}", e);
+            }
         }
     }
 
@@ -2580,6 +2592,37 @@ const CONIC_GRADIENT_INSTANCE_LAYOUT: &[(&str, wgpu::VertexFormat)] = &[
     ("aGradientStopsAddress",  wgpu::VertexFormat::Sint32),    // 4
 ];
 
+/// Instance layout for repacked `SvgFilterInstance`.
+/// The original struct uses u16 fields which can't be directly mapped to
+/// wgpu vertex attributes (no single-u16 format exists). We repack the
+/// instance data to i32 fields on the CPU side before upload.
+/// Used by `cs_svg_filter`.
+/// Repacked stride: 32 bytes (8 x i32).
+const SVG_FILTER_INSTANCE_LAYOUT: &[(&str, wgpu::VertexFormat)] = &[
+    ("aFilterRenderTaskAddress",  wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterInput1TaskAddress",  wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterInput2TaskAddress",  wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterKind",               wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterInputCount",         wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterGenericInt",         wgpu::VertexFormat::Sint32),     // 4
+    ("aFilterExtraDataAddress",   wgpu::VertexFormat::Sint32x2),   // 8
+];
+
+/// Instance layout for repacked `SVGFEFilterInstance`.
+/// Same u16-to-i32 repacking as SVG_FILTER_INSTANCE_LAYOUT.
+/// Used by `cs_svg_filter_node`.
+/// Repacked stride: 56 bytes.
+const SVG_FILTER_NODE_INSTANCE_LAYOUT: &[(&str, wgpu::VertexFormat)] = &[
+    ("aFilterTargetRect",                    wgpu::VertexFormat::Float32x4), // 16
+    ("aFilterInput1ContentScaleAndOffset",   wgpu::VertexFormat::Float32x4), // 16
+    ("aFilterInput2ContentScaleAndOffset",   wgpu::VertexFormat::Float32x4), // 16
+    ("aFilterInput1TaskAddress",             wgpu::VertexFormat::Sint32),    // 4
+    ("aFilterInput2TaskAddress",             wgpu::VertexFormat::Sint32),    // 4
+    ("aFilterKind",                          wgpu::VertexFormat::Sint32),    // 4
+    ("aFilterInputCount",                    wgpu::VertexFormat::Sint32),    // 4
+    ("aFilterExtraDataAddress",              wgpu::VertexFormat::Sint32x2),  // 8
+];
+
 fn build_debug_color_attrs() -> (Vec<wgpu::VertexAttribute>, u64) {
     let attrs = vec![
         wgpu::VertexAttribute {
@@ -2703,6 +2746,39 @@ fn create_pipeline_for_blend(
         multiview: None,
         cache: None,
     })
+}
+
+/// Wrapper that runs `create_all_pipelines` on a thread with a 16 MB stack.
+///
+/// Naga's WGSL parser uses recursive descent and overflows the default thread
+/// stack (~1-2 MB) for large transpiled shaders such as `cs_svg_filter_node`
+/// (~1600 lines of WGSL).
+fn create_all_pipelines_threaded(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+) -> (
+    HashMap<WgpuShaderVariant, ShaderEntry>,
+    HashMap<(WgpuShaderVariant, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
+) {
+    // SAFETY: `device` and `pipeline_layout` are borrowed from the caller's
+    // stack frame. We transmute them to 'static so they can cross the thread
+    // boundary, then join the thread before this function returns — so the
+    // references are always valid.
+    struct SendPtr<T>(*const T);
+    unsafe impl<T> Send for SendPtr<T> {}
+
+    let device_ptr = SendPtr(device as *const wgpu::Device);
+    let layout_ptr = SendPtr(pipeline_layout as *const wgpu::PipelineLayout);
+    let handle = std::thread::Builder::new()
+        .name("wgpu-shader-compile".into())
+        .stack_size(16 * 1024 * 1024) // 16 MB
+        .spawn(move || {
+            let device = unsafe { &*device_ptr.0 };
+            let layout = unsafe { &*layout_ptr.0 };
+            create_all_pipelines(device, layout)
+        })
+        .expect("failed to spawn shader compile thread");
+    handle.join().expect("shader compile thread panicked")
 }
 
 fn create_all_pipelines(
