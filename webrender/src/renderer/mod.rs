@@ -2229,8 +2229,8 @@ impl Renderer {
 
             }
 
-            // Draw cs_* cache tasks, clip masks, and quad batches in
-            // texture_cache/alpha/color targets.
+            // Draw cs_* cache tasks, clip masks, quad batches, and
+            // alpha_batch_containers in texture_cache/alpha/color targets.
             let all_targets = pass.texture_cache.values()
                 .chain(pass.alpha.targets.iter())
                 .chain(pass.color.targets.iter());
@@ -2248,9 +2248,13 @@ impl Renderer {
                     || !target.conic_gradients.is_empty()
                     || !target.horizontal_blurs.is_empty()
                     || !target.vertical_blurs.is_empty()
-                    || !target.scalings.is_empty();
+                    || !target.scalings.is_empty()
+                    || !target.svg_filters.is_empty()
+                    || !target.svg_nodes.is_empty();
+                let has_alpha_batches = !target.alpha_batch_containers.is_empty();
+                let needs_depth = target.needs_depth();
 
-                if !has_primary && !has_secondary && !has_quads && !has_cs_tasks {
+                if !has_primary && !has_secondary && !has_quads && !has_cs_tasks && !has_alpha_batches {
                     continue;
                 }
 
@@ -2269,8 +2273,76 @@ impl Renderer {
                 // All draws to this texture cache target share a single render pass.
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
+                let depth_view = if needs_depth {
+                    Some(wgpu_dev.acquire_depth_view(target_w, target_h))
+                } else {
+                    None
+                };
                 let mut encoder = wgpu_dev.take_encoder();
+
+                // Blits: texture-to-texture copies (outside render pass).
+                for blit in &target.blits {
+                    let src_task = &frame.render_tasks[blit.source];
+                    let src_task_rect = src_task.get_target_rect();
+                    let src_texture = src_task.get_texture_source();
+                    let src_id = match src_texture {
+                        TextureSource::TextureCache(id, _) => Some(id),
+                        _ => None,
+                    };
+                    let src_tex = src_id.and_then(|id| self.wgpu_texture_cache.get(&id));
+                    if let Some(src_wgpu) = src_tex {
+                        // Skip self-blits (same texture) and zero-size copies.
+                        let w = blit.target_rect.width() as u32;
+                        let h = blit.target_rect.height() as u32;
+                        if w == 0 || h == 0 || src_id == Some(target.texture_id) {
+                            continue;
+                        }
+                        // Validate copy fits within both textures.
+                        let src_rect = blit.source_rect.translate(src_task_rect.min.to_vector());
+                        let sx = src_rect.min.x as u32;
+                        let sy = src_rect.min.y as u32;
+                        let dx = blit.target_rect.min.x as u32;
+                        let dy = blit.target_rect.min.y as u32;
+                        if sx + w > src_wgpu.width || sy + h > src_wgpu.height
+                            || dx + w > target_w || dy + h > target_h
+                        {
+                            continue;
+                        }
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &src_wgpu.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: sx, y: sy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &target_wgpu.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::Extent3d {
+                                width: w,
+                                height: h,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                    }
+                }
+
                 {
+                    let depth_attachment = if needs_depth {
+                        depth_view.as_ref().map(|dv| wgpu::RenderPassDepthStencilAttachment {
+                            view: dv,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        })
+                    } else {
+                        None
+                    };
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("texture cache pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2282,7 +2354,7 @@ impl Renderer {
                             },
                             depth_slice: None,
                         })],
-                        depth_stencil_attachment: None,
+                        depth_stencil_attachment: depth_attachment,
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
@@ -2350,6 +2422,86 @@ impl Renderer {
                             &tex_size_buf,
                             &mut batches_drawn,
                         );
+                    }
+
+                    // Alpha batch containers: opaque + alpha batches for offscreen
+                    // surfaces (filters, blend modes, isolated stacking contexts).
+                    if has_alpha_batches {
+                        for alpha_batch_container in &target.alpha_batch_containers {
+                            let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+
+                            // Compute scissor rect from task_scissor_rect if present.
+                            let scissor = alpha_batch_container.task_scissor_rect.map(|r| {
+                                (r.min.x as u32, r.min.y as u32, r.width() as u32, r.height() as u32)
+                            });
+
+                            // Helper closure to record a single batch.
+                            macro_rules! record_alpha_batch {
+                                ($batch:expr, $is_alpha:expr, $depth_state:expr) => {{
+                                    let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
+                                    let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
+
+                                    let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                                        match $batch.key.textures.input.colors[i] {
+                                            TextureSource::TextureCache(id, _swizzle) => {
+                                                self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                            }
+                                            _ => None,
+                                        }
+                                    });
+
+                                    let textures = TextureBindings {
+                                        color0: color_views[0].as_ref(),
+                                        color1: color_views[1].as_ref(),
+                                        color2: color_views[2].as_ref(),
+                                        gpu_cache: draw_ctx.gpu_cache,
+                                        transform_palette: Some(draw_ctx.transform_palette),
+                                        render_tasks: Some(draw_ctx.render_tasks),
+                                        prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                        prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                        dither: draw_ctx.dither,
+                                        gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                        gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                        ..Default::default()
+                                    };
+
+                                    let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                                    wgpu_dev.record_draw(
+                                        &mut pass,
+                                        variant,
+                                        Self::blend_mode_to_wgpu(&$batch.key.blend_mode),
+                                        $depth_state,
+                                        target_fmt,
+                                        target_w,
+                                        target_h,
+                                        &textures,
+                                        &transform_buf,
+                                        &tex_size_buf,
+                                        instance_bytes,
+                                        $batch.instances.len() as u32,
+                                        scissor,
+                                    );
+                                    batches_drawn += 1;
+                                }};
+                            }
+
+                            // Opaque batches: front-to-back with depth write.
+                            if has_opaque {
+                                for batch in alpha_batch_container.opaque_batches.iter().rev() {
+                                    record_alpha_batch!(batch, false, WgpuDepthState::WriteAndTest);
+                                }
+                            }
+
+                            // Alpha batches: back-to-front with depth test only.
+                            let alpha_depth = if has_opaque {
+                                WgpuDepthState::TestOnly
+                            } else {
+                                WgpuDepthState::None
+                            };
+                            for batch in alpha_batch_container.alpha_batches.iter() {
+                                record_alpha_batch!(batch, true, alpha_depth);
+                            }
+                        }
                     }
                 } // render pass dropped
 
@@ -2431,8 +2583,8 @@ impl Renderer {
                     PatternKind::Mask => WgpuShaderVariant::PsQuadMask,
                 }
             }
-            _ => {
-                if is_alpha { WgpuShaderVariant::BrushSolidAlpha } else { WgpuShaderVariant::BrushSolid }
+            BatchKind::SplitComposite => {
+                WgpuShaderVariant::PsSplitComposite
             }
         }
     }
@@ -2852,6 +3004,133 @@ impl Renderer {
                 tex_size_buf,
                 instance_bytes,
                 scalings.len() as u32,
+                None,
+            );
+            *batches_drawn += 1;
+        }
+
+        // SVG filters: repack u16 fields to i32 for wgpu vertex attributes.
+        for (ref textures, ref filters) in &target.svg_filters {
+            if filters.is_empty() {
+                continue;
+            }
+            // Repack SvgFilterInstance (24 bytes, u16 fields) to i32 layout (32 bytes).
+            let mut repacked = Vec::with_capacity(filters.len() * 8); // 8 x i32 per instance
+            for f in filters.iter() {
+                repacked.push(f.task_address.0);
+                repacked.push(f.input_1_task_address.0);
+                repacked.push(f.input_2_task_address.0);
+                repacked.push(f.kind as i32);
+                repacked.push(f.input_count as i32);
+                repacked.push(f.generic_int as i32);
+                repacked.push(f.extra_data_address.u as i32);
+                repacked.push(f.extra_data_address.v as i32);
+            }
+            let instance_bytes = crate::device::as_byte_slice(repacked.as_slice());
+            // Resolve color texture views from BatchTextures.
+            let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                match textures.input.colors[i] {
+                    TextureSource::TextureCache(id, _) => {
+                        ctx.texture_cache.get(&id).map(|t| t.create_view())
+                    }
+                    _ => None,
+                }
+            });
+            let tex = TextureBindings {
+                color0: color_views[0].as_ref(),
+                color1: color_views[1].as_ref(),
+                color2: color_views[2].as_ref(),
+                gpu_cache: ctx.gpu_cache,
+                transform_palette: Some(ctx.transform_palette),
+                render_tasks: Some(ctx.render_tasks),
+                prim_headers_f: Some(ctx.prim_headers_f),
+                prim_headers_i: Some(ctx.prim_headers_i),
+                ..Default::default()
+            };
+            wgpu_dev.record_draw(
+                pass,
+                WgpuShaderVariant::CsSvgFilter,
+                WgpuBlendMode::None,
+                crate::device::WgpuDepthState::None,
+                target_format,
+                target_w,
+                target_h,
+                &tex,
+                transform_buf,
+                tex_size_buf,
+                instance_bytes,
+                filters.len() as u32,
+                None,
+            );
+            *batches_drawn += 1;
+        }
+
+        // SVG filter nodes: repack u16 fields to i32 for wgpu vertex attributes.
+        for (ref textures, ref filters) in &target.svg_nodes {
+            if filters.is_empty() {
+                continue;
+            }
+            // Repack SVGFEFilterInstance (64 bytes, u16 fields) to all-i32/f32 layout.
+            // Output: 4xf32 + 4xf32 + 4xf32 + i32 + i32 + i32 + i32 + 2xi32 = 56 bytes
+            let mut repacked = Vec::<u8>::with_capacity(filters.len() * 56);
+            for f in filters.iter() {
+                // target_rect: 4 x f32 (DeviceRect)
+                repacked.extend_from_slice(&f.target_rect.min.x.to_le_bytes());
+                repacked.extend_from_slice(&f.target_rect.min.y.to_le_bytes());
+                repacked.extend_from_slice(&f.target_rect.max.x.to_le_bytes());
+                repacked.extend_from_slice(&f.target_rect.max.y.to_le_bytes());
+                // input_1_content_scale_and_offset: 4 x f32
+                for v in &f.input_1_content_scale_and_offset {
+                    repacked.extend_from_slice(&v.to_le_bytes());
+                }
+                // input_2_content_scale_and_offset: 4 x f32
+                for v in &f.input_2_content_scale_and_offset {
+                    repacked.extend_from_slice(&v.to_le_bytes());
+                }
+                // input_1_task_address: i32
+                repacked.extend_from_slice(&f.input_1_task_address.0.to_le_bytes());
+                // input_2_task_address: i32
+                repacked.extend_from_slice(&f.input_2_task_address.0.to_le_bytes());
+                // kind: i32
+                repacked.extend_from_slice(&(f.kind as i32).to_le_bytes());
+                // input_count: i32
+                repacked.extend_from_slice(&(f.input_count as i32).to_le_bytes());
+                // extra_data_address: 2 x i32
+                repacked.extend_from_slice(&(f.extra_data_address.u as i32).to_le_bytes());
+                repacked.extend_from_slice(&(f.extra_data_address.v as i32).to_le_bytes());
+            }
+            let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                match textures.input.colors[i] {
+                    TextureSource::TextureCache(id, _) => {
+                        ctx.texture_cache.get(&id).map(|t| t.create_view())
+                    }
+                    _ => None,
+                }
+            });
+            let tex = TextureBindings {
+                color0: color_views[0].as_ref(),
+                color1: color_views[1].as_ref(),
+                color2: color_views[2].as_ref(),
+                gpu_cache: ctx.gpu_cache,
+                transform_palette: Some(ctx.transform_palette),
+                render_tasks: Some(ctx.render_tasks),
+                prim_headers_f: Some(ctx.prim_headers_f),
+                prim_headers_i: Some(ctx.prim_headers_i),
+                ..Default::default()
+            };
+            wgpu_dev.record_draw(
+                pass,
+                WgpuShaderVariant::CsSvgFilterNode,
+                WgpuBlendMode::None,
+                crate::device::WgpuDepthState::None,
+                target_format,
+                target_w,
+                target_h,
+                &tex,
+                transform_buf,
+                tex_size_buf,
+                &repacked,
+                filters.len() as u32,
                 None,
             );
             *batches_drawn += 1;
