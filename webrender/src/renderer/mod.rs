@@ -3568,6 +3568,8 @@ impl Renderer {
 
         let base_textures = TextureBindings {
             gpu_cache: ctx.gpu_cache,
+            gpu_buffer_f: ctx.gpu_buffer_f,
+            gpu_buffer_i: ctx.gpu_buffer_i,
             dither: ctx.dither,
             ..Default::default()
         };
