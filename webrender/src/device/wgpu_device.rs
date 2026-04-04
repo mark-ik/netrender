@@ -179,9 +179,9 @@ impl WgpuShaderVariant {
             Self::CsSvgFilter              => ("cs_svg_filter", ""),
             Self::CsSvgFilterNode          => ("cs_svg_filter_node", ""),
             Self::Composite                 => ("composite", "TEXTURE_2D"),
-            Self::CompositeFastPath         => ("composite", "TEXTURE_2D,FAST_PATH"),
+            Self::CompositeFastPath         => ("composite", "FAST_PATH,TEXTURE_2D"),
             Self::CompositeYuv              => ("composite", "TEXTURE_2D,YUV"),
-            Self::CompositeFastPathYuv      => ("composite", "TEXTURE_2D,FAST_PATH,YUV"),
+            Self::CompositeFastPathYuv      => ("composite", "FAST_PATH,TEXTURE_2D,YUV"),
             Self::DebugColor                => ("debug_color", ""),
             Self::DebugFont                 => ("debug_font", ""),
             Self::PsClear                   => ("ps_clear", ""),
@@ -233,9 +233,9 @@ impl WgpuShaderVariant {
             ("cs_svg_filter", "")                                      => Self::CsSvgFilter,
             ("cs_svg_filter_node", "")                                 => Self::CsSvgFilterNode,
             ("composite", "TEXTURE_2D")                             => Self::Composite,
-            ("composite", "TEXTURE_2D,FAST_PATH")                      => Self::CompositeFastPath,
+            ("composite", "FAST_PATH,TEXTURE_2D")                      => Self::CompositeFastPath,
             ("composite", "TEXTURE_2D,YUV")                            => Self::CompositeYuv,
-            ("composite", "TEXTURE_2D,FAST_PATH,YUV")                  => Self::CompositeFastPathYuv,
+            ("composite", "FAST_PATH,TEXTURE_2D,YUV")                  => Self::CompositeFastPathYuv,
             ("debug_color", "")                                     => Self::DebugColor,
             ("debug_font", "")                                      => Self::DebugFont,
             ("ps_clear", "")                                        => Self::PsClear,
@@ -405,6 +405,9 @@ pub enum WgpuDepthState {
     WriteAndTest,
     /// Depth test (LessEqual) + no depth write — for alpha batches behind opaque geometry.
     TestOnly,
+    /// Depth format present but always passes — for MixBlend pass 2 where the render
+    /// pass has a depth attachment but we don't want depth rejection.
+    AlwaysPass,
 }
 
 impl WgpuDepthState {
@@ -423,6 +426,13 @@ impl WgpuDepthState {
                 format: wgpu::TextureFormat::Depth32Float,
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            WgpuDepthState::AlwaysPass => Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),

@@ -2040,195 +2040,6 @@ impl Renderer {
         let mut batches_skipped = 0u32;
 
         for pass in frame.passes.iter() {
-            for picture_target in &pass.picture_cache {
-                let cache_tex_id = match picture_target.surface {
-                    ResolvedSurfaceTexture::TextureCache { ref texture } => {
-                        match *texture {
-                            TextureSource::TextureCache(id, _) => id,
-                            _ => {
-                                info!("wgpu: pic target skipped: non-TextureCache texture source");
-                                continue;
-                            }
-                        }
-                    }
-                    _ => {
-                        info!("wgpu: pic target skipped: native surface");
-                        continue;
-                    }
-                };
-
-                let target_wgpu = match self.wgpu_texture_cache.get(&cache_tex_id) {
-                    Some(t) => t,
-                    None => {
-                        info!("wgpu: pic target {:?} skipped: not in wgpu_texture_cache", cache_tex_id);
-                        batches_skipped += 1;
-                        continue;
-                    }
-                };
-
-                let target_view = target_wgpu.create_view();
-                let target_fmt = target_wgpu.format();
-                // Use the full tile texture dimensions for the ortho projection,
-                // NOT the dirty rect.  The dirty rect controls the scissor (which
-                // limits what we actually draw) but the projection must map the
-                // full tile coordinate space so that vertex positions produced by
-                // the shader land in the right place.  The GL path does the same:
-                // it projects over draw_target.dimensions() (full texture size).
-                let target_w = target_wgpu.width;
-                let target_h = target_wgpu.height;
-                if target_w == 0 || target_h == 0 {
-                    info!("wgpu: pic target {:?} skipped: dirty rect {}x{}", cache_tex_id, target_w, target_h);
-                    continue;
-                }
-
-                // Draw the alpha batch container in this picture target.
-                let alpha_batch_container = match picture_target.kind {
-                    PictureCacheTargetKind::Draw { ref alpha_batch_container } => {
-                        alpha_batch_container
-                    }
-                    PictureCacheTargetKind::Blit { .. } => continue, // Blits handled separately.
-                };
-
-                let scissor = Self::device_rect_to_scissor(
-                    alpha_batch_container.task_scissor_rect.as_ref(),
-                );
-
-                let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
-
-                // Acquire a depth texture when there are opaque batches.
-                // Depth testing prevents overdraw: opaque draws front-to-back
-                // with depth write, alpha draws test against the depth buffer.
-                let depth_view = if has_opaque {
-                    let wgpu_dev = self.wgpu_device.as_mut().unwrap();
-                    Some(wgpu_dev.acquire_depth_view(target_wgpu.width, target_wgpu.height))
-                } else {
-                    None
-                };
-                let depth_ref = depth_view.as_ref();
-
-                // Use the target's clear_color if available, otherwise
-                // transparent black (matching the GL backend's default).
-                let tile_clear_color: wgpu::Color = match picture_target.clear_color {
-                    Some(c) => wgpu::Color {
-                        r: c.r as f64,
-                        g: c.g as f64,
-                        b: c.b as f64,
-                        a: c.a as f64,
-                    },
-                    None => wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
-                };
-                // Create per-target uniform buffers (shared by all draws to this target).
-                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
-                let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
-
-                // Take the encoder so we can create a single render pass for
-                // all batches targeting this tile.  While the encoder is out,
-                // wgpu_dev remains usable for pipeline / buffer / bind-group work.
-                let mut encoder = wgpu_dev.take_encoder();
-
-                let depth_attachment = if has_opaque {
-                    depth_ref.map(|dv| wgpu::RenderPassDepthStencilAttachment {
-                        view: dv,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    })
-                } else {
-                    None
-                };
-                {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("picture cache pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &target_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(tile_clear_color),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        })],
-                        depth_stencil_attachment: depth_attachment,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
-
-                    // Record all batches into this single render pass.
-                    macro_rules! record_batch {
-                        ($batch:expr, $is_alpha:expr, $depth_state:expr) => {{
-                            let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
-                            let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
-
-                            let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
-                                match $batch.key.textures.input.colors[i] {
-                                    TextureSource::TextureCache(id, _swizzle) => {
-                                        self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
-                                    }
-                                    _ => None,
-                                }
-                            });
-
-                            let textures = TextureBindings {
-                                color0: color_views[0].as_ref(),
-                                color1: color_views[1].as_ref(),
-                                color2: color_views[2].as_ref(),
-                                gpu_cache: draw_ctx.gpu_cache,
-                                transform_palette: Some(draw_ctx.transform_palette),
-                                render_tasks: Some(draw_ctx.render_tasks),
-                                prim_headers_f: Some(draw_ctx.prim_headers_f),
-                                prim_headers_i: Some(draw_ctx.prim_headers_i),
-                                dither: draw_ctx.dither,
-                                gpu_buffer_f: draw_ctx.gpu_buffer_f,
-                                gpu_buffer_i: draw_ctx.gpu_buffer_i,
-                                ..Default::default()
-                            };
-
-                            let wgpu_dev = self.wgpu_device.as_mut().unwrap();
-                            wgpu_dev.record_draw(
-                                &mut pass,
-                                variant,
-                                Self::blend_mode_to_wgpu(&$batch.key.blend_mode),
-                                $depth_state,
-                                target_fmt,
-                                target_w,
-                                target_h,
-                                &textures,
-                                &transform_buf,
-                                &tex_size_buf,
-                                instance_bytes,
-                                $batch.instances.len() as u32,
-                                scissor,
-                            );
-                            batches_drawn += 1;
-                        }};
-                    }
-
-                    // Opaque batches: front-to-back (reverse order) with depth write.
-                    if has_opaque {
-                        for batch in alpha_batch_container.opaque_batches.iter().rev() {
-                            record_batch!(batch, false, WgpuDepthState::WriteAndTest);
-                        }
-                    }
-
-                    // Alpha batches: back-to-front (forward order) with depth test only.
-                    let alpha_depth = if has_opaque {
-                        WgpuDepthState::TestOnly
-                    } else {
-                        WgpuDepthState::None
-                    };
-                    for batch in alpha_batch_container.alpha_batches.iter() {
-                        record_batch!(batch, true, alpha_depth);
-                    }
-                } // render pass dropped here
-
-                // Return the encoder to WgpuDevice.
-                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
-                wgpu_dev.return_encoder(encoder);
-
-            }
-
             // Draw cs_* cache tasks, clip masks, quad batches, and
             // alpha_batch_containers in texture_cache/alpha/color targets.
             let all_targets = pass.texture_cache.values()
@@ -2432,6 +2243,23 @@ impl Renderer {
                     }
                 }
 
+                // BrushMixBlend batches need a special two-pass scheme:
+                // the GL path copies the current render target mid-pass (after
+                // opaque batches) into a readback texture, then the MixBlend draw
+                // reads that copy.  wgpu cannot do copies inside a render pass, so
+                // we instead:
+                //   1. Draw everything (cs_*, clips, quads, opaque + non-MixBlend alpha)
+                //      in a first render pass.
+                //   2. Close the first pass, copy the rendered content into each
+                //      readback texture (now that opaques are in the target).
+                //   3. Open a second render pass (LoadOp::Load) and draw the
+                //      deferred MixBlend batches.
+                let has_mix_blend = has_alpha_batches && target.alpha_batch_containers.iter().any(|abc| {
+                    abc.alpha_batches.iter().any(|b| {
+                        matches!(b.key.kind, BatchKind::Brush(BrushBatchKind::MixBlend { .. }))
+                    })
+                });
+
                 {
                     let depth_attachment = if needs_depth {
                         depth_view.as_ref().map(|dv| wgpu::RenderPassDepthStencilAttachment {
@@ -2595,12 +2423,20 @@ impl Renderer {
                             }
 
                             // Alpha batches: back-to-front with depth test only.
+                            // MixBlend batches are deferred to a second render pass
+                            // (after the backdrop copy can be done outside the pass).
                             let alpha_depth = if has_opaque {
                                 WgpuDepthState::TestOnly
                             } else {
                                 WgpuDepthState::None
                             };
                             for batch in alpha_batch_container.alpha_batches.iter() {
+                                if has_mix_blend && matches!(
+                                    batch.key.kind,
+                                    BatchKind::Brush(BrushBatchKind::MixBlend { .. })
+                                ) {
+                                    continue; // deferred — drawn in second pass
+                                }
                                 record_alpha_batch!(batch, true, alpha_depth);
                             }
                         }
@@ -2819,10 +2655,543 @@ impl Renderer {
                             batches_drawn += 1;
                         }
                     }
-                } // render pass dropped
+                } // render pass 1 dropped
+
+                // --- MixBlend two-pass section ---
+                // Now that the first render pass has flushed opaque content into
+                // the target, copy the relevant region into each readback texture,
+                // then draw the MixBlend batches in a second render pass.
+                if has_mix_blend {
+                    // Step A: backdrop copies (copy_texture_to_texture, outside pass)
+                    for abc in &target.alpha_batch_containers {
+                        for batch in &abc.alpha_batches {
+                            let (task_id, backdrop_id) = match batch.key.kind {
+                                BatchKind::Brush(BrushBatchKind::MixBlend { task_id, backdrop_id }) => {
+                                    (task_id, backdrop_id)
+                                }
+                                _ => continue,
+                            };
+
+                            let backdrop_task = &frame.render_tasks[task_id];
+                            let backdrop_rect = backdrop_task.get_target_rect();
+                            let backdrop_screen_origin = match backdrop_task.kind {
+                                RenderTaskKind::Picture(ref info) => info.content_origin,
+                                _ => continue,
+                            };
+
+                            let readback_task = &frame.render_tasks[backdrop_id];
+                            let readback_origin = match readback_task.kind {
+                                RenderTaskKind::Readback(ReadbackTask { readback_origin: Some(o), .. }) => o,
+                                RenderTaskKind::Readback(ReadbackTask { readback_origin: None, .. }) => continue,
+                                _ => continue,
+                            };
+                            let readback_rect = readback_task.get_target_rect();
+
+                            let wanted = DeviceRect::from_origin_and_size(
+                                readback_origin,
+                                readback_rect.size().to_f32(),
+                            );
+                            let avail = DeviceRect::from_origin_and_size(
+                                backdrop_screen_origin,
+                                backdrop_rect.size().to_f32(),
+                            );
+                            let int_rect = match wanted.intersection(&avail) {
+                                Some(r) => r,
+                                None => continue,
+                            };
+                            let copy_size = int_rect.size().to_i32();
+                            if copy_size.width <= 0 || copy_size.height <= 0 { continue; }
+
+                            let src_origin = backdrop_rect.min.to_f32()
+                                + int_rect.min.to_vector()
+                                - backdrop_screen_origin.to_vector();
+                            let src = DeviceIntRect::from_origin_and_size(
+                                src_origin.to_i32(), copy_size,
+                            );
+                            let dest_origin = readback_rect.min.to_f32()
+                                + int_rect.min.to_vector()
+                                - readback_origin.to_vector();
+                            let dest = DeviceIntRect::from_origin_and_size(
+                                dest_origin.to_i32(), copy_size,
+                            );
+
+                            let src_tex_id = backdrop_task.get_target_texture();
+                            let dst_tex_id = readback_task.get_target_texture();
+
+                            let (sx, sy) = (src.min.x.max(0) as u32, src.min.y.max(0) as u32);
+                            let (dx, dy) = (dest.min.x.max(0) as u32, dest.min.y.max(0) as u32);
+                            let (w, h) = (copy_size.width as u32, copy_size.height as u32);
+
+                            // Skip copies where src and dst overlap in the same texture.
+                            // (WebGPU permits same-texture copies only for non-overlapping regions.)
+                            if src_tex_id == dst_tex_id && sx == dx && sy == dy { continue; }
+
+                            if self.wgpu_texture_cache.get(&src_tex_id).is_none() { continue; }
+                            if self.wgpu_texture_cache.get(&dst_tex_id).is_none() { continue; }
+
+                            let src_tex = self.wgpu_texture_cache.get(&src_tex_id).unwrap();
+                            if sx + w > src_tex.width || sy + h > src_tex.height { continue; }
+
+                            let dst_tex = self.wgpu_texture_cache.get(&dst_tex_id).unwrap();
+                            if dx + w > dst_tex.width || dy + h > dst_tex.height { continue; }
+
+                            encoder.copy_texture_to_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &src_tex.texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d { x: sx, y: sy, z: 0 },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &dst_tex.texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                            );
+                        }
+                    }
+
+                    // Step B: second render pass (LoadOp::Load) for deferred MixBlend batches
+                    {
+                        let depth_attach_load = if needs_depth {
+                            depth_view.as_ref().map(|dv| wgpu::RenderPassDepthStencilAttachment {
+                                view: dv,
+                                depth_ops: Some(wgpu::Operations {
+                                    load: wgpu::LoadOp::Load, // preserve depth from pass 1
+                                    store: wgpu::StoreOp::Store,
+                                }),
+                                stencil_ops: None,
+                            })
+                        } else {
+                            None
+                        };
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("mix-blend pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &target_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load, // preserve content from pass 1
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: depth_attach_load,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+
+                        for alpha_batch_container in &target.alpha_batch_containers {
+                            let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+                            let scissor = alpha_batch_container.task_scissor_rect.map(|r| {
+                                (r.min.x as u32, r.min.y as u32, r.width() as u32, r.height() as u32)
+                            });
+                            // MixBlend pass 2: bypass depth rejection.
+                            // Use AlwaysPass when depth attachment present, else None.
+                            let mix_blend_depth = if needs_depth {
+                                WgpuDepthState::AlwaysPass
+                            } else {
+                                WgpuDepthState::None
+                            };
+
+                            for batch in alpha_batch_container.alpha_batches.iter() {
+                                if !matches!(batch.key.kind, BatchKind::Brush(BrushBatchKind::MixBlend { .. })) {
+                                    continue; // only MixBlend here
+                                }
+
+                                let variant = Self::batch_key_to_pipeline_key(&batch.key, true);
+                                let instance_bytes = crate::device::as_byte_slice(batch.instances.as_slice());
+
+                                let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                                    match batch.key.textures.input.colors[i] {
+                                        TextureSource::TextureCache(id, _) => {
+                                            self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                        }
+                                        _ => None,
+                                    }
+                                });
+                                let textures = TextureBindings {
+                                    color0: color_views[0].as_ref(),
+                                    color1: color_views[1].as_ref(),
+                                    color2: color_views[2].as_ref(),
+                                    gpu_cache: draw_ctx.gpu_cache,
+                                    transform_palette: Some(draw_ctx.transform_palette),
+                                    render_tasks: Some(draw_ctx.render_tasks),
+                                    prim_headers_f: Some(draw_ctx.prim_headers_f),
+                                    prim_headers_i: Some(draw_ctx.prim_headers_i),
+                                    dither: draw_ctx.dither,
+                                    gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                                    gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                    ..Default::default()
+                                };
+                                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                                wgpu_dev.record_draw(
+                                    &mut pass,
+                                    variant,
+                                    Self::blend_mode_to_wgpu(&batch.key.blend_mode),
+                                    mix_blend_depth,
+                                    target_fmt,
+                                    target_w,
+                                    target_h,
+                                    &textures,
+                                    &transform_buf,
+                                    &tex_size_buf,
+                                    instance_bytes,
+                                    batch.instances.len() as u32,
+                                    scissor,
+                                );
+                                batches_drawn += 1;
+                            }
+                        }
+                    } // mix-blend pass dropped
+                }
 
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 wgpu_dev.return_encoder(encoder);
+            }
+
+            for picture_target in &pass.picture_cache {
+                let cache_tex_id = match picture_target.surface {
+                    ResolvedSurfaceTexture::TextureCache { ref texture } => {
+                        match *texture {
+                            TextureSource::TextureCache(id, _) => id,
+                            _ => {
+                                info!("wgpu: pic target skipped: non-TextureCache texture source");
+                                continue;
+                            }
+                        }
+                    }
+                    _ => {
+                        info!("wgpu: pic target skipped: native surface");
+                        continue;
+                    }
+                };
+
+                let target_wgpu = match self.wgpu_texture_cache.get(&cache_tex_id) {
+                    Some(t) => t,
+                    None => {
+                        info!("wgpu: pic target {:?} skipped: not in wgpu_texture_cache", cache_tex_id);
+                        batches_skipped += 1;
+                        continue;
+                    }
+                };
+
+                let target_view = target_wgpu.create_view();
+                let target_fmt = target_wgpu.format();
+                // Use the full tile texture dimensions for the ortho projection,
+                // NOT the dirty rect.  The dirty rect controls the scissor (which
+                // limits what we actually draw) but the projection must map the
+                // full tile coordinate space so that vertex positions produced by
+                // the shader land in the right place.  The GL path does the same:
+                // it projects over draw_target.dimensions() (full texture size).
+                let target_w = target_wgpu.width;
+                let target_h = target_wgpu.height;
+                if target_w == 0 || target_h == 0 {
+                    info!("wgpu: pic target {:?} skipped: dirty rect {}x{}", cache_tex_id, target_w, target_h);
+                    continue;
+                }
+
+                // Draw the alpha batch container in this picture target.
+                let alpha_batch_container = match picture_target.kind {
+                    PictureCacheTargetKind::Draw { ref alpha_batch_container } => {
+                        alpha_batch_container
+                    }
+                    PictureCacheTargetKind::Blit { .. } => continue, // Blits handled separately.
+                };
+
+                let scissor = Self::device_rect_to_scissor(
+                    alpha_batch_container.task_scissor_rect.as_ref(),
+                );
+
+                let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+
+                // Acquire a depth texture when there are opaque batches.
+                // Depth testing prevents overdraw: opaque draws front-to-back
+                // with depth write, alpha draws test against the depth buffer.
+                let depth_view = if has_opaque {
+                    let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                    Some(wgpu_dev.acquire_depth_view(target_wgpu.width, target_wgpu.height))
+                } else {
+                    None
+                };
+                let depth_ref = depth_view.as_ref();
+
+                // Use the target's clear_color if available, otherwise
+                // transparent black (matching the GL backend's default).
+                let tile_clear_color: wgpu::Color = match picture_target.clear_color {
+                    Some(c) => wgpu::Color {
+                        r: c.r as f64,
+                        g: c.g as f64,
+                        b: c.b as f64,
+                        a: c.a as f64,
+                    },
+                    None => wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
+                };
+                // Create per-target uniform buffers (shared by all draws to this target).
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
+
+                // Take the encoder so we can create a single render pass for
+                // all batches targeting this tile.  While the encoder is out,
+                // wgpu_dev remains usable for pipeline / buffer / bind-group work.
+                let mut encoder = wgpu_dev.take_encoder();
+
+                let depth_attachment = if has_opaque {
+                    depth_ref.map(|dv| wgpu::RenderPassDepthStencilAttachment {
+                        view: dv,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    })
+                } else {
+                    None
+                };
+                // Helper: draw a batch into an existing render pass.
+                macro_rules! record_batch {
+                    ($pass_mut:expr, $batch:expr, $is_alpha:expr, $depth_state:expr) => {{
+                        let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
+                        let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
+
+                        let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
+                            match $batch.key.textures.input.colors[i] {
+                                TextureSource::TextureCache(id, _swizzle) => {
+                                    self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                }
+                                _ => None,
+                            }
+                        });
+
+                        let textures = TextureBindings {
+                            color0: color_views[0].as_ref(),
+                            color1: color_views[1].as_ref(),
+                            color2: color_views[2].as_ref(),
+                            gpu_cache: draw_ctx.gpu_cache,
+                            transform_palette: Some(draw_ctx.transform_palette),
+                            render_tasks: Some(draw_ctx.render_tasks),
+                            prim_headers_f: Some(draw_ctx.prim_headers_f),
+                            prim_headers_i: Some(draw_ctx.prim_headers_i),
+                            dither: draw_ctx.dither,
+                            gpu_buffer_f: draw_ctx.gpu_buffer_f,
+                            gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                            ..Default::default()
+                        };
+
+                        let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                        wgpu_dev.record_draw(
+                            $pass_mut,
+                            variant,
+                            Self::blend_mode_to_wgpu(&$batch.key.blend_mode),
+                            $depth_state,
+                            target_fmt,
+                            target_w,
+                            target_h,
+                            &textures,
+                            &transform_buf,
+                            &tex_size_buf,
+                            instance_bytes,
+                            $batch.instances.len() as u32,
+                            scissor,
+                        );
+                        batches_drawn += 1;
+                    }};
+                }
+
+                // Detect whether any alpha batch needs the MixBlend two-pass scheme.
+                let pic_has_mix_blend = alpha_batch_container.alpha_batches.iter().any(|b| {
+                    matches!(b.key.kind, BatchKind::Brush(BrushBatchKind::MixBlend { .. }))
+                });
+
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("picture cache pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &target_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(tile_clear_color),
+                                store: wgpu::StoreOp::Store,
+                            },
+                            depth_slice: None,
+                        })],
+                        depth_stencil_attachment: depth_attachment,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+
+                    // Opaque batches: front-to-back (reverse order) with depth write.
+                    if has_opaque {
+                        for batch in alpha_batch_container.opaque_batches.iter().rev() {
+                            record_batch!(&mut pass, batch, false, WgpuDepthState::WriteAndTest);
+                        }
+                    }
+
+                    // Alpha batches: back-to-front.
+                    // MixBlend batches are deferred to a second pass if needed.
+                    let alpha_depth = if has_opaque {
+                        WgpuDepthState::TestOnly
+                    } else {
+                        WgpuDepthState::None
+                    };
+                    for batch in alpha_batch_container.alpha_batches.iter() {
+                        if pic_has_mix_blend && matches!(
+                            batch.key.kind,
+                            BatchKind::Brush(BrushBatchKind::MixBlend { .. })
+                        ) {
+                            continue; // deferred
+                        }
+                        record_batch!(&mut pass, batch, true, alpha_depth);
+                    }
+                } // render pass 1 dropped
+
+                // MixBlend two-pass: backdrop copies + second render pass.
+                if pic_has_mix_blend {
+                    // MixBlend pass 2 must bypass depth rejection so the
+                    // blended fragment always appears.  When the render pass
+                    // has a depth attachment (has_opaque), use AlwaysPass
+                    // (format-compatible but always succeeds).  Otherwise None.
+                    let mix_blend_depth = if has_opaque {
+                        WgpuDepthState::AlwaysPass
+                    } else {
+                        WgpuDepthState::None
+                    };
+
+                    // Copy the rendered content into each readback texture.
+                    // Copy from the current picture cache tile texture (cache_tex_id) into
+                    // each MixBlend readback texture. The source is always the tile we just
+                    // rendered (pass 1 above), not the backdrop render task's own texture
+                    // (which can't be looked up via get_target_texture() for PictureCache tasks).
+                    for batch in alpha_batch_container.alpha_batches.iter() {
+                        let (task_id, backdrop_id) = match batch.key.kind {
+                            BatchKind::Brush(BrushBatchKind::MixBlend { task_id, backdrop_id }) => (task_id, backdrop_id),
+                            _ => continue,
+                        };
+
+                        // task_id is the picture cache tile's render task: get its screen-space
+                        // content_origin so we can compute the correct copy region.
+                        let backdrop_task = &frame.render_tasks[task_id];
+                        let backdrop_rect = backdrop_task.get_target_rect();
+                        let backdrop_screen_origin = match backdrop_task.kind {
+                            RenderTaskKind::Picture(ref info) => info.content_origin,
+                            _ => continue,
+                        };
+
+                        let readback_task = &frame.render_tasks[backdrop_id];
+                        let readback_origin = match readback_task.kind {
+                            RenderTaskKind::Readback(ReadbackTask { readback_origin: Some(o), .. }) => o,
+                            RenderTaskKind::Readback(ReadbackTask { readback_origin: None, .. }) => continue,
+                            _ => continue,
+                        };
+                        let readback_rect = readback_task.get_target_rect();
+
+                        let wanted = DeviceRect::from_origin_and_size(
+                            readback_origin,
+                            readback_rect.size().to_f32(),
+                        );
+                        let avail = DeviceRect::from_origin_and_size(
+                            backdrop_screen_origin,
+                            backdrop_rect.size().to_f32(),
+                        );
+                        let int_rect = match wanted.intersection(&avail) {
+                            Some(r) => r,
+                            None => continue,
+                        };
+                        let copy_size = int_rect.size().to_i32();
+                        if copy_size.width <= 0 || copy_size.height <= 0 { continue; }
+
+                        let src_origin = backdrop_rect.min.to_f32()
+                            + int_rect.min.to_vector()
+                            - backdrop_screen_origin.to_vector();
+                        let src = DeviceIntRect::from_origin_and_size(src_origin.to_i32(), copy_size);
+                        let dest_origin = readback_rect.min.to_f32()
+                            + int_rect.min.to_vector()
+                            - readback_origin.to_vector();
+                        let dest = DeviceIntRect::from_origin_and_size(dest_origin.to_i32(), copy_size);
+
+                        // Use cache_tex_id (the picture cache tile's texture) as source.
+                        // We cannot call backdrop_task.get_target_texture() because picture
+                        // cache tasks have a Static { PictureCache } location (not TextureCache).
+                        let src_tex_id = cache_tex_id;
+                        let dst_tex_id = readback_task.get_target_texture();
+                        let (sx, sy) = (src.min.x.max(0) as u32, src.min.y.max(0) as u32);
+                        let (dx, dy) = (dest.min.x.max(0) as u32, dest.min.y.max(0) as u32);
+                        let (w, h) = (copy_size.width as u32, copy_size.height as u32);
+
+                        // Skip copies where src and dst overlap in the same texture.
+                        if src_tex_id == dst_tex_id && sx == dx && sy == dy { continue; }
+
+                        if self.wgpu_texture_cache.get(&src_tex_id).is_none() { continue; }
+                        if self.wgpu_texture_cache.get(&dst_tex_id).is_none() { continue; }
+
+                        let src_tex = self.wgpu_texture_cache.get(&src_tex_id).unwrap();
+                        if sx + w > src_tex.width || sy + h > src_tex.height { continue; }
+
+                        let dst_tex = self.wgpu_texture_cache.get(&dst_tex_id).unwrap();
+                        if dx + w > dst_tex.width || dy + h > dst_tex.height { continue; }
+
+                        encoder.copy_texture_to_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &src_tex.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: sx, y: sy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &dst_tex.texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d { x: dx, y: dy, z: 0 },
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                        );
+                    }
+
+                    // Second render pass (LoadOp::Load) for MixBlend batches.
+                    let depth_attach_load = if has_opaque {
+                        depth_ref.map(|dv| wgpu::RenderPassDepthStencilAttachment {
+                            view: dv,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        })
+                    } else {
+                        None
+                    };
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("picture cache mix-blend pass"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &target_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                                depth_slice: None,
+                            })],
+                            depth_stencil_attachment: depth_attach_load,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                        });
+
+                        for batch in alpha_batch_container.alpha_batches.iter() {
+                            if !matches!(batch.key.kind, BatchKind::Brush(BrushBatchKind::MixBlend { .. })) {
+                                continue;
+                            }
+                            record_batch!(&mut pass, batch, true, mix_blend_depth);
+                        }
+                    } // mix-blend pass dropped
+                }
+
+                // Return the encoder to WgpuDevice.
+                let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                wgpu_dev.return_encoder(encoder);
+
             }
         }
 
