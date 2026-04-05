@@ -2368,7 +2368,7 @@ impl Renderer {
                             // Helper closure to record a single batch.
                             macro_rules! record_alpha_batch {
                                 ($batch:expr, $is_alpha:expr, $depth_state:expr) => {{
-                                    let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
+                                    let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha, $batch.features);
                                     let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
 
                                     let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
@@ -2801,7 +2801,7 @@ impl Renderer {
                                     continue; // only MixBlend here
                                 }
 
-                                let variant = Self::batch_key_to_pipeline_key(&batch.key, true);
+                                let variant = Self::batch_key_to_pipeline_key(&batch.key, true, batch.features);
                                 let instance_bytes = crate::device::as_byte_slice(batch.instances.as_slice());
 
                                 let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
@@ -2953,7 +2953,7 @@ impl Renderer {
                 // Helper: draw a batch into an existing render pass.
                 macro_rules! record_batch {
                     ($pass_mut:expr, $batch:expr, $is_alpha:expr, $depth_state:expr) => {{
-                        let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha);
+                        let variant = Self::batch_key_to_pipeline_key(&$batch.key, $is_alpha, $batch.features);
                         let instance_bytes = crate::device::as_byte_slice($batch.instances.as_slice());
 
                         let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
@@ -3223,9 +3223,11 @@ impl Renderer {
     fn batch_key_to_pipeline_key(
         key: &crate::batch::BatchKey,
         is_alpha: bool,
+        features: crate::batch::BatchFeatures,
     ) -> crate::device::WgpuShaderVariant {
         use crate::batch::BatchKind;
         use crate::batch::BrushBatchKind;
+        use crate::batch::BatchFeatures;
         use crate::device::WgpuShaderVariant;
         use glyph_rasterizer::GlyphFormat;
 
@@ -3234,7 +3236,13 @@ impl Renderer {
                 if is_alpha { WgpuShaderVariant::BrushSolidAlpha } else { WgpuShaderVariant::BrushSolid }
             }
             BatchKind::Brush(BrushBatchKind::Image(..)) => {
-                if is_alpha { WgpuShaderVariant::BrushImageAlpha } else { WgpuShaderVariant::BrushImage }
+                let repeat = features.contains(BatchFeatures::REPETITION);
+                match (is_alpha, repeat) {
+                    (false, false) => WgpuShaderVariant::BrushImage,
+                    (true,  false) => WgpuShaderVariant::BrushImageAlpha,
+                    (false, true)  => WgpuShaderVariant::BrushImageRepeat,
+                    (true,  true)  => WgpuShaderVariant::BrushImageRepeatAlpha,
+                }
             }
             BatchKind::Brush(BrushBatchKind::Blend) => {
                 if is_alpha { WgpuShaderVariant::BrushBlendAlpha } else { WgpuShaderVariant::BrushBlend }
