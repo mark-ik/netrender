@@ -75,6 +75,8 @@ pub enum WgpuShaderVariant {
     BrushSolidAlpha,
     BrushImage,
     BrushImageAlpha,
+    BrushImageRepeat,
+    BrushImageRepeatAlpha,
     BrushBlend,
     BrushBlendAlpha,
     BrushMixBlend,
@@ -144,6 +146,8 @@ impl WgpuShaderVariant {
             Self::BrushSolidAlpha           => ("brush_solid", "ALPHA_PASS"),
             Self::BrushImage                => ("brush_image", "TEXTURE_2D"),
             Self::BrushImageAlpha           => ("brush_image", "ALPHA_PASS,TEXTURE_2D"),
+            Self::BrushImageRepeat          => ("brush_image", "ANTIALIASING,REPETITION,TEXTURE_2D"),
+            Self::BrushImageRepeatAlpha     => ("brush_image", "ALPHA_PASS,ANTIALIASING,REPETITION,TEXTURE_2D"),
             Self::BrushBlend                => ("brush_blend", ""),
             Self::BrushBlendAlpha           => ("brush_blend", "ALPHA_PASS"),
             Self::BrushMixBlend             => ("brush_mix_blend", ""),
@@ -198,6 +202,8 @@ impl WgpuShaderVariant {
             ("brush_solid", "ALPHA_PASS")                           => Self::BrushSolidAlpha,
             ("brush_image", "TEXTURE_2D")                           => Self::BrushImage,
             ("brush_image", "ALPHA_PASS,TEXTURE_2D")                => Self::BrushImageAlpha,
+            ("brush_image", "ANTIALIASING,REPETITION,TEXTURE_2D")   => Self::BrushImageRepeat,
+            ("brush_image", "ALPHA_PASS,ANTIALIASING,REPETITION,TEXTURE_2D") => Self::BrushImageRepeatAlpha,
             ("brush_blend", "")                                     => Self::BrushBlend,
             ("brush_blend", "ALPHA_PASS")                           => Self::BrushBlendAlpha,
             ("brush_mix_blend", "")                                 => Self::BrushMixBlend,
@@ -266,6 +272,7 @@ impl WgpuShaderVariant {
             // All brush_*, ps_text_run*, ps_quad_* (non-mask), ps_split_composite
             Self::BrushSolid | Self::BrushSolidAlpha
             | Self::BrushImage | Self::BrushImageAlpha
+            | Self::BrushImageRepeat | Self::BrushImageRepeatAlpha
             | Self::BrushBlend | Self::BrushBlendAlpha
             | Self::BrushMixBlend | Self::BrushMixBlendAlpha
             | Self::BrushLinearGradient | Self::BrushLinearGradientAlpha
