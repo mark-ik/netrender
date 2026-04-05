@@ -1637,7 +1637,11 @@ impl Renderer {
         let composite_state = &doc.frame.composite_state;
         let mut color_instances: Vec<CompositeInstance> = Vec::new();
         // Group texture-backed tiles by their CacheTextureId.
+        // Unclipped tiles use CompositeFastPath; clipped tiles use Composite
+        // (non-fast-path has rounded clip logic in the fragment shader).
         let mut textured_batches: FastHashMap<CacheTextureId, Vec<CompositeInstance>> =
+            FastHashMap::default();
+        let mut textured_clipped_batches: FastHashMap<CacheTextureId, Vec<CompositeInstance>> =
             FastHashMap::default();
         let mut skipped_tiles = 0u32;
 
@@ -1650,6 +1654,12 @@ impl Renderer {
             let flip = (transform.scale.x < 0.0, transform.scale.y < 0.0);
             let clip_rect = tile.device_clip_rect;
 
+            // Resolve the compositor clip (rounded-rect clip applied during
+            // tile compositing, e.g. border-radius on the root element).
+            let compositor_clip = tile.clip_index.map(|idx| {
+                composite_state.get_compositor_clip(idx)
+            });
+
             match tile.surface {
                 CompositeTileSurface::Color { color } => {
                     let instance = CompositeInstance::new(
@@ -1657,7 +1667,7 @@ impl Renderer {
                         clip_rect,
                         color.premultiplied(),
                         flip,
-                        None,
+                        compositor_clip,
                     );
                     color_instances.push(instance);
                 }
@@ -1671,12 +1681,19 @@ impl Renderer {
                                 clip_rect,
                                 PremultipliedColorF::WHITE,
                                 flip,
-                                None,
+                                compositor_clip,
                             );
-                            textured_batches
-                                .entry(cache_id)
-                                .or_insert_with(Vec::new)
-                                .push(instance);
+                            if compositor_clip.is_some() {
+                                textured_clipped_batches
+                                    .entry(cache_id)
+                                    .or_insert_with(Vec::new)
+                                    .push(instance);
+                            } else {
+                                textured_batches
+                                    .entry(cache_id)
+                                    .or_insert_with(Vec::new)
+                                    .push(instance);
+                            }
                         } else {
                             skipped_tiles += 1;
                         }
@@ -1733,7 +1750,9 @@ impl Renderer {
         // All composite draws to the surface share a single render pass.
         // Always clear the render target to the configured clear color,
         // even when there are no tiles to draw (e.g. blank scenes).
-        let has_composite_work = !color_instances.is_empty() || !textured_batches.is_empty();
+        let has_composite_work = !color_instances.is_empty()
+            || !textured_batches.is_empty()
+            || !textured_clipped_batches.is_empty();
         {
             // Use the readback texture format, not the surface format,
             // since the composite pass renders into the offscreen RT.
@@ -1780,7 +1799,7 @@ impl Renderer {
                     );
                 }
 
-                // Texture-backed tile batches: use CompositeFastPath with source texture.
+                // Texture-backed tile batches (unclipped): CompositeFastPath.
                 for (cache_id, instances) in &textured_batches {
                     let source_view = match self.wgpu_texture_cache.get(cache_id) {
                         Some(t) => t.create_view(),
@@ -1807,16 +1826,47 @@ impl Renderer {
                         None,
                     );
                 }
+
+                // Texture-backed tile batches (with rounded clip): Composite
+                // (non-fast-path includes rounded clip SDF evaluation).
+                for (cache_id, instances) in &textured_clipped_batches {
+                    let source_view = match self.wgpu_texture_cache.get(cache_id) {
+                        Some(t) => t.create_view(),
+                        None => continue,
+                    };
+                    let instance_bytes = crate::device::as_byte_slice(instances.as_slice());
+                    let textures = crate::device::TextureBindings {
+                        color0: Some(&source_view),
+                        ..Default::default()
+                    };
+                    wgpu_dev.record_draw(
+                        &mut pass,
+                        crate::device::WgpuShaderVariant::Composite,
+                        crate::device::WgpuBlendMode::PremultipliedAlpha,
+                        crate::device::WgpuDepthState::None,
+                        surface_fmt,
+                        w,
+                        h,
+                        &textures,
+                        &transform_buf,
+                        &tex_size_buf,
+                        instance_bytes,
+                        instances.len() as u32,
+                        None,
+                    );
+                }
             } // render pass dropped
             wgpu_dev.return_encoder(encoder);
         }
 
         let total_textured: usize = textured_batches.values().map(|v| v.len()).sum();
-        if !color_instances.is_empty() || total_textured > 0 {
+        let total_clipped: usize = textured_clipped_batches.values().map(|v| v.len()).sum();
+        if !color_instances.is_empty() || total_textured > 0 || total_clipped > 0 {
             info!(
-                "wgpu: composited {} color + {} textured tiles ({} skipped, {}x{})",
+                "wgpu: composited {} color + {} textured + {} clipped tiles ({} skipped, {}x{})",
                 color_instances.len(),
                 total_textured,
+                total_clipped,
                 skipped_tiles,
                 device_size.width,
                 device_size.height,
@@ -2380,6 +2430,13 @@ impl Renderer {
                                         }
                                     });
 
+                                    let clip_mask_view = match $batch.key.textures.clip_mask {
+                                        TextureSource::TextureCache(id, _swizzle) => {
+                                            self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                        }
+                                        _ => None,
+                                    };
+
                                     let textures = TextureBindings {
                                         color0: color_views[0].as_ref(),
                                         color1: color_views[1].as_ref(),
@@ -2392,6 +2449,7 @@ impl Renderer {
                                         dither: draw_ctx.dither,
                                         gpu_buffer_f: draw_ctx.gpu_buffer_f,
                                         gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                        clip_mask: clip_mask_view.as_ref(),
                                         ..Default::default()
                                     };
 
@@ -2812,6 +2870,12 @@ impl Renderer {
                                         _ => None,
                                     }
                                 });
+                                let clip_mask_view = match batch.key.textures.clip_mask {
+                                    TextureSource::TextureCache(id, _) => {
+                                        self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                    }
+                                    _ => None,
+                                };
                                 let textures = TextureBindings {
                                     color0: color_views[0].as_ref(),
                                     color1: color_views[1].as_ref(),
@@ -2824,6 +2888,7 @@ impl Renderer {
                                     dither: draw_ctx.dither,
                                     gpu_buffer_f: draw_ctx.gpu_buffer_f,
                                     gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                                    clip_mask: clip_mask_view.as_ref(),
                                     ..Default::default()
                                 };
                                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
@@ -2965,6 +3030,13 @@ impl Renderer {
                             }
                         });
 
+                        let clip_mask_view = match $batch.key.textures.clip_mask {
+                            TextureSource::TextureCache(id, _swizzle) => {
+                                self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                            }
+                            _ => None,
+                        };
+
                         let textures = TextureBindings {
                             color0: color_views[0].as_ref(),
                             color1: color_views[1].as_ref(),
@@ -2977,6 +3049,7 @@ impl Renderer {
                             dither: draw_ctx.dither,
                             gpu_buffer_f: draw_ctx.gpu_buffer_f,
                             gpu_buffer_i: draw_ctx.gpu_buffer_i,
+                            clip_mask: clip_mask_view.as_ref(),
                             ..Default::default()
                         };
 
@@ -3029,7 +3102,6 @@ impl Renderer {
                         }
                     }
 
-                    // Alpha batches: back-to-front.
                     // MixBlend batches are deferred to a second pass if needed.
                     let alpha_depth = if has_opaque {
                         WgpuDepthState::TestOnly
