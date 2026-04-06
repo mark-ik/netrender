@@ -2277,7 +2277,6 @@ impl Renderer {
                 let target_fmt = target_wgpu.format();
                 let target_w = target_wgpu.width;
                 let target_h = target_wgpu.height;
-
                 // All draws to this texture cache target share a single render pass.
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
@@ -2469,6 +2468,7 @@ impl Renderer {
                     } else {
                         None
                     };
+
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("texture cache pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -4033,9 +4033,9 @@ impl Renderer {
             if filters.is_empty() {
                 continue;
             }
-            // Repack SVGFEFilterInstance (64 bytes, u16 fields) to all-i32/f32 layout.
-            // Output: 4xf32 + 4xf32 + 4xf32 + i32 + i32 + i32 + i32 + 2xi32 = 56 bytes
-            let mut repacked = Vec::<u8>::with_capacity(filters.len() * 56);
+            // Repack SVGFEFilterInstance (u16 fields) to all-i32/f32 layout.
+            // Output: 4xf32 + 4xf32 + 4xf32 + i32 + i32 + i32 + i32 + 2xi32 = 72 bytes
+            let mut repacked = Vec::<u8>::with_capacity(filters.len() * 72);
             for f in filters.iter() {
                 // target_rect: 4 x f32 (DeviceRect)
                 repacked.extend_from_slice(&f.target_rect.min.x.to_le_bytes());

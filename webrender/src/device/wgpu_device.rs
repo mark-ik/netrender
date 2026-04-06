@@ -610,6 +610,10 @@ impl WgpuDevice {
             ..Default::default()
         });
 
+        device.on_uncaptured_error(Box::new(|err| {
+            log::warn!("wgpu uncaptured error: {}", err);
+        }));
+
         let dummy_texture_f32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let dummy_texture_i32 =
@@ -705,6 +709,10 @@ impl WgpuDevice {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+
+        device.on_uncaptured_error(Box::new(|err| {
+            log::warn!("wgpu uncaptured error: {}", err);
+        }));
 
         let dummy_texture_f32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);

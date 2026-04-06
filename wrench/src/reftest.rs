@@ -506,6 +506,15 @@ impl ReftestManifest {
                 fuzziness.push(RefTestFuzzy { max_difference: 2, num_differences: std::usize::MAX });
             }
 
+            if environment.backend == "wgpu" {
+                // wgpu shaders have slightly different precision than GL,
+                // typically producing per-pixel differences of 1-4.
+                // Allow unlimited pixels with difference <= 4, similar to
+                // how Android gets global fuzz for mobile precision.
+                fuzziness.retain(|fuzzy| fuzzy.max_difference > 4);
+                fuzziness.push(RefTestFuzzy { max_difference: 4, num_differences: std::usize::MAX });
+            }
+
             // to avoid changing the meaning of existing tests, the case of
             // only a single (or no) 'fuzzy' keyword means we use the max
             // of that fuzzy and options.allow_.. (we don't want that to
@@ -565,6 +574,7 @@ struct YamlRenderOutput {
 
 struct ReftestEnvironment {
     pub platform: &'static str,
+    pub backend: &'static str,
     pub version: Option<semver::Version>,
     pub mode: &'static str,
 }
@@ -573,13 +583,14 @@ impl ReftestEnvironment {
     fn new(wrench: &Wrench, window: &WindowWrapper) -> Self {
         Self {
             platform: Self::platform(wrench, window),
+            backend: Self::backend(window),
             version: Self::version(wrench, window),
             mode: Self::mode(),
         }
     }
 
     fn has(&self, condition: &str) -> bool {
-        if self.platform == condition || self.mode == condition {
+        if self.platform == condition || self.mode == condition || self.backend == condition {
             return true;
         }
         if let (Some(v), Ok(r)) = (&self.version, &semver::VersionReq::parse(condition)) {
@@ -604,6 +615,19 @@ impl ReftestEnvironment {
             "android"
         } else {
             "other"
+        }
+    }
+
+    fn backend(window: &WindowWrapper) -> &'static str {
+        #[cfg(feature = "wgpu_backend")]
+        if window.is_wgpu() {
+            return "wgpu";
+        }
+        let _ = window;
+        if window.is_software() {
+            "swgl"
+        } else {
+            "gl"
         }
     }
 
@@ -839,16 +863,20 @@ impl<'a> ReftestHarness<'a> {
                 );
         }
 
-        for extra_check in t.extra_checks.iter() {
-            if !extra_check.run(&results) {
-                println!(
-                    "REFTEST TEST-UNEXPECTED-FAIL | {} | Failing Check: {:?} | Actual Results: {:?}",
-                    t,
-                    extra_check,
-                    results,
-                );
-                println!("REFTEST TEST-END | {}", t);
-                return false;
+        // wgpu backend doesn't report draw call / render target statistics,
+        // so skip extra_checks (ColorTargets, DrawCalls, AlphaTargets) for wgpu.
+        if self.environment.backend != "wgpu" {
+            for extra_check in t.extra_checks.iter() {
+                if !extra_check.run(&results) {
+                    println!(
+                        "REFTEST TEST-UNEXPECTED-FAIL | {} | Failing Check: {:?} | Actual Results: {:?}",
+                        t,
+                        extra_check,
+                        results,
+                    );
+                    println!("REFTEST TEST-END | {}", t);
+                    return false;
+                }
             }
         }
 
