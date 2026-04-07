@@ -823,12 +823,10 @@ pub enum PrimitiveInstanceKind {
     RadialGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: RadialGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
     },
     ConicGradient {
         /// Handle to the common interned data for this primitive.
         data_handle: ConicGradientDataHandle,
-        visible_tiles_range: GradientTileRange,
     },
     /// Render a portion of a specified backdrop.
     BackdropCapture {

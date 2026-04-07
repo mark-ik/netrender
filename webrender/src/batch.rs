@@ -1607,13 +1607,11 @@ impl BatchBuilder {
                 let prim_data = &ctx.data_stores.linear_grad[data_handle];
                 Some((prim_data.src_color, Some(visible_tiles_range), prim_data.brush_segments.as_slice()))
             }
-            PrimitiveInstanceKind::RadialGradient { data_handle, ref visible_tiles_range, .. } => {
-                let prim_data = &ctx.data_stores.radial_grad[data_handle];
-                Some((prim_data.src_color, Some(visible_tiles_range), prim_data.brush_segments.as_slice()))
+            PrimitiveInstanceKind::RadialGradient { .. } => {
+                unreachable!("BUG: radial gradients should always use quad path");
             }
-            PrimitiveInstanceKind::ConicGradient { data_handle, ref visible_tiles_range, .. } => {
-                let prim_data = &ctx.data_stores.conic_grad[data_handle];
-                Some((prim_data.src_color, Some(visible_tiles_range), prim_data.brush_segments.as_slice()))
+            PrimitiveInstanceKind::ConicGradient { .. } => {
+                unreachable!("BUG: conic gradients should always use quad path");
             }
             PrimitiveInstanceKind::ImageBorder { data_handle, .. } => {
                 let prim_data = &ctx.data_stores.image_border[data_handle];

@@ -982,42 +982,20 @@ fn prepare_interned_prim_for_render(
                 }
             }
         }
-        PrimitiveInstanceKind::RadialGradient { data_handle, ref mut visible_tiles_range, .. } => {
+        PrimitiveInstanceKind::RadialGradient { data_handle, .. } => {
             profile_scope!("RadialGradient");
             let prim_data = &mut data_stores.radial_grad[*data_handle];
+            let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
 
-            if !use_legacy_path {
-                let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
-                if let Some(nine_patch) = &prim_data.border_nine_patch {
-                    quad::prepare_border_image_nine_patch(
-                        &*nine_patch,
-                        prim_data,
-                        &local_rect,
-                        prim_data.stretch_size,
-                        prim_data.common.aligned_aa_edges,
-                        prim_data.common.transformed_aa_edges,
-                        prim_instance_index,
-                        &prim_instance.vis.clip_chain,
-                        quad_transform,
-                        frame_context,
-                        pic_context,
-                        targets,
-                        &data_stores.clip,
-                        frame_state,
-                        scratch,
-                    );
-                    return;
-                }
-
-                quad::prepare_repeatable_quad(
+            if let Some(nine_patch) = &prim_data.border_nine_patch {
+                quad::prepare_border_image_nine_patch(
+                    &*nine_patch,
                     prim_data,
                     &local_rect,
                     prim_data.stretch_size,
-                    prim_data.tile_spacing,
                     prim_data.common.aligned_aa_edges,
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
-                    &None,
                     &prim_instance.vis.clip_chain,
                     quad_transform,
                     frame_context,
@@ -1027,108 +1005,43 @@ fn prepare_interned_prim_for_render(
                     frame_state,
                     scratch,
                 );
-
                 return;
             }
 
-            prim_data.common.may_need_repetition = prim_data.stretch_size.width < prim_data.common.prim_size.width
-            || prim_data.stretch_size.height < prim_data.common.prim_size.height;
-
-            // Update the template this instane references, which may refresh the GPU
-            // cache with any shared template data.
-            prim_data.update(frame_state);
-
-            if prim_data.tile_spacing != LayoutSize::zero() {
-                prim_data.common.may_need_repetition = false;
-
-                let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
-                *visible_tiles_range = decompose_repeated_gradient(
-                    &prim_instance.vis,
-                    &local_rect,
-                    prim_spatial_node_index,
-                    &prim_data.stretch_size,
-                    &prim_data.tile_spacing,
-                    frame_state,
-                    &mut scratch.gradient_tiles,
-                    &frame_context.spatial_tree,
-                    None,
-                );
-
-                if visible_tiles_range.is_empty() {
-                    prim_instance.clear_visibility();
-                }
-            }
+            quad::prepare_repeatable_quad(
+                prim_data,
+                &local_rect,
+                prim_data.stretch_size,
+                prim_data.tile_spacing,
+                prim_data.common.aligned_aa_edges,
+                prim_data.common.transformed_aa_edges,
+                prim_instance_index,
+                &None,
+                &prim_instance.vis.clip_chain,
+                quad_transform,
+                frame_context,
+                pic_context,
+                targets,
+                &data_stores.clip,
+                frame_state,
+                scratch,
+            );
+            return;
         }
-        PrimitiveInstanceKind::ConicGradient { data_handle, ref mut visible_tiles_range, .. } => {
+        PrimitiveInstanceKind::ConicGradient { data_handle, .. } => {
             profile_scope!("ConicGradient");
             let prim_data = &mut data_stores.conic_grad[*data_handle];
             let prim_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
 
-            if !use_legacy_path {
-                if let Some(nine_patch) = &prim_data.border_nine_patch {
-                    quad::prepare_border_image_nine_patch(
-                        &*nine_patch,
-                        prim_data,
-                        &prim_rect,
-                        prim_data.stretch_size,
-                        prim_data.common.aligned_aa_edges,
-                        prim_data.common.transformed_aa_edges,
-                        prim_instance_index,
-                        &prim_instance.vis.clip_chain,
-                        quad_transform,
-                        frame_context,
-                        pic_context,
-                        targets,
-                        &data_stores.clip,
-                        frame_state,
-                        scratch,
-                    );
-                    return;
-                }
-
-                // Conic gradients are quite slow with SWGL, so we want to cache
-                // them as much as we can, even large ones.
-                // TODO: get_surface_rect is not always cheap. We should reorganize
-                // the code so that we only call it as much as we really need it,
-                // while avoiding this much boilerplate for each primitive that uses
-                // caching.
-                let mut should_cache = frame_context.fb_config.is_software
-                    && frame_state.resource_cache.texture_cache.allocated_color_bytes() < 30_000_000;
-                if should_cache {
-                    let surface = &frame_state.surfaces[pic_context.surface_index.0];
-                    let clipped_surface_rect = surface.get_surface_rect(
-                        &prim_instance.vis.clip_chain.pic_coverage_rect,
-                        frame_context.spatial_tree,
-                    );
-
-                    should_cache = if let Some(rect) = clipped_surface_rect {
-                        rect.width() < 4096 && rect.height() < 4096
-                    } else {
-                        false
-                    };
-                }
-
-                let cache_key = if should_cache {
-                    quad::cache_key(
-                        data_handle.uid(),
-                        quad_transform,
-                        &prim_instance.vis.clip_chain,
-                        frame_state.clip_store,
-                    )
-                } else {
-                    None
-                };
-
-                let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
-                quad::prepare_repeatable_quad(
+            if let Some(nine_patch) = &prim_data.border_nine_patch {
+                quad::prepare_border_image_nine_patch(
+                    &*nine_patch,
                     prim_data,
-                    &local_rect,
+                    &prim_rect,
                     prim_data.stretch_size,
-                    prim_data.tile_spacing,
                     prim_data.common.aligned_aa_edges,
                     prim_data.common.transformed_aa_edges,
                     prim_instance_index,
-                    &cache_key,
                     &prim_instance.vis.clip_chain,
                     quad_transform,
                     frame_context,
@@ -1138,40 +1051,62 @@ fn prepare_interned_prim_for_render(
                     frame_state,
                     scratch,
                 );
-
                 return;
             }
 
-            prim_data.common.may_need_repetition = prim_data.stretch_size.width < prim_data.common.prim_size.width
-                || prim_data.stretch_size.height < prim_data.common.prim_size.height;
-
-            // Update the template this instane references, which may refresh the GPU
-            // cache with any shared template data.
-            prim_data.update(frame_state);
-
-            if prim_data.tile_spacing != LayoutSize::zero() {
-                prim_data.common.may_need_repetition = false;
-
-                let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
-                *visible_tiles_range = decompose_repeated_gradient(
-                    &prim_instance.vis,
-                    &local_rect,
-                    prim_spatial_node_index,
-                    &prim_data.stretch_size,
-                    &prim_data.tile_spacing,
-                    frame_state,
-                    &mut scratch.gradient_tiles,
-                    &frame_context.spatial_tree,
-                    None,
+            // Conic gradients are quite slow with SWGL, so we want to cache
+            // them as much as we can, even large ones.
+            // TODO: get_surface_rect is not always cheap. We should reorganize
+            // the code so that we only call it as much as we really need it,
+            // while avoiding this much boilerplate for each primitive that uses
+            // caching.
+            let mut should_cache = frame_context.fb_config.is_software
+                && frame_state.resource_cache.texture_cache.allocated_color_bytes() < 30_000_000;
+            if should_cache {
+                let surface = &frame_state.surfaces[pic_context.surface_index.0];
+                let clipped_surface_rect = surface.get_surface_rect(
+                    &prim_instance.vis.clip_chain.pic_coverage_rect,
+                    frame_context.spatial_tree,
                 );
 
-                if visible_tiles_range.is_empty() {
-                    prim_instance.clear_visibility();
-                }
+                should_cache = if let Some(rect) = clipped_surface_rect {
+                    rect.width() < 4096 && rect.height() < 4096
+                } else {
+                    false
+                };
             }
 
-            // TODO(gw): Consider whether it's worth doing segment building
-            //           for gradient primitives.
+            let cache_key = if should_cache {
+                quad::cache_key(
+                    data_handle.uid(),
+                    quad_transform,
+                    &prim_instance.vis.clip_chain,
+                    frame_state.clip_store,
+                )
+            } else {
+                None
+            };
+
+            let local_rect = LayoutRect::from_origin_and_size(prim_instance.prim_origin, prim_data.common.prim_size);
+            quad::prepare_repeatable_quad(
+                prim_data,
+                &local_rect,
+                prim_data.stretch_size,
+                prim_data.tile_spacing,
+                prim_data.common.aligned_aa_edges,
+                prim_data.common.transformed_aa_edges,
+                prim_instance_index,
+                &cache_key,
+                &prim_instance.vis.clip_chain,
+                quad_transform,
+                frame_context,
+                pic_context,
+                targets,
+                &data_stores.clip,
+                frame_state,
+                scratch,
+            );
+            return;
         }
         PrimitiveInstanceKind::Picture { pic_index, .. } => {
             profile_scope!("Picture");
@@ -1599,27 +1534,11 @@ fn update_clip_task_for_brush(
 
             prim_data.brush_segments.as_slice()
         }
-        PrimitiveInstanceKind::RadialGradient { data_handle, .. } => {
-            let prim_data = &data_stores.radial_grad[data_handle];
-
-            // TODO: This is quite messy - once we remove legacy primitives we
-            //       can change this to be a tuple match on (instance, template)
-            if prim_data.brush_segments.is_empty() {
-                return None;
-            }
-
-            prim_data.brush_segments.as_slice()
+        PrimitiveInstanceKind::RadialGradient { .. } => {
+            unreachable!("BUG: radial gradients should always use quad path");
         }
-        PrimitiveInstanceKind::ConicGradient { data_handle, .. } => {
-            let prim_data = &data_stores.conic_grad[data_handle];
-
-            // TODO: This is quite messy - once we remove legacy primitives we
-            //       can change this to be a tuple match on (instance, template)
-            if prim_data.brush_segments.is_empty() {
-                return None;
-            }
-
-            prim_data.brush_segments.as_slice()
+        PrimitiveInstanceKind::ConicGradient { .. } => {
+            unreachable!("BUG: conic gradients should always use quad path");
         }
     };
 
