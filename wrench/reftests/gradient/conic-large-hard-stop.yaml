@@ -7,8 +7,8 @@ root:
       angle: 0
       stops: [0.0, red, 0.2, red, 0.2, yellow, 1.0, yellow]
     - type: rect
-      bounds: 0 300 2048 2048
+      bounds: 0 300 2200 2200
       color: white
     - type: rect
-      bounds: 300 0 2048 2048
+      bounds: 300 0 2200 2200
       color: white

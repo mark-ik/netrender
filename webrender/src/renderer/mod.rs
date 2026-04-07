@@ -1512,6 +1512,22 @@ impl From<std::io::Error> for RendererError {
     }
 }
 
+/// Insert `instance` into the ordered batch list for `cache_id`.
+/// Appends to an existing entry if one already exists for this id,
+/// otherwise pushes a new entry at the end (preserving insertion order).
+#[cfg(feature = "wgpu_backend")]
+fn push_to_ordered_batches(
+    batches: &mut Vec<(CacheTextureId, Vec<CompositeInstance>)>,
+    cache_id: CacheTextureId,
+    instance: CompositeInstance,
+) {
+    if let Some(entry) = batches.iter_mut().find(|(id, _)| *id == cache_id) {
+        entry.1.push(instance);
+    } else {
+        batches.push((cache_id, vec![instance]));
+    }
+}
+
 impl Renderer {
     #[cfg(feature = "gl_backend")]
     /// Returns a reference to the GL device. Panics in wgpu-only mode.
@@ -1570,37 +1586,32 @@ impl Renderer {
         // frames; only the data is re-uploaded (or reallocated if size changed).
         let gpu_cache_view = self.wgpu_gpu_cache.texture_view();
 
-        // Upload per-frame data textures, then draw passes.
-        // Scoped carefully to avoid holding borrows across mutable access.
-        let doc_id = self.active_documents.keys().last().cloned();
-        if let Some(ref doc_id) = doc_id {
+        // ── Process render passes ───────────────────────────────────
+        // Each pass renders into picture cache tiles / texture cache
+        // targets.  We iterate the alpha batch containers and draw them
+        // through wgpu pipelines.
+        // Process ALL unrendered documents (not just the last one), so
+        // that offscreen pipeline snapshots are rendered before the main
+        // document composites them.
+        let doc_ids: Vec<DocumentId> = self.active_documents.iter()
+            .filter(|(_, doc)| !doc.frame.has_been_rendered && !doc.frame.passes.is_empty())
+            .map(|(id, _)| *id)
+            .collect();
+
+        for doc_id in &doc_ids {
             if let Some(dev) = self.wgpu_device.as_ref() {
                 if let Some(doc) = self.active_documents.get(doc_id) {
                     Self::upload_frame_data_textures(dev, &mut self.wgpu_frame_data, &doc.frame);
                 }
             }
-        }
 
-        // ── Process render passes ───────────────────────────────────
-        // Each pass renders into picture cache tiles / texture cache
-        // targets.  We iterate the alpha batch containers and draw them
-        // through wgpu pipelines.
-        if let Some(ref doc_id) = doc_id {
-            let frame_rendered = self.active_documents.get(doc_id)
-                .map(|d| d.frame.has_been_rendered)
-                .unwrap_or(true);
-
-            if !frame_rendered {
-                // Take frame data out to avoid borrow conflict with &mut self.
-                if let Some(ft) = self.wgpu_frame_data.take() {
-                    self.draw_passes_wgpu(
-                        doc_id,
-                        &ft,
-                        gpu_cache_view.as_ref(),
-                    );
-                    self.wgpu_frame_data = Some(ft);
-                }
-
+            if let Some(ft) = self.wgpu_frame_data.take() {
+                self.draw_passes_wgpu(
+                    doc_id,
+                    &ft,
+                    gpu_cache_view.as_ref(),
+                );
+                self.wgpu_frame_data = Some(ft);
             }
         }
 
@@ -1636,16 +1647,29 @@ impl Renderer {
         // Collect composite tiles into batches by type.
         let composite_state = &doc.frame.composite_state;
         let mut color_instances: Vec<CompositeInstance> = Vec::new();
-        // Group texture-backed tiles by their CacheTextureId.
-        // Unclipped tiles use CompositeFastPath; clipped tiles use Composite
-        // (non-fast-path has rounded clip logic in the fragment shader).
-        let mut textured_batches: FastHashMap<CacheTextureId, Vec<CompositeInstance>> =
-            FastHashMap::default();
-        let mut textured_clipped_batches: FastHashMap<CacheTextureId, Vec<CompositeInstance>> =
-            FastHashMap::default();
+        // Group texture-backed tiles by their CacheTextureId, preserving the
+        // insertion order so that tile caches are composited back-to-front.
+        // A HashMap would lose the ordering between different texture pages
+        // (e.g. root tile cache vs. scroll-frame tile cache), causing
+        // foreground content to be drawn underneath background content.
+        // Both regular Texture tiles and ExternalSurface (RGB) tiles share the
+        // same ordered batch list to preserve correct z_id compositing order.
+        // We use the full Composite shader (not CompositeFastPath) for all
+        // textured batches: it handles UV_TYPE_UNNORMALIZED (ExternalSurface
+        // atlas sub-regions) with the 0.5-pixel uvBounds inset that prevents
+        // bilinear filter bleed, and UV_TYPE_NORMALIZED (full-texture tiles)
+        // works correctly since the identity uvBounds clamp is a no-op.
+        // Clipped tiles go into a separate queue but use the same shader.
+        let mut textured_batches: Vec<(CacheTextureId, Vec<CompositeInstance>)> = Vec::new();
+        let mut textured_clipped_batches: Vec<(CacheTextureId, Vec<CompositeInstance>)> = Vec::new();
         let mut skipped_tiles = 0u32;
 
-        for (tile_idx, tile) in composite_state.tiles.iter().enumerate() {
+        // Tiles are sorted front-to-back by z_id (for GL depth-test efficiency).
+        // The wgpu path uses alpha blending without depth testing, so we need
+        // back-to-front order (painter's algorithm): iterate in reverse so that
+        // background tiles (large z_id) are pushed into the instance arrays first
+        // and foreground tiles (small z_id) are pushed last and drawn on top.
+        for (tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
             let tile_rect = composite_state.get_device_rect(
                 &tile.local_rect,
                 tile.transform_index,
@@ -1684,15 +1708,9 @@ impl Renderer {
                                 compositor_clip,
                             );
                             if compositor_clip.is_some() {
-                                textured_clipped_batches
-                                    .entry(cache_id)
-                                    .or_insert_with(Vec::new)
-                                    .push(instance);
+                                push_to_ordered_batches(&mut textured_clipped_batches, cache_id, instance);
                             } else {
-                                textured_batches
-                                    .entry(cache_id)
-                                    .or_insert_with(Vec::new)
-                                    .push(instance);
+                                push_to_ordered_batches(&mut textured_batches, cache_id, instance);
                             }
                         } else {
                             skipped_tiles += 1;
@@ -1701,8 +1719,56 @@ impl Renderer {
                         skipped_tiles += 1;
                     }
                 }
-                _ => {
-                    // Clear, ExternalSurface, Native — skip for now.
+                CompositeTileSurface::ExternalSurface { external_surface_index } => {
+                    let surface = &composite_state.external_surfaces[external_surface_index.0];
+                    match surface.color_data {
+                        ResolvedExternalSurfaceColorData::Rgb { ref plane, .. } => {
+                            if let TextureSource::TextureCache(cache_id, _swizzle) = plane.texture {
+                                if self.wgpu_texture_cache.contains_key(&cache_id) {
+                                    // Pass texel-space UV (UV_TYPE_UNNORMALIZED) so the Composite
+                                    // shader applies the 0.5-pixel uvBounds inset before normalising,
+                                    // preventing bilinear bleed from adjacent atlas entries.
+                                    let instance = CompositeInstance::new_rgb(
+                                        tile_rect,
+                                        clip_rect,
+                                        PremultipliedColorF::WHITE,
+                                        plane.uv_rect,
+                                        false, // texel coords, not normalized
+                                        flip,
+                                        compositor_clip,
+                                    );
+                                    if compositor_clip.is_some() {
+                                        push_to_ordered_batches(&mut textured_clipped_batches, cache_id, instance);
+                                    } else {
+                                        push_to_ordered_batches(&mut textured_batches, cache_id, instance);
+                                    }
+                                } else {
+                                    skipped_tiles += 1;
+                                }
+                            } else {
+                                skipped_tiles += 1;
+                            }
+                        }
+                        ResolvedExternalSurfaceColorData::Yuv { .. } => {
+                            // YUV external surfaces not yet supported in wgpu path.
+                            skipped_tiles += 1;
+                        }
+                    }
+                }
+                CompositeTileSurface::Clear => {
+                    let instance = CompositeInstance::new(
+                        tile_rect,
+                        clip_rect,
+                        PremultipliedColorF::BLACK,
+                        flip,
+                        compositor_clip,
+                    );
+                    color_instances.push(instance);
+                }
+                CompositeTileSurface::Texture {
+                    surface: ResolvedSurfaceTexture::Native { .. }
+                } => {
+                    // Native compositor surfaces not used in software composite path.
                     skipped_tiles += 1;
                 }
             }
@@ -1715,38 +1781,6 @@ impl Renderer {
             b: self.clear_color.b as f64,
             a: self.clear_color.a as f64,
         };
-        // Diagnostic: log tile breakdown on first few frames.
-        if !composite_state.tiles.is_empty() || skipped_tiles > 0 {
-            info!(
-                "wgpu composite: {} total tiles, {} color, {} textured batches, {} skipped, surface={}x{}",
-                composite_state.tiles.len(),
-                color_instances.len(),
-                textured_batches.len(),
-                skipped_tiles,
-                w, h,
-            );
-            // Log the surface types of skipped tiles (first frame only via has_been_rendered).
-            if !doc.frame.has_been_rendered {
-                for tile in &composite_state.tiles {
-                    match tile.surface {
-                        CompositeTileSurface::Color { .. } => {},
-                        CompositeTileSurface::Texture {
-                            surface: ResolvedSurfaceTexture::TextureCache { ref texture }
-                        } => {
-                            if let TextureSource::TextureCache(id, _) = texture {
-                                if !self.wgpu_texture_cache.contains_key(&id) {
-                                    info!("  missing texture {:?} in wgpu cache", id);
-                                }
-                            }
-                        }
-                        ref other => {
-                            info!("  skipped tile surface: {:?}", std::mem::discriminant(other));
-                        }
-                    }
-                }
-            }
-        }
-
         // All composite draws to the surface share a single render pass.
         // Always clear the render target to the configured clear color,
         // even when there are no tiles to draw (e.g. blank scenes).
@@ -1799,7 +1833,12 @@ impl Renderer {
                     );
                 }
 
-                // Texture-backed tile batches (unclipped): CompositeFastPath.
+                // Texture-backed tile batches (unclipped): use Composite shader.
+                // This handles both regular full-texture tiles (UV_TYPE_NORMALIZED,
+                // UV = 0..1) and ExternalSurface atlas sub-regions (UV_TYPE_UNNORMALIZED,
+                // texel coords) in the same ordered batch queue, preserving z_id draw
+                // order between them.  The Composite shader correctly applies the
+                // 0.5-pixel uvBounds inset for UNNORMALIZED and is a no-op for NORMALIZED.
                 for (cache_id, instances) in &textured_batches {
                     let source_view = match self.wgpu_texture_cache.get(cache_id) {
                         Some(t) => t.create_view(),
@@ -1812,7 +1851,7 @@ impl Renderer {
                     };
                     wgpu_dev.record_draw(
                         &mut pass,
-                        crate::device::WgpuShaderVariant::CompositeFastPath,
+                        crate::device::WgpuShaderVariant::Composite,
                         crate::device::WgpuBlendMode::PremultipliedAlpha,
                         crate::device::WgpuDepthState::None,
                         surface_fmt,
@@ -1855,12 +1894,13 @@ impl Renderer {
                         None,
                     );
                 }
+
             } // render pass dropped
             wgpu_dev.return_encoder(encoder);
         }
 
-        let total_textured: usize = textured_batches.values().map(|v| v.len()).sum();
-        let total_clipped: usize = textured_clipped_batches.values().map(|v| v.len()).sum();
+        let total_textured: usize = textured_batches.iter().map(|(_, v)| v.len()).sum();
+        let total_clipped: usize = textured_clipped_batches.iter().map(|(_, v)| v.len()).sum();
         if !color_instances.is_empty() || total_textured > 0 || total_clipped > 0 {
             info!(
                 "wgpu: composited {} color + {} textured + {} clipped tiles ({} skipped, {}x{})",
@@ -2088,6 +2128,13 @@ impl Renderer {
 
         let mut batches_drawn = 0u32;
         let mut batches_skipped = 0u32;
+        // Track which non-cached texture targets have been rendered to this
+        // frame.  A second render pass on the same texture must use
+        // LoadOp::Load so that earlier pass content is preserved (e.g. a
+        // backdrop-filter BrushOpacity pass that composites over a tile-cache
+        // background drawn in an earlier pass on the same texture).
+        let mut rendered_textures: std::collections::HashSet<CacheTextureId> =
+            std::collections::HashSet::new();
 
         for pass in frame.passes.iter() {
             // Draw cs_* cache tasks, clip masks, quad batches, and
@@ -2115,6 +2162,14 @@ impl Renderer {
                 let has_alpha_batches = !target.alpha_batch_containers.is_empty();
                 let has_clip_masks = !target.clip_masks.is_empty();
                 let needs_depth = target.needs_depth();
+                // When the render pass has a depth attachment, pipelines that
+                // don't need depth testing must still declare the Depth32Float
+                // format (AlwaysPass) to satisfy wgpu validation.
+                let nodepth_state = if needs_depth {
+                    WgpuDepthState::AlwaysPass
+                } else {
+                    WgpuDepthState::None
+                };
 
                 if !has_primary && !has_secondary && !has_quads && !has_cs_tasks && !has_alpha_batches && !has_clip_masks {
                     // Even when there are no draw commands, we may need to
@@ -2122,6 +2177,8 @@ impl Renderer {
                     // them with a lightweight encoder-only path (no render
                     // pass), then skip the target.
                     if !target.resolve_ops.is_empty() || !target.blits.is_empty() {
+                        // Mark this texture as modified (the copy writes to it).
+                        rendered_textures.insert(target.texture_id);
                         let target_wgpu = match self.wgpu_texture_cache.get(&target.texture_id) {
                             Some(t) => t,
                             None => { continue; },
@@ -2192,7 +2249,9 @@ impl Renderer {
                                 ).cast_unit() * src_info.device_pixel_scale.inverse();
                                 let int_rect = match wanted.intersection(&avail) {
                                     Some(r) => r,
-                                    None => continue,
+                                    None => {
+                                        continue;
+                                    },
                                 };
 
                                 let src_int_rect = (int_rect * src_info.device_pixel_scale).cast_unit();
@@ -2219,23 +2278,33 @@ impl Renderer {
 
                                 let src_tex_id = src_task.get_target_texture();
                                 let dst_tex_id = dest_task.get_target_texture();
-                                if src_tex_id == dst_tex_id { continue; }
+                                if src_tex_id == dst_tex_id {
+                                    continue;
+                                }
 
                                 let src_tex = match self.wgpu_texture_cache.get(&src_tex_id) {
                                     Some(t) => t,
-                                    None => continue,
+                                    None => {
+                                        continue;
+                                    }
                                 };
                                 let dst_tex = match self.wgpu_texture_cache.get(&dst_tex_id) {
                                     Some(t) => t,
-                                    None => continue,
+                                    None => {
+                                        continue;
+                                    }
                                 };
 
                                 let sx = src.min.x.max(0) as u32;
                                 let sy = src.min.y.max(0) as u32;
                                 let dx = dest.min.x.max(0) as u32;
                                 let dy = dest.min.y.max(0) as u32;
-                                if sx + w > src_tex.width || sy + h > src_tex.height { continue; }
-                                if dx + w > dst_tex.width || dy + h > dst_tex.height { continue; }
+                                if sx + w > src_tex.width || sy + h > src_tex.height {
+                                    continue;
+                                }
+                                if dx + w > dst_tex.width || dy + h > dst_tex.height {
+                                    continue;
+                                }
 
                                 copies.push(CopyDesc { src_tex_id, sx, sy, dx, dy, w, h });
                             }
@@ -2402,23 +2471,33 @@ impl Renderer {
 
                         let src_tex_id = src_task.get_target_texture();
                         let dst_tex_id = dest_task.get_target_texture();
-                        if src_tex_id == dst_tex_id { continue; }
+                        if src_tex_id == dst_tex_id {
+                            continue;
+                        }
 
                         let src_tex = match self.wgpu_texture_cache.get(&src_tex_id) {
                             Some(t) => t,
-                            None => continue,
+                            None => {
+                                continue;
+                            }
                         };
                         let dst_tex = match self.wgpu_texture_cache.get(&dst_tex_id) {
                             Some(t) => t,
-                            None => continue,
+                            None => {
+                                continue;
+                            }
                         };
 
                         let sx = src.min.x.max(0) as u32;
                         let sy = src.min.y.max(0) as u32;
                         let dx = dest.min.x.max(0) as u32;
                         let dy = dest.min.y.max(0) as u32;
-                        if sx + w > src_tex.width || sy + h > src_tex.height { continue; }
-                        if dx + w > dst_tex.width || dy + h > dst_tex.height { continue; }
+                        if sx + w > src_tex.width || sy + h > src_tex.height {
+                            continue;
+                        }
+                        if dx + w > dst_tex.width || dy + h > dst_tex.height {
+                            continue;
+                        }
 
                         encoder.copy_texture_to_texture(
                             wgpu::TexelCopyTextureInfo {
@@ -2469,13 +2548,47 @@ impl Renderer {
                         None
                     };
 
+                    // Non-cached targets (dynamic alpha/color) need a full
+                    // clear before drawing, matching the GL path's
+                    // clear_render_target.  Cached targets (texture_cache)
+                    // only clear specific rects via PsClear below.
+                    let already_rendered = rendered_textures.contains(&target.texture_id);
+                    // Mark this texture as rendered to (must come after the
+                    // `already_rendered` check above so the first pass clears
+                    // and subsequent passes load).
+                    rendered_textures.insert(target.texture_id);
+                    let color_load_op = if target.cached {
+                        // Persistent texture-cache targets preserve their
+                        // contents across passes.
+                        wgpu::LoadOp::Load
+                    } else if already_rendered {
+                        // This non-cached texture was already rendered to
+                        // earlier in this frame (e.g. a backdrop-filter
+                        // BrushOpacity pass that composites over a background
+                        // drawn by an earlier pass on the same texture).
+                        // Preserve the existing content.
+                        wgpu::LoadOp::Load
+                    } else {
+                        if let Some(ref cc) = target.clear_color {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: cc.r as f64, g: cc.g as f64,
+                                b: cc.b as f64, a: cc.a as f64,
+                            })
+                        } else {
+                            // Non-cached target with no explicit clear color:
+                            // default to clearing transparent so stale content
+                            // from a previous frame/test doesn't bleed through.
+                            wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 })
+                        }
+                    };
+
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("texture cache pass"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &target_view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load, // no clear — cache targets are pre-cleared
+                                load: color_load_op,
                                 store: wgpu::StoreOp::Store,
                             },
                             depth_slice: None,
@@ -2484,6 +2597,40 @@ impl Renderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+
+                    // Clear specific render task regions before drawing.
+                    // Each entry in target.clears defines a rect + color that
+                    // must be filled before the task's content is rendered.
+                    if !target.clears.is_empty() {
+                        let mut clear_instances: Vec<ClearInstance> = Vec::with_capacity(target.clears.len());
+                        for (rect, color) in &target.clears {
+                            let r = rect.to_f32();
+                            clear_instances.push(ClearInstance {
+                                rect: [r.min.x, r.min.y, r.max.x, r.max.y],
+                                color: color.to_array(),
+                            });
+                        }
+                        let instance_bytes = crate::device::as_byte_slice(&clear_instances);
+                        let textures = crate::device::TextureBindings {
+                            ..Default::default()
+                        };
+                        self.wgpu_device.as_mut().unwrap().record_draw(
+                            &mut pass,
+                            crate::device::WgpuShaderVariant::PsClear,
+                            crate::device::WgpuBlendMode::None,
+                            nodepth_state,
+                            target_fmt,
+                            target_w,
+                            target_h,
+                            &textures,
+                            &transform_buf,
+                            &tex_size_buf,
+                            instance_bytes,
+                            clear_instances.len() as u32,
+                            None,
+                        );
+                        batches_drawn += 1;
+                    }
 
                     // cs_* cache target tasks: borders, gradients, blurs, etc.
                     if has_cs_tasks {
@@ -2498,6 +2645,7 @@ impl Renderer {
                             &transform_buf,
                             &tex_size_buf,
                             &mut batches_drawn,
+                            nodepth_state,
                         );
                     }
 
@@ -2515,6 +2663,7 @@ impl Renderer {
                             &tex_size_buf,
                             WgpuBlendMode::None,
                             &mut batches_drawn,
+                            nodepth_state,
                         );
                     }
                     if has_secondary {
@@ -2530,6 +2679,7 @@ impl Renderer {
                             &tex_size_buf,
                             WgpuBlendMode::MultiplyClipMask,
                             &mut batches_drawn,
+                            nodepth_state,
                         );
                     }
 
@@ -2547,6 +2697,7 @@ impl Renderer {
                             &transform_buf,
                             &tex_size_buf,
                             &mut batches_drawn,
+                            nodepth_state,
                         );
                     }
 
@@ -2632,7 +2783,7 @@ impl Renderer {
                             let alpha_depth = if has_opaque {
                                 WgpuDepthState::TestOnly
                             } else {
-                                WgpuDepthState::None
+                                nodepth_state
                             };
                             for batch in alpha_batch_container.alpha_batches.iter() {
                                 if has_mix_blend && matches!(
@@ -2673,7 +2824,7 @@ impl Renderer {
                                         &mut pass,
                                         $variant,
                                         WgpuBlendMode::MultiplyClipMask,
-                                        WgpuDepthState::None,
+                                        nodepth_state,
                                         target_fmt,
                                         target_w,
                                         target_h,
@@ -2717,7 +2868,7 @@ impl Renderer {
                                 &mut pass,
                                 WgpuShaderVariant::PsQuadMaskFastPath,
                                 WgpuBlendMode::MultiplyClipMask,
-                                WgpuDepthState::None,
+                                nodepth_state,
                                 target_fmt,
                                 target_w,
                                 target_h,
@@ -2759,7 +2910,7 @@ impl Renderer {
                                 &mut pass,
                                 WgpuShaderVariant::PsQuadMask,
                                 WgpuBlendMode::MultiplyClipMask,
-                                WgpuDepthState::None,
+                                nodepth_state,
                                 target_fmt,
                                 target_w,
                                 target_h,
@@ -2800,7 +2951,7 @@ impl Renderer {
                                 &mut pass,
                                 WgpuShaderVariant::PsQuadTextured,
                                 WgpuBlendMode::MultiplyClipMask,
-                                WgpuDepthState::None,
+                                nodepth_state,
                                 target_fmt,
                                 target_w,
                                 target_h,
@@ -2845,7 +2996,7 @@ impl Renderer {
                                 &mut pass,
                                 WgpuShaderVariant::PsQuadTextured,
                                 WgpuBlendMode::MultiplyClipMask,
-                                WgpuDepthState::None,
+                                nodepth_state,
                                 target_fmt,
                                 target_w,
                                 target_h,
@@ -3610,6 +3761,7 @@ impl Renderer {
         tex_size_buf: &wgpu::Buffer,
         blend_mode: crate::device::WgpuBlendMode,
         batches_drawn: &mut u32,
+        nodepth_state: crate::device::WgpuDepthState,
     ) {
         use crate::device::TextureBindings;
 
@@ -3618,6 +3770,7 @@ impl Renderer {
             let instance_bytes = crate::device::as_byte_slice(&list.slow_rectangles);
             let textures = TextureBindings {
                 transform_palette: Some(ctx.transform_palette),
+                render_tasks: Some(ctx.render_tasks),
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
@@ -3625,7 +3778,7 @@ impl Renderer {
                 pass,
                 crate::device::WgpuShaderVariant::CsClipRectangle,
                 blend_mode,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -3644,6 +3797,7 @@ impl Renderer {
             let instance_bytes = crate::device::as_byte_slice(&list.fast_rectangles);
             let textures = TextureBindings {
                 transform_palette: Some(ctx.transform_palette),
+                render_tasks: Some(ctx.render_tasks),
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
@@ -3651,7 +3805,7 @@ impl Renderer {
                 pass,
                 crate::device::WgpuShaderVariant::CsClipRectangleFastPath,
                 blend_mode,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -3677,6 +3831,7 @@ impl Renderer {
             let textures = TextureBindings {
                 color0: mask_view.as_ref(),
                 transform_palette: Some(ctx.transform_palette),
+                render_tasks: Some(ctx.render_tasks),
                 gpu_cache: ctx.gpu_cache,
                 ..Default::default()
             };
@@ -3684,7 +3839,7 @@ impl Renderer {
                 pass,
                 crate::device::WgpuShaderVariant::CsClipBoxShadow,
                 blend_mode,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -3719,6 +3874,7 @@ impl Renderer {
         transform_buf: &wgpu::Buffer,
         tex_size_buf: &wgpu::Buffer,
         batches_drawn: &mut u32,
+        nodepth_state: crate::device::WgpuDepthState,
     ) {
         use crate::device::{TextureBindings, WgpuBlendMode};
 
@@ -3765,7 +3921,7 @@ impl Renderer {
                     pass,
                     variant,
                     WgpuBlendMode::None, // opaque quads
-                    crate::device::WgpuDepthState::None,
+                    nodepth_state,
                     target_format,
                     target_w,
                     target_h,
@@ -3809,7 +3965,7 @@ impl Renderer {
                     pass,
                     variant,
                     WgpuBlendMode::PremultipliedAlpha,
-                    crate::device::WgpuDepthState::None,
+                    nodepth_state,
                     target_format,
                     target_w,
                     target_h,
@@ -3839,6 +3995,7 @@ impl Renderer {
         transform_buf: &wgpu::Buffer,
         tex_size_buf: &wgpu::Buffer,
         batches_drawn: &mut u32,
+        nodepth_state: crate::device::WgpuDepthState,
     ) {
         use crate::device::{TextureBindings, WgpuBlendMode};
 
@@ -3847,6 +4004,7 @@ impl Renderer {
             gpu_buffer_f: ctx.gpu_buffer_f,
             gpu_buffer_i: ctx.gpu_buffer_i,
             dither: ctx.dither,
+            render_tasks: Some(ctx.render_tasks),
             ..Default::default()
         };
 
@@ -3859,7 +4017,7 @@ impl Renderer {
                         pass,
                         $variant,
                         $blend,
-                        crate::device::WgpuDepthState::None,
+                        nodepth_state,
                         target_format,
                         target_w,
                         target_h,
@@ -3916,6 +4074,7 @@ impl Renderer {
             let textures = TextureBindings {
                 color0: color0_view.as_ref(),
                 gpu_cache: ctx.gpu_cache,
+                render_tasks: Some(ctx.render_tasks),
                 ..Default::default()
             };
             let instance_bytes = crate::device::as_byte_slice(blurs.as_slice());
@@ -3923,7 +4082,7 @@ impl Renderer {
                 pass,
                 WgpuShaderVariant::CsBlurColor,
                 WgpuBlendMode::None,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -3958,7 +4117,7 @@ impl Renderer {
                 pass,
                 WgpuShaderVariant::CsScale,
                 WgpuBlendMode::None,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -4014,7 +4173,7 @@ impl Renderer {
                 pass,
                 WgpuShaderVariant::CsSvgFilter,
                 WgpuBlendMode::None,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -4085,7 +4244,7 @@ impl Renderer {
                 pass,
                 WgpuShaderVariant::CsSvgFilterNode,
                 WgpuBlendMode::None,
-                crate::device::WgpuDepthState::None,
+                nodepth_state,
                 target_format,
                 target_w,
                 target_h,
@@ -4243,7 +4402,7 @@ impl Renderer {
                         doc.profile.merge(&mut prev_doc.profile);
 
                         #[cfg(feature = "gl_backend")]
-                    if prev_doc.frame.must_be_drawn() && !self.is_wgpu_only() {
+                        if prev_doc.frame.must_be_drawn() && !self.is_wgpu_only() {
                             prev_doc.render_reasons |= RenderReasons::TEXTURE_CACHE_FLUSH;
                             self.render_impl(
                                 document_id,
@@ -4251,6 +4410,48 @@ impl Renderer {
                                 None,
                                 0,
                             ).ok();
+                        }
+
+                        // wgpu path: render the previous document's texture cache
+                        // passes before it gets replaced (e.g. offscreen snapshots).
+                        #[cfg(feature = "wgpu_backend")]
+                        if prev_doc.frame.must_be_drawn() && self.is_wgpu_only() {
+                            // Apply pending texture cache updates first.
+                            self.update_texture_cache_wgpu();
+
+                            // Apply pending GPU cache updates.
+                            let pending = std::mem::take(&mut self.pending_gpu_cache_updates);
+                            if !pending.is_empty() {
+                                self.wgpu_gpu_cache.apply_updates(&pending);
+                                if let Some(ref dev) = self.wgpu_device {
+                                    self.wgpu_gpu_cache.upload(dev);
+                                }
+                            }
+                            let gpu_cache_view = self.wgpu_gpu_cache.texture_view();
+
+                            // Upload frame data and draw passes for the previous doc.
+                            if let Some(dev) = self.wgpu_device.as_ref() {
+                                Self::upload_frame_data_textures(
+                                    dev,
+                                    &mut self.wgpu_frame_data,
+                                    &prev_doc.frame,
+                                );
+                            }
+
+                            // Temporarily insert so draw_passes_wgpu can find it.
+                            self.active_documents.insert(document_id, prev_doc);
+                            if let Some(ft) = self.wgpu_frame_data.take() {
+                                self.draw_passes_wgpu(
+                                    &document_id,
+                                    &ft,
+                                    gpu_cache_view.as_ref(),
+                                );
+                                self.wgpu_frame_data = Some(ft);
+                            }
+                            if let Some(ref mut dev) = self.wgpu_device {
+                                dev.flush_encoder();
+                            }
+                            prev_doc = self.active_documents.remove(&document_id).unwrap();
                         }
 
                         Some(prev_doc.frame.allocator_memory)
@@ -4370,13 +4571,13 @@ impl Renderer {
                         }
                     }
                 }
-                ResultMsg::RenderDocumentOffscreen(_document_id, mut _offscreen_doc, _resources) => {
-                    #[cfg(feature = "gl_backend")]
-                    {
-                        if self.is_wgpu_only() {
-                            continue;
-                        }
+                ResultMsg::RenderDocumentOffscreen(_document_id, mut _offscreen_doc, mut _resources) => {
+                    // Consume texture updates (shared between GL / wgpu paths).
+                    self.pending_texture_cache_updates |= !_resources.texture_updates.updates.is_empty();
+                    self.pending_texture_updates.push(_resources.texture_updates);
 
+                    #[cfg(feature = "gl_backend")]
+                    if !self.is_wgpu_only() {
                         let prev_doc = self.active_documents.remove(&_document_id);
                         if let Some(mut prev_doc) = prev_doc {
                             if prev_doc.frame.must_be_drawn() {
@@ -4392,8 +4593,6 @@ impl Renderer {
                             self.active_documents.insert(_document_id, prev_doc);
                         }
 
-                        self.pending_texture_cache_updates |= !_resources.texture_updates.updates.is_empty();
-                        self.pending_texture_updates.push(_resources.texture_updates);
                         self.pending_native_surface_updates.extend(_resources.native_surface_updates);
 
                         self.render_impl(
@@ -4403,8 +4602,6 @@ impl Renderer {
                             0,
                         ).unwrap();
                     }
-                    #[cfg(not(feature = "gl_backend"))]
-                    { /* skip offscreen rendering in wgpu-only mode */ }
                 }
                 ResultMsg::AppendNotificationRequests(mut notifications) => {
                     // We need to know specifically if there are any pending
@@ -4572,6 +4769,10 @@ impl Renderer {
                             info.height,
                             info.format,
                         );
+                        // Clear newly created textures to transparent black.
+                        // wgpu textures have undefined content after creation;
+                        // the GL path similarly clears via glClear on first bind.
+                        wgpu_dev.clear_texture(&texture, [0.0, 0.0, 0.0, 0.0]);
                         self.wgpu_texture_cache.insert(allocation.id, texture);
                     }
                 }

@@ -37,4 +37,5 @@ pub trait GpuDevice {
 mod wgpu_device;
 #[cfg(feature = "wgpu_backend")]
 pub use self::wgpu_device::{WgpuDevice, WgpuTexture, WgpuBlendMode, WgpuDepthState, WgpuShaderVariant, TextureBindings};
+#[cfg(feature = "wgpu_backend")]
 pub(crate) use self::wgpu_device::as_byte_slice;

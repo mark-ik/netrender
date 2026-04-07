@@ -9,6 +9,7 @@
 #  include <dcomp.h>
 #  include <assert.h>
 #  include <dxgi.h>
+#  pragma comment(lib, "dcomp.lib")
 
 #  include <stdio.h>
 

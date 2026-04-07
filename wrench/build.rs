@@ -32,4 +32,21 @@ fn main() {
         .cpp(true)
         .file("src/composite.cpp")
         .compile("wr_composite");
+
+    if target.contains("windows") {
+        // Find Windows SDK lib path for dcomp.lib (DirectComposition)
+        let sdk_lib_paths = [
+            r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\x64",
+            r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22621.0\um\x64",
+            r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.22000.0\um\x64",
+            r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.19041.0\um\x64",
+        ];
+        for path in sdk_lib_paths.iter() {
+            if std::path::Path::new(path).exists() {
+                println!("cargo:rustc-link-search=native={}", path);
+                break;
+            }
+        }
+        println!("cargo:rustc-link-lib=dcomp");
+    }
 }

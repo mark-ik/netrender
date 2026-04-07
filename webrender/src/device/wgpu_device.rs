@@ -282,8 +282,9 @@ impl WgpuShaderVariant {
             | Self::PsQuadTextured | Self::PsQuadGradient
             | Self::PsQuadRadialGradient | Self::PsQuadConicGradient
             | Self::PsSplitComposite => Some(PRIMITIVE_INSTANCE_LAYOUT),
+            Self::PsClear => Some(CLEAR_INSTANCE_LAYOUT),
             // Debug and utility shaders use a single vertex buffer
-            Self::DebugColor | Self::DebugFont | Self::PsClear | Self::PsCopy => None,
+            Self::DebugColor | Self::DebugFont | Self::PsCopy => None,
         }
     }
 }
@@ -2530,6 +2531,14 @@ const BLUR_INSTANCE_LAYOUT: &[(&str, wgpu::VertexFormat)] = &[
     ("aBlurDirection",         wgpu::VertexFormat::Sint32),    // 4
     ("aBlurEdgeMode",          wgpu::VertexFormat::Sint32),    // 4
     ("aBlurParams",            wgpu::VertexFormat::Float32x3), // 12
+];
+
+/// Instance layout for `ClearInstance` (gpu_types.rs).
+/// Used by `ps_clear`.
+/// Total stride: 32 bytes.
+const CLEAR_INSTANCE_LAYOUT: &[(&str, wgpu::VertexFormat)] = &[
+    ("aRect",  wgpu::VertexFormat::Float32x4), // 16
+    ("aColor", wgpu::VertexFormat::Float32x4), // 16
 ];
 
 /// Instance layout for `ScalingInstance` (gpu_types.rs).
