@@ -1,0 +1,86 @@
+warning: C:\Users\mark_\Code\source\repos\webrender\wrench\Cargo.toml: file `C:\Users\mark_\Code\source\repos\webrender\wrench\src\main.rs` found to be present in multiple build targets:
+  * `lib` target `wrench`
+  * `bin` target `wrench`
+warning: C:\Users\mark_\Code\source\repos\webrender\swgl\Cargo.toml: no edition set: defaulting to the 2015 edition while the latest is 2024
+warning: output filename collision.
+The bin target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)` has the same output filename as the lib target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)`.
+Colliding filename is: C:\Users\mark_\Code\source\repos\webrender\target\debug\deps\wrench.pdb
+The targets should have unique names.
+Consider changing their names to be unique or compiling them separately.
+This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+warning: webrender@0.68.0: WGSL translation: 63/63 variants succeeded
+warning: unused import: `mem`
+  --> webrender\src\renderer\vertex.rs:10:32
+   |
+10 | use std::{marker::PhantomData, mem, num::NonZeroUsize, ops};
+   |                                ^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `tile_idx`
+    --> webrender\src\renderer\mod.rs:1672:14
+     |
+1672 |         for (tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
+     |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tile_idx`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `has_opaque`
+    --> webrender\src\renderer\mod.rs:3161:33
+     |
+3161 | ...                   let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_has_opaque`
+
+warning: field `0` is never read
+   --> webrender\src\device\query_gl.rs:430:25
+    |
+430 | pub struct GpuTimeQuery(GpuMarker);
+    |            ------------ ^^^^^^^^^
+    |            |
+    |            field in this struct
+    |
+    = help: consider removing this field
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `get_texture` is never used
+   --> webrender\src\renderer\gpu_cache.rs:240:12
+    |
+181 | impl GpuCacheTexture {
+    | -------------------- method in this implementation
+...
+240 |     pub fn get_texture(&self) -> &Texture {
+    |            ^^^^^^^^^^^
+
+warning: unused `GpuSampleQuery` that must be used
+   --> webrender\src\device\query_gl.rs:346:9
+    |
+346 |         self.frames[self.next_frame].start_sampler(tag);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+346 |         let _ = self.frames[self.next_frame].start_sampler(tag);
+    |         +++++++
+
+warning: `webrender` (lib) generated 6 warnings (run `cargo fix --lib -p webrender` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.99s
+warning: the following packages contain code that will be rejected by a future version of Rust: lalrpop v0.19.8
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `C:\Users\mark_\Code\source\repos\webrender\target\debug\wrench.exe --wgpu reftest reftests/gradient`
+[WARN  wgpu_hal::vulkan::instance] InstanceFlags::VALIDATION requested, but unable to find layer: VK_LAYER_KHRONOS_validation
+[WARN  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_read_data_files_in_registry: Registry lookup failed to get layer manifest files.
+[WARN  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x16c244893d0, name: ?)
+wgpu backend initialized
+hidpi factor: 2
+Shader override path: None
+REFTEST reftests\gradient\gradient_cache_clamp.yaml == reftests\gradient\gradient_cache_clamp_ref.yaml
+[WARN  webrender::renderer] wgpu: processing 3 allocations, 0 copies, 1 updates; wgpu_texture_cache has 0 entries
+[WARN  webrender::renderer]   Alloc(CacheTextureId(1), 1024x512)
+[WARN  webrender::renderer]   Alloc(CacheTextureId(2), 1024x512)
+[WARN  webrender::renderer]   Alloc(CacheTextureId(3), 2048x2048)
+[WARN  webrender::renderer] wgpu: texture_cache target CacheTextureId(3) (2048x2048) has 0 linear_grads, 3 fast_grads, 0 clears, cached=true
+Crop from 3840x2160 to (3840, 2160)
+Crop from 3840x2160 to (3840, 2160)
+REFTEST INFO | 1 passing, 0 failing

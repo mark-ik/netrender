@@ -1,0 +1,83 @@
+warning: C:\Users\mark_\Code\source\repos\webrender\wrench\Cargo.toml: file `C:\Users\mark_\Code\source\repos\webrender\wrench\src\main.rs` found to be present in multiple build targets:
+  * `lib` target `wrench`
+  * `bin` target `wrench`
+warning: C:\Users\mark_\Code\source\repos\webrender\swgl\Cargo.toml: no edition set: defaulting to the 2015 edition while the latest is 2024
+warning: output filename collision.
+The bin target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)` has the same output filename as the lib target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)`.
+Colliding filename is: C:\t\graphshell-target\debug\deps\wrench.pdb
+The targets should have unique names.
+Consider changing their names to be unique or compiling them separately.
+This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+   Compiling memchr v2.7.4
+warning: webrender@0.68.0: WGSL translation: 63/63 variants succeeded
+warning: unused import: `mem`
+  --> webrender\src\renderer\vertex.rs:10:32
+   |
+10 | use std::{marker::PhantomData, mem, num::NonZeroUsize, ops};
+   |                                ^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `tile_idx`
+    --> webrender\src\renderer\mod.rs:1672:14
+     |
+1672 |         for (tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
+     |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tile_idx`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `has_opaque`
+    --> webrender\src\renderer\mod.rs:3142:33
+     |
+3142 | ...                   let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_has_opaque`
+
+warning: unused variable: `tile_clear_color`
+    --> webrender\src\renderer\mod.rs:3335:21
+     |
+3335 |                 let tile_clear_color: wgpu::Color = match picture_target.clear_color {
+     |                     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tile_clear_color`
+
+warning: field `0` is never read
+   --> webrender\src\device\query_gl.rs:430:25
+    |
+430 | pub struct GpuTimeQuery(GpuMarker);
+    |            ------------ ^^^^^^^^^
+    |            |
+    |            field in this struct
+    |
+    = help: consider removing this field
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `get_texture` is never used
+   --> webrender\src\renderer\gpu_cache.rs:240:12
+    |
+181 | impl GpuCacheTexture {
+    | -------------------- method in this implementation
+...
+240 |     pub fn get_texture(&self) -> &Texture {
+    |            ^^^^^^^^^^^
+
+warning: unused `GpuSampleQuery` that must be used
+   --> webrender\src\device\query_gl.rs:346:9
+    |
+346 |         self.frames[self.next_frame].start_sampler(tag);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+346 |         let _ = self.frames[self.next_frame].start_sampler(tag);
+    |         +++++++
+
+warning: `webrender` (lib) generated 7 warnings (run `cargo fix --lib -p webrender` to apply 1 suggestion)
+   Compiling aho-corasick v1.1.3
+   Compiling nom v7.1.1
+   Compiling regex-automata v0.4.8
+   Compiling cexpr v0.6.0
+   Compiling regex v1.11.1
+   Compiling lalrpop-util v0.19.8
+   Compiling bindgen v0.69.5
+   Compiling lalrpop v0.19.8
+   Compiling mozangle v0.5.2
+   Compiling glsl-lang v0.2.1

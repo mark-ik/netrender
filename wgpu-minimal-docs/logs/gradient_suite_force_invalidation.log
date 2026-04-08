@@ -1,0 +1,8 @@
+error: Found argument '--filter' which wasn't expected, or isn't valid in this context
+
+	If you tried to supply `--filter` as a value rather than a flag, use `-- --filter`
+
+USAGE:
+    wrench.exe reftest <REFTEST>
+
+For more information try --help

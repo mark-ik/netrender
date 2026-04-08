@@ -1,0 +1,720 @@
+warning: C:\Users\mark_\Code\source\repos\webrender\swgl\Cargo.toml: no edition set: defaulting to the 2015 edition while the latest is 2024
+warning: C:\Users\mark_\Code\source\repos\webrender\wrench\Cargo.toml: file `C:\Users\mark_\Code\source\repos\webrender\wrench\src\main.rs` found to be present in multiple build targets:
+  * `lib` target `wrench`
+  * `bin` target `wrench`
+warning: output filename collision.
+The bin target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)` has the same output filename as the lib target `wrench` in package `wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)`.
+Colliding filename is: C:\t\graphshell-target\debug\deps\wrench.pdb
+The targets should have unique names.
+Consider changing their names to be unique or compiling them separately.
+This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+   Compiling naga v26.0.0
+   Compiling glslopt v0.1.11
+   Compiling glsl-lang v0.2.1
+   Compiling mozangle v0.5.2
+   Compiling wgpu-hal v26.0.6
+   Compiling webrender_build v0.68.0 (C:\Users\mark_\Code\source\repos\webrender\webrender_build)
+   Compiling webrender v0.68.0 (C:\Users\mark_\Code\source\repos\webrender\webrender)
+   Compiling wgpu-core-deps-windows-linux-android v26.0.0
+   Compiling wgpu-core v26.0.1
+   Compiling wgpu v26.0.1
+warning: webrender@0.68.0: WGSL translation: 63/63 variants succeeded
+warning: unused import: `mem`
+  --> webrender\src\renderer\vertex.rs:10:32
+   |
+10 | use std::{marker::PhantomData, mem, num::NonZeroUsize, ops};
+   |                                ^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: unused variable: `tile_idx`
+    --> webrender\src\renderer\mod.rs:1672:14
+     |
+1672 |         for (tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
+     |              ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tile_idx`
+     |
+     = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `has_opaque`
+    --> webrender\src\renderer\mod.rs:3142:33
+     |
+3142 | ...                   let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+     |                           ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_has_opaque`
+
+warning: unused variable: `tile_clear_color`
+    --> webrender\src\renderer\mod.rs:3335:21
+     |
+3335 |                 let tile_clear_color: wgpu::Color = match picture_target.clear_color {
+     |                     ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tile_clear_color`
+
+warning: field `0` is never read
+   --> webrender\src\device\query_gl.rs:430:25
+    |
+430 | pub struct GpuTimeQuery(GpuMarker);
+    |            ------------ ^^^^^^^^^
+    |            |
+    |            field in this struct
+    |
+    = help: consider removing this field
+    = note: `#[warn(dead_code)]` on by default
+
+warning: method `get_texture` is never used
+   --> webrender\src\renderer\gpu_cache.rs:240:12
+    |
+181 | impl GpuCacheTexture {
+    | -------------------- method in this implementation
+...
+240 |     pub fn get_texture(&self) -> &Texture {
+    |            ^^^^^^^^^^^
+
+warning: unused `GpuSampleQuery` that must be used
+   --> webrender\src\device\query_gl.rs:346:9
+    |
+346 |         self.frames[self.next_frame].start_sampler(tag);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_must_use)]` on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+346 |         let _ = self.frames[self.next_frame].start_sampler(tag);
+    |         +++++++
+
+warning: `webrender` (lib) generated 7 warnings (run `cargo fix --lib -p webrender` to apply 1 suggestion)
+   Compiling wrench v0.3.0 (C:\Users\mark_\Code\source\repos\webrender\wrench)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 59s
+warning: the following packages contain code that will be rejected by a future version of Rust: lalrpop v0.19.8
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `C:\t\graphshell-target\debug\wrench.exe --wgpu reftest`
+[WARN  wgpu_hal::vulkan::instance] InstanceFlags::VALIDATION requested, but unable to find layer: VK_LAYER_KHRONOS_validation
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	No valid vk_loader_settings.json file found, no loader settings will be active
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_app_package_manifest_path: Failed to find mapping layers packages by family name
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Checking for Layer Manifest files in Registry at HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_add_json_entry: Located json file "C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\amd-vulkan64.json" from PnP registry: E
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_add_json_entry: Located json file "C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json" from PnP registry: E
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Located json file "C:\Program Files (x86)\Steam\SteamOverlayVulkanLayer64.json" from registry "HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Located json file "C:\Program Files (x86)\Steam\SteamFossilizeVulkanLayer64.json" from registry "HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ImplicitLayers"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found manifest file C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\amd-vulkan64.json (file version 1.0.0)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found manifest file C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json (file version 1.0.1)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found manifest file C:\Program Files (x86)\Steam\SteamOverlayVulkanLayer64.json (file version 1.0.0)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found manifest file C:\Program Files (x86)\Steam\SteamFossilizeVulkanLayer64.json (file version 1.0.0)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Checking for Layer Manifest files in Registry at HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\ExplicitLayers
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_files: opening device PCI\VEN_1002&DEV_15BF&SUBSYS_180D1043&REV_C1\4&98c338a&0&0041
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_entry: Device ID(2) Does not contain a value for "VulkanExplicitLayers"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_files: Opening child device 4 - SWD\DRIVERENUM\AMDUWP&5&1F08C561&0
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_entry: Device ID(4) Does not contain a value for "VulkanExplicitLayers"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_files: opening device PCI\VEN_10DE&DEV_28E0&SUBSYS_180D1043&REV_A1\4&2b5a5da1&0&0009
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_entry: Device ID(1) Does not contain a value for "VulkanExplicitLayers"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_files: Opening child device 5 - DISPLAY\TMX1401\5&BA0A908&0&UID4355
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_device_registry_files: found no registry files
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found no registry files in HKEY_CURRENT_USER\SOFTWARE\Khronos\Vulkan\ExplicitLayers
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[WARN  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_read_data_files_in_registry: Registry lookup failed to get layer manifest files.
+[WARN  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_get_app_package_manifest_path: Failed to find mapping layers packages by family name
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Checking for Driver Manifest files in Registry at HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_add_json_entry: Located json file "C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\amd-vulkan64.json" from PnP registry: E
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	windows_add_json_entry: Located json file "C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json" from PnP registry: E
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found no registry files in HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found ICD manifest file C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\amd-vulkan64.json, version 1.0.0
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Found ICD manifest file C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json, version 1.0.1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Insert instance layer "VK_LAYER_NV_present" (C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Insert instance layer "VK_LAYER_NV_optimus" (C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Insert instance layer "VK_LAYER_AMD_switchable_graphics" (C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\.\amdvlk64.dll)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	vkCreateInstance layer callstack setup to:
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Application>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Loader>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   VK_LAYER_AMD_switchable_graphics
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Type: Implicit
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Enabled By: Implicit Layer
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	               Disable Env Var:  DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Manifest: C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\amd-vulkan64.json
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Library:  C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\.\amdvlk64.dll
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   VK_LAYER_NV_optimus
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Type: Implicit
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Enabled By: Implicit Layer
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	               Disable Env Var:  DISABLE_LAYER_NV_OPTIMUS_1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Manifest: C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Library:  C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   VK_LAYER_NV_present
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Type: Implicit
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Enabled By: Implicit Layer
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	               Disable Env Var:  DISABLE_LAYER_NV_PRESENT_1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Manifest: C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Library:  C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Drivers>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] Enabling debug utils
+wgpu backend initialized
+hidpi factor: 2
+Shader override path: None
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Inserted device layer "VK_LAYER_NV_present" (C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Inserted device layer "VK_LAYER_NV_optimus" (C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll)
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	Failed to find vkGetDeviceProcAddr in layer "C:\WINDOWS\System32\DriverStore\FileRepository\u0397506.inf_amd64_a5675dd14283182f\B397301\.\amdvlk64.dll"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	vkCreateDevice layer callstack setup to:
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Application>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Loader>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   VK_LAYER_NV_optimus
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Type: Implicit
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Enabled By: Implicit Layer
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	               Disable Env Var:  DISABLE_LAYER_NV_OPTIMUS_1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Manifest: C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Library:  C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   VK_LAYER_NV_present
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Type: Implicit
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Enabled By: Implicit Layer
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	               Disable Env Var:  DISABLE_LAYER_NV_PRESENT_1
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Manifest: C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\nv-vk64.json
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	           Library:  C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	     ||
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	   <Device>
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  wgpu_hal::vulkan::instance] GENERAL [Loader Message (0x0)]
+    	       Using "NVIDIA GeForce RTX 4060 Laptop GPU" with driver: "C:\WINDOWS\System32\DriverStore\FileRepository\nvami.inf_amd64_171f1746818db7fd\.\nvoglv64.dll"
+[INFO  wgpu_hal::vulkan::instance] 	objects: (type: INSTANCE, hndl: 0x1f41d7cff60, name: ?)
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("antialias_brush")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_transform")
+[INFO  naga::back::spv::writer] Skip function Some("decode_instance_attributes")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_prim_header")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("get_image_quad_uv")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("antialias_brush")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_data")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_render_task_rect")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_picture_task")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_clip_area")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("antialias_brush")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_transform")
+[INFO  naga::back::spv::writer] Skip function Some("decode_instance_attributes")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_prim_header")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_8_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_3_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_4_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_image_source_extra")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_transform")
+[INFO  naga::back::spv::writer] Skip function Some("decode_instance_attributes")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_prim_header")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("get_image_quad_uv")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_2f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_3f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_4f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_5f")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_vertex")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_transform")
+[INFO  naga::back::spv::writer] Skip function Some("decode_instance_attributes")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_prim_header")
+[INFO  naga::back::spv::writer] Skip function Some("clip_and_init_antialiasing")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("write_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_2_")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_direct")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_cache_1_")
+[INFO  naga::back::spv::writer] Skip function Some("has_valid_transform_bounds")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("rectangle_aa_rough_fragment")
+[INFO  naga::back::spv::writer] Skip function Some("do_clip")
+[INFO  naga::back::spv::writer] Skip function Some("fetch_from_gpu_buffer_1i")
+[INFO  webrender::renderer::init] WR (wgpu) FrameBuilderConfig { default_font_render_mode: Alpha, dual_source_blending_is_supported: false, testing: true, gpu_supports_fast_clears: false, gpu_supports_advanced_blend: false, advanced_blend_is_coherent: false, gpu_supports_render_target_partial_update: true, external_images_require_copy: false, batch_lookback_count: 10, background_color: Some(ColorF { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }), compositor_kind: Draw { max_partial_present_rects: 0, draw_previous_partial_present_regions: false }, tile_size_override: None, max_surface_override: None, max_depth_ids: 4194304, max_target_size: 8196, force_invalidation: false, is_software: false, low_quality_pinch_zoom: false, max_shared_surface_size: 2048, enable_dithering: false, precise_linear_gradients: false, precise_radial_gradients: false, precise_conic_gradients: false }
+
+thread 'main' panicked at wrench\src\reftest.rs:341:53:
+couldn't open manifest: reftests/reftest.list
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: process didn't exit successfully: `C:\t\graphshell-target\debug\wrench.exe --wgpu reftest` (exit code: 0xc0000409, STATUS_STACK_BUFFER_OVERRUN)
