@@ -983,7 +983,7 @@ impl<'a> ReftestHarness<'a> {
         let pixels = self.wrench.renderer.read_pixels_rgba8(rect);
         self.window.swap_buffers();
 
-        let write_debug_images = false;
+        let write_debug_images = true;
         if write_debug_images {
             let debug_path = filename.with_extension("yaml.png");
             save_flipped(debug_path, pixels.clone(), size);

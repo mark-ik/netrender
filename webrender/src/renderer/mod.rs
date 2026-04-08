@@ -2338,6 +2338,12 @@ impl Renderer {
                 let target_wgpu = match self.wgpu_texture_cache.get(&target.texture_id) {
                     Some(t) => t,
                     None => {
+                        warn!("wgpu: texture_cache target {:?} NOT FOUND — skipping {} clears, {} linear_grads, {} fast_grads, {} alpha batches",
+                              target.texture_id,
+                              target.clears.len(),
+                              target.linear_gradients.len(),
+                              target.fast_linear_gradients.len(),
+                              target.alpha_batch_containers.len());
                         batches_skipped += 1;
                         continue;
                     }
@@ -2346,6 +2352,14 @@ impl Renderer {
                 let target_fmt = target_wgpu.format();
                 let target_w = target_wgpu.width;
                 let target_h = target_wgpu.height;
+                if !target.linear_gradients.is_empty() || !target.fast_linear_gradients.is_empty() {
+                    warn!("wgpu: texture_cache target {:?} ({}x{}) has {} linear_grads, {} fast_grads, {} clears, cached={}",
+                          target.texture_id, target_w, target_h,
+                          target.linear_gradients.len(),
+                          target.fast_linear_gradients.len(),
+                          target.clears.len(),
+                          target.cached);
+                }
                 // All draws to this texture cache target share a single render pass.
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
@@ -2721,7 +2735,12 @@ impl Renderer {
                                     let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
                                         match $batch.key.textures.input.colors[i] {
                                             TextureSource::TextureCache(id, _swizzle) => {
-                                                self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
+                                                let tex = self.wgpu_texture_cache.get(&id).map(|t| t.create_view());
+                                                if tex.is_none() {
+                                                    warn!("wgpu: alpha batch color[{}] texture {:?} NOT FOUND in wgpu_texture_cache (batch kind={:?}, {} instances)",
+                                                          i, id, $batch.key.kind, $batch.instances.len());
+                                                }
+                                                tex
                                             }
                                             _ => None,
                                         }
@@ -3611,6 +3630,17 @@ impl Renderer {
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 wgpu_dev.return_encoder(encoder);
 
+            }
+
+            // Textures freed at the end of this pass can be re-acquired from
+            // the pool with the same CacheTextureId in a later pass.  Remove
+            // them from rendered_textures now so the next allocation of that
+            // ID starts with LoadOp::Clear rather than LoadOp::Load.
+            // Without this, BlendMode::PremultipliedAlpha draws (e.g. opacity
+            // filter) composite over stale content from an earlier pass that
+            // used the same recycled texture ID.
+            for freed_id in &pass.textures_to_invalidate {
+                rendered_textures.remove(freed_id);
             }
         }
 
@@ -4751,6 +4781,20 @@ impl Renderer {
         };
 
         for update_list in pending_texture_updates.drain(..) {
+            if !update_list.allocations.is_empty() {
+                warn!("wgpu: processing {} allocations, {} copies, {} updates; wgpu_texture_cache has {} entries",
+                      update_list.allocations.len(),
+                      update_list.copies.len(),
+                      update_list.updates.len(),
+                      self.wgpu_texture_cache.len());
+                for allocation in &update_list.allocations {
+                    match allocation.kind {
+                        TextureCacheAllocationKind::Free => warn!("  Free({:?})", allocation.id),
+                        TextureCacheAllocationKind::Alloc(ref info) => warn!("  Alloc({:?}, {}x{})", allocation.id, info.width, info.height),
+                        TextureCacheAllocationKind::Reset(ref info) => warn!("  Reset({:?}, {}x{})", allocation.id, info.width, info.height),
+                    }
+                }
+            }
             // Process allocations: create or free wgpu textures.
             for allocation in &update_list.allocations {
                 match allocation.kind {

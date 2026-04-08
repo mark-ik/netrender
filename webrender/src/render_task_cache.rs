@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 
+use log::warn;
 use api::{DirtyRect, ImageDescriptor, ImageDescriptorFlags, SnapshotImageKey};
 use api::units::*;
 use crate::border::BorderSegmentCacheKey;
@@ -116,23 +117,13 @@ impl RenderTaskCache {
     ) {
         self.frame_id += 1;
         profile_scope!("begin_frame");
-        // Drop any items from the cache that have been
-        // evicted from the texture cache.
-        //
-        // This isn't actually necessary for the texture
-        // cache to be able to evict old render tasks.
-        // It will evict render tasks as required, since
-        // the access time in the texture cache entry will
-        // be stale if this task hasn't been requested
-        // for a while.
-        //
-        // Nonetheless, we should remove stale entries
-        // from here so that this hash map doesn't
-        // grow indefinitely!
+        let before_count = self.map.len();
         let cache_entries = &mut self.cache_entries;
         let frame_id = self.frame_id;
+        let mut dropped_not_allocated = 0u32;
+        let mut dropped_old = 0u32;
 
-        self.map.retain(|_, handle| {
+        self.map.retain(|key, handle| {
             let mut retain = texture_cache.is_allocated(
                 &cache_entries.get(handle).handle,
             );
@@ -141,16 +132,30 @@ impl RenderTaskCache {
                 if frame_id > entry.frame_id + 10 {
                     texture_cache.evict_handle(&entry.handle);
                     retain = false;
+                    dropped_old += 1;
                 }
+            } else {
+                dropped_not_allocated += 1;
             }
 
             if !retain {
+                if matches!(key.kind, RenderTaskCacheKeyKind::FastLinearGradient(..) | RenderTaskCacheKeyKind::LinearGradient(..)) {
+                    let is_alloc = texture_cache.is_allocated(&cache_entries.get(handle).handle);
+                    warn!("render_task_cache: dropping gradient entry size={:?} kind={:?} (still_allocated={}, frame_age={})",
+                          key.size, key.kind, is_alloc, frame_id.saturating_sub(cache_entries.get(handle).frame_id));
+                }
                 let handle = mem::replace(handle, FreeListHandle::invalid());
                 cache_entries.free(handle);
             }
 
             retain
         });
+
+        let after_count = self.map.len();
+        if before_count > 0 || after_count > 0 {
+            warn!("render_task_cache::begin_frame: {} entries before, {} after (dropped {} not-allocated, {} old)",
+                  before_count, after_count, dropped_not_allocated, dropped_old);
+        }
 
         // Clear out the render task ID of any remaining cache entries that were drawn
         // on the previous frame, so we don't accidentally hook up stale dependencies
@@ -291,10 +296,13 @@ impl RenderTaskCache {
     ) -> (RenderTaskId, bool) {
         let frame_id = self.frame_id;
         let size = key.size;
+        let is_gradient = matches!(key.kind, RenderTaskCacheKeyKind::FastLinearGradient(..) | RenderTaskCacheKeyKind::LinearGradient(..));
         // Get the texture cache handle for this cache key,
         // or create one.
         let cache_entries = &mut self.cache_entries;
+        let mut is_new_entry = false;
         let entry_handle = self.map.entry(key).or_insert_with(|| {
+            is_new_entry = true;
             let entry = RenderTaskCacheEntry {
                 handle: TextureCacheHandle::invalid(),
                 user_data: None,
@@ -309,7 +317,12 @@ impl RenderTaskCache {
         cache_entry.frame_id = self.frame_id;
 
         // Check if this texture cache handle is valid.
-        if texture_cache.request(&cache_entry.handle, gpu_cache) {
+        let needs_render = texture_cache.request(&cache_entry.handle, gpu_cache);
+        if is_gradient {
+            warn!("render_task_cache::request gradient size={:?} new_entry={} needs_render={} has_task_id={}",
+                  size, is_new_entry, needs_render, cache_entry.render_task_id.is_some());
+        }
+        if needs_render {
             // Invoke user closure to get render task chain
             // to draw this into the texture cache.
             let render_task_id = f(rg_builder, gpu_buffer_builder, gpu_cache);
@@ -334,9 +347,15 @@ impl RenderTaskCache {
         }
 
         if let Some(render_task_id) = cache_entry.render_task_id {
+            if is_gradient {
+                warn!("  → rendered_this_frame (task_id={:?})", render_task_id);
+            }
             return (render_task_id, true);
         }
 
+        if is_gradient {
+            warn!("  → cache HIT (using CachedTask placeholder)");
+        }
         let target_kind = cache_entry.target_kind;
         let mut task = RenderTask::new(
             RenderTaskLocation::CacheRequest { size, },
