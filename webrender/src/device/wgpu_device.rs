@@ -33,7 +33,10 @@ pub(crate) fn as_byte_slice<T>(data: &[T]) -> &[u8] {
 
 /// A wgpu-backed texture handle.
 pub struct WgpuTexture {
-    pub(crate) texture: wgpu::Texture,
+    /// The underlying wgpu texture handle. Public so embedders using the
+    /// shared-device path can reference the texture directly (e.g. to sample
+    /// the compositor output in their own render pass).
+    pub texture: wgpu::Texture,
     format: wgpu::TextureFormat,
     pub width: u32,
     pub height: u32,
