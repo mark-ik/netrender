@@ -574,28 +574,18 @@ fn create_constant_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer
 }
 
 impl WgpuDevice {
-    /// Create a headless device (no surface/window required).
-    pub fn new_headless() -> Option<Self> {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::None,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }))
-        .ok()?;
-
-        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
-        let required_features = adapter.features() & wanted;
-
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("WebRender wgpu device"),
-                required_features,
-                ..Default::default()
-            },
-        ))
-        .ok()?;
-
+    /// Common GPU resource initialisation shared by all constructors.
+    ///
+    /// Takes an already-created device + queue (and optional surface state) and
+    /// builds all the pipelines, bind groups, samplers, and constant buffers
+    /// that WebRender needs.
+    fn init_gpu_resources(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        features: wgpu::Features,
+        surface: Option<wgpu::Surface<'static>>,
+        surface_config: Option<wgpu::SurfaceConfiguration>,
+    ) -> Self {
         let bind_group_layout_0 = create_resource_bind_group_layout(&device);
         let bind_group_layout_1 = create_sampler_bind_group_layout(&device);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -622,10 +612,10 @@ impl WgpuDevice {
         let (shaders, pipelines) = create_all_pipelines_threaded(&device, &pipeline_layout);
         let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
-        Some(WgpuDevice {
+        WgpuDevice {
             device,
             queue,
-            features: required_features,
+            features,
             frame_id: GpuFrameId::new(0),
             shaders,
             pipelines,
@@ -637,13 +627,38 @@ impl WgpuDevice {
             dummy_texture_i32,
             max_depth_ids: 1 << 22,
             depth_textures: HashMap::new(),
-            surface: None,
-            surface_config: None,
+            surface,
+            surface_config,
             pending_encoder: None,
             unit_quad_vb,
             unit_quad_ib,
             mali_workaround_buf,
-        })
+        }
+    }
+
+    /// Create a headless device (no surface/window required).
+    pub fn new_headless() -> Option<Self> {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::None,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .ok()?;
+
+        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+        let required_features = adapter.features() & wanted;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("WebRender wgpu device"),
+                required_features,
+                ..Default::default()
+            },
+        ))
+        .ok()?;
+
+        Some(Self::init_gpu_resources(device, queue, required_features, None, None))
     }
 
     /// Create a device with a window surface for presentation.
@@ -696,54 +711,23 @@ impl WgpuDevice {
         };
         surface.configure(&device, &surface_config);
 
-        let bind_group_layout_0 = create_resource_bind_group_layout(&device);
-        let bind_group_layout_1 = create_sampler_bind_group_layout(&device);
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("WR pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout_0, &bind_group_layout_1],
-            push_constant_ranges: &[],
-        });
+        Some(Self::init_gpu_resources(device, queue, required_features, Some(surface), Some(surface_config)))
+    }
 
-        let global_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("global_sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        device.on_uncaptured_error(Box::new(|err| {
-            log::warn!("wgpu uncaptured error: {}", err);
-        }));
-
-        let dummy_texture_f32 =
-            create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
-        let dummy_texture_i32 =
-            create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
-        let (shaders, pipelines) = create_all_pipelines_threaded(&device, &pipeline_layout);
-        let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
-
-        Some(WgpuDevice {
-            device,
-            queue,
-            features: required_features,
-            frame_id: GpuFrameId::new(0),
-            shaders,
-            pipelines,
-            pipeline_layout,
-            bind_group_layout_0,
-            bind_group_layout_1,
-            global_sampler,
-            dummy_texture_f32,
-            dummy_texture_i32,
-            max_depth_ids: 1 << 22,
-            depth_textures: HashMap::new(),
-            surface: Some(surface),
-            surface_config: Some(surface_config),
-            pending_encoder: None,
-            unit_quad_vb,
-            unit_quad_ib,
-            mali_workaround_buf,
-        })
+    /// Create a WgpuDevice from an externally-owned device and queue.
+    ///
+    /// Use this when the host application (e.g. an egui app) already owns a
+    /// `wgpu::Device` and `wgpu::Queue` and wants WebRender to render using the
+    /// same GPU context. The caller clones its device/queue handles and passes
+    /// them here; wgpu's internal Arc ensures both sides share the same
+    /// underlying GPU resources.
+    ///
+    /// The resulting device operates in headless mode (no surface). The host is
+    /// responsible for presentation — WebRender renders to offscreen textures
+    /// that the host can composite into its own render pass.
+    pub fn from_shared_device(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let features = device.features();
+        Self::init_gpu_resources(device, queue, features, None, None)
     }
 
     /// Returns true if this device has a presentation surface.

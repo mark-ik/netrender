@@ -139,6 +139,17 @@ pub enum RendererBackend {
         /// Initial framebuffer height (ignored if surface is None).
         height: u32,
     },
+    /// Use a wgpu device+queue owned by the host application.
+    ///
+    /// The host clones its `wgpu::Device` and `wgpu::Queue` and passes them
+    /// here. WebRender will create its pipelines and resources on the shared
+    /// GPU context but will NOT own a surface — it renders to offscreen
+    /// textures that the host can composite.
+    #[cfg(feature = "wgpu_backend")]
+    WgpuShared {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    },
 }
 
 impl RendererBackend {
@@ -174,7 +185,7 @@ impl RendererBackend {
                 options.panic_on_gl_error,
             )),
             #[cfg(feature = "wgpu_backend")]
-            RendererBackend::Wgpu { .. } => Err(RendererError::UnsupportedBackend(
+            RendererBackend::Wgpu { .. } | RendererBackend::WgpuShared { .. } => Err(RendererError::UnsupportedBackend(
                 "wgpu uses create_webrender_instance_wgpu, not the GL device path",
             )),
         }
@@ -401,7 +412,12 @@ pub fn create_webrender_instance_with_backend(
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
     #[cfg(feature = "wgpu_backend")]
     if let RendererBackend::Wgpu { instance, surface, width, height } = backend {
-        return create_webrender_instance_wgpu(notifier, options, instance, surface, width, height);
+        return create_webrender_instance_wgpu(notifier, options, WgpuInit::CreateDevice { instance, surface, width, height });
+    }
+
+    #[cfg(feature = "wgpu_backend")]
+    if let RendererBackend::WgpuShared { device, queue } = backend {
+        return create_webrender_instance_wgpu(notifier, options, WgpuInit::SharedDevice { device, queue });
     }
 
     #[cfg(feature = "gl_backend")]
@@ -917,6 +933,23 @@ fn create_dither_matrix_texture<D: GpuDevice>(device: &mut D) -> D::Texture {
     texture
 }
 
+/// How the wgpu device should be obtained.
+#[cfg(feature = "wgpu_backend")]
+pub(crate) enum WgpuInit {
+    /// WebRender creates its own adapter + device, optionally with a surface.
+    CreateDevice {
+        instance: Option<wgpu::Instance>,
+        surface: Option<wgpu::Surface<'static>>,
+        width: u32,
+        height: u32,
+    },
+    /// The host application provides a pre-existing device + queue.
+    SharedDevice {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+    },
+}
+
 /// Creates a wgpu-only Renderer instance with no GL device.
 ///
 /// The GL draw loop is not used; the Renderer's `device` field is `None`.
@@ -927,10 +960,7 @@ fn create_dither_matrix_texture<D: GpuDevice>(device: &mut D) -> D::Texture {
 pub fn create_webrender_instance_wgpu(
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
-    instance: Option<wgpu::Instance>,
-    surface: Option<wgpu::Surface<'static>>,
-    surface_width: u32,
-    surface_height: u32,
+    init: WgpuInit,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
     use crate::device::WgpuDevice;
 
@@ -951,15 +981,22 @@ pub fn create_webrender_instance_wgpu(
     let (api_tx, api_rx) = unbounded_channel();
     let (result_tx, result_rx) = unbounded_channel();
 
-    // Create the wgpu device — with surface if provided, else headless.
-    let mut wgpu_device = if let Some(surface) = surface {
-        let inst = instance.as_ref()
-            .expect("wgpu Instance must be provided when surface is Some");
-        WgpuDevice::new_with_surface(inst, surface, surface_width, surface_height)
-            .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available for surface"))?
-    } else {
-        WgpuDevice::new_headless()
-            .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available"))?
+    // Create or adopt the wgpu device.
+    let mut wgpu_device = match init {
+        WgpuInit::CreateDevice { instance, surface, width, height } => {
+            if let Some(surface) = surface {
+                let inst = instance.as_ref()
+                    .expect("wgpu Instance must be provided when surface is Some");
+                WgpuDevice::new_with_surface(inst, surface, width, height)
+                    .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available for surface"))?
+            } else {
+                WgpuDevice::new_headless()
+                    .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available"))?
+            }
+        }
+        WgpuInit::SharedDevice { device, queue } => {
+            WgpuDevice::from_shared_device(device, queue)
+        }
     };
 
     // Hardcoded capability answers for wgpu — no GL queries needed.
