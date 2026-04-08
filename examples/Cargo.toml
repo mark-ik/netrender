@@ -58,6 +58,10 @@ path = "wgpu_headless.rs"
 name = "wgpu_shared_device"
 path = "wgpu_shared_device.rs"
 
+[[bin]]
+name = "wgpu_hal_device"
+path = "wgpu_hal_device.rs"
+
 [features]
 debug = ["webrender/capture", "webrender/profiler"]
 wgpu_backend = ["webrender/wgpu_backend", "dep:pollster"]

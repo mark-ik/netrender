@@ -150,6 +150,21 @@ pub enum RendererBackend {
         device: wgpu::Device,
         queue: wgpu::Queue,
     },
+    /// Use a raw wgpu-hal device owned by the host application.
+    ///
+    /// The host provides a factory closure that returns a `(wgpu::Device,
+    /// wgpu::Queue)` pair. The closure is typically a thin wrapper around
+    /// `wgpu::Adapter::create_device_from_hal()`, allowing a host that
+    /// already has a raw Vulkan/DX12/Metal device to share it with WebRender
+    /// without creating a second independent device stack.
+    ///
+    /// After construction this is functionally identical to `WgpuShared` —
+    /// WebRender renders to offscreen textures and the host composites using
+    /// `Renderer::composite_output()` or `Renderer::composite_output_hal()`.
+    #[cfg(feature = "wgpu_backend")]
+    WgpuHal {
+        device_factory: Box<dyn FnOnce() -> (wgpu::Device, wgpu::Queue) + Send>,
+    },
 }
 
 impl RendererBackend {
@@ -185,7 +200,7 @@ impl RendererBackend {
                 options.panic_on_gl_error,
             )),
             #[cfg(feature = "wgpu_backend")]
-            RendererBackend::Wgpu { .. } | RendererBackend::WgpuShared { .. } => Err(RendererError::UnsupportedBackend(
+            RendererBackend::Wgpu { .. } | RendererBackend::WgpuShared { .. } | RendererBackend::WgpuHal { .. } => Err(RendererError::UnsupportedBackend(
                 "wgpu uses create_webrender_instance_wgpu, not the GL device path",
             )),
         }
@@ -417,6 +432,12 @@ pub fn create_webrender_instance_with_backend(
 
     #[cfg(feature = "wgpu_backend")]
     if let RendererBackend::WgpuShared { device, queue } = backend {
+        return create_webrender_instance_wgpu(notifier, options, WgpuInit::SharedDevice { device, queue });
+    }
+
+    #[cfg(feature = "wgpu_backend")]
+    if let RendererBackend::WgpuHal { device_factory } = backend {
+        let (device, queue) = device_factory();
         return create_webrender_instance_wgpu(notifier, options, WgpuInit::SharedDevice { device, queue });
     }
 

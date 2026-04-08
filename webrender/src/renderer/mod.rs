@@ -4337,6 +4337,27 @@ impl Renderer {
         self.wgpu_readback_texture.as_ref()
     }
 
+    /// Returns the raw backend texture handle (e.g. `ash::vk::Image` for Vulkan) for
+    /// the composite output texture. Useful for hosts that operate at the wgpu-hal
+    /// level and want to import WebRender's output into a native render pass without
+    /// going through wgpu's bind-group API.
+    ///
+    /// Returns `None` if no composite texture is available (GL path or frame not yet
+    /// rendered) or if the current backend does not match `A`.
+    ///
+    /// # Safety
+    /// The returned deref guard borrows the texture. Do not destroy or resize the
+    /// texture while the guard is alive, and do not use the raw handle after the
+    /// guard is dropped.
+    #[cfg(feature = "wgpu_backend")]
+    pub unsafe fn composite_output_hal<A>(&self)
+        -> Option<impl std::ops::Deref<Target = A::Texture> + '_>
+    where
+        A: wgpu::wgc::hal_api::HalApi,
+    {
+        self.wgpu_readback_texture.as_ref()?.texture.as_hal::<A>()
+    }
+
     /// Update the current position of the debug cursor.
     pub fn set_cursor_position(
         &mut self,
