@@ -4326,6 +4326,17 @@ impl Renderer {
         }
     }
 
+    /// Return a reference to the last composited frame texture, if available.
+    ///
+    /// After `render()` completes, this texture holds the final composited
+    /// output in `Bgra8Unorm` format. In shared-device mode (no surface),
+    /// the host can create a `wgpu::TextureView` from this to sample it
+    /// directly in its own render pass — zero-copy compositing.
+    #[cfg(feature = "wgpu_backend")]
+    pub fn composite_output(&self) -> Option<&crate::device::WgpuTexture> {
+        self.wgpu_readback_texture.as_ref()
+    }
+
     /// Update the current position of the debug cursor.
     pub fn set_cursor_position(
         &mut self,
