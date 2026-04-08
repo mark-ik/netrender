@@ -4479,6 +4479,7 @@ dependencies = [
  "ndk-glue",
  "osmesa-src",
  "osmesa-sys",
+ "pollster",
  "semver",
  "serde",
  "serde_json",
