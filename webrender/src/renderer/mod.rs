@@ -2338,12 +2338,6 @@ impl Renderer {
                 let target_wgpu = match self.wgpu_texture_cache.get(&target.texture_id) {
                     Some(t) => t,
                     None => {
-                        warn!("wgpu: texture_cache target {:?} NOT FOUND — skipping {} clears, {} linear_grads, {} fast_grads, {} alpha batches",
-                              target.texture_id,
-                              target.clears.len(),
-                              target.linear_gradients.len(),
-                              target.fast_linear_gradients.len(),
-                              target.alpha_batch_containers.len());
                         batches_skipped += 1;
                         continue;
                     }
@@ -2352,14 +2346,6 @@ impl Renderer {
                 let target_fmt = target_wgpu.format();
                 let target_w = target_wgpu.width;
                 let target_h = target_wgpu.height;
-                if !target.linear_gradients.is_empty() || !target.fast_linear_gradients.is_empty() {
-                    warn!("wgpu: texture_cache target {:?} ({}x{}) has {} linear_grads, {} fast_grads, {} clears, cached={}",
-                          target.texture_id, target_w, target_h,
-                          target.linear_gradients.len(),
-                          target.fast_linear_gradients.len(),
-                          target.clears.len(),
-                          target.cached);
-                }
                 // All draws to this texture cache target share a single render pass.
                 let wgpu_dev = self.wgpu_device.as_mut().unwrap();
                 let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(target_w, target_h);
@@ -2735,12 +2721,7 @@ impl Renderer {
                                     let color_views: [Option<wgpu::TextureView>; 3] = std::array::from_fn(|i| {
                                         match $batch.key.textures.input.colors[i] {
                                             TextureSource::TextureCache(id, _swizzle) => {
-                                                let tex = self.wgpu_texture_cache.get(&id).map(|t| t.create_view());
-                                                if tex.is_none() {
-                                                    warn!("wgpu: alpha batch color[{}] texture {:?} NOT FOUND in wgpu_texture_cache (batch kind={:?}, {} instances)",
-                                                          i, id, $batch.key.kind, $batch.instances.len());
-                                                }
-                                                tex
+                                                self.wgpu_texture_cache.get(&id).map(|t| t.create_view())
                                             }
                                             _ => None,
                                         }
@@ -3451,7 +3432,10 @@ impl Renderer {
                             view: &target_view,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(tile_clear_color),
+                                // Use Load (not Clear) to preserve existing tile content
+                                // outside the dirty_rect.  The dirty_rect region is cleared
+                                // below via a PsClear draw that respects the scissor.
+                                load: wgpu::LoadOp::Load,
                                 store: wgpu::StoreOp::Store,
                             },
                             depth_slice: None,
@@ -3460,6 +3444,50 @@ impl Renderer {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+
+                    // Clear only the dirty_rect region of the tile (matching the GL
+                    // path's scissored clear).  LoadOp::Clear would wipe the entire
+                    // tile, destroying content outside the dirty_rect that the picture
+                    // cache intends to preserve.
+                    {
+                        let dr = picture_target.dirty_rect.to_f32();
+                        let clear_color_arr = match picture_target.clear_color {
+                            Some(c) => c.to_array(),
+                            None => [0.0, 0.0, 0.0, 0.0],
+                        };
+                        let clear_inst = ClearInstance {
+                            rect: [dr.min.x, dr.min.y, dr.max.x, dr.max.y],
+                            color: clear_color_arr,
+                        };
+                        let instance_bytes = crate::device::as_byte_slice(std::slice::from_ref(&clear_inst));
+                        let textures = crate::device::TextureBindings {
+                            ..Default::default()
+                        };
+                        // When the render pass has a depth attachment (has_opaque),
+                        // the pipeline must declare the depth format even though
+                        // the clear quad doesn't need depth testing.
+                        let clear_depth = if has_opaque {
+                            WgpuDepthState::AlwaysPass
+                        } else {
+                            WgpuDepthState::None
+                        };
+                        let wgpu_dev = self.wgpu_device.as_mut().unwrap();
+                        wgpu_dev.record_draw(
+                            &mut pass,
+                            crate::device::WgpuShaderVariant::PsClear,
+                            crate::device::WgpuBlendMode::None,
+                            clear_depth,
+                            target_fmt,
+                            target_w,
+                            target_h,
+                            &textures,
+                            &transform_buf,
+                            &tex_size_buf,
+                            instance_bytes,
+                            1,
+                            scissor,
+                        );
+                    }
 
                     // Opaque batches: front-to-back (reverse order) with depth write.
                     if has_opaque {
@@ -4781,20 +4809,6 @@ impl Renderer {
         };
 
         for update_list in pending_texture_updates.drain(..) {
-            if !update_list.allocations.is_empty() {
-                warn!("wgpu: processing {} allocations, {} copies, {} updates; wgpu_texture_cache has {} entries",
-                      update_list.allocations.len(),
-                      update_list.copies.len(),
-                      update_list.updates.len(),
-                      self.wgpu_texture_cache.len());
-                for allocation in &update_list.allocations {
-                    match allocation.kind {
-                        TextureCacheAllocationKind::Free => warn!("  Free({:?})", allocation.id),
-                        TextureCacheAllocationKind::Alloc(ref info) => warn!("  Alloc({:?}, {}x{})", allocation.id, info.width, info.height),
-                        TextureCacheAllocationKind::Reset(ref info) => warn!("  Reset({:?}, {}x{})", allocation.id, info.width, info.height),
-                    }
-                }
-            }
             // Process allocations: create or free wgpu textures.
             for allocation in &update_list.allocations {
                 match allocation.kind {
