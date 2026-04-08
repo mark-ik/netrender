@@ -54,9 +54,13 @@ path = "yuv.rs"
 name = "wgpu_headless"
 path = "wgpu_headless.rs"
 
+[[bin]]
+name = "wgpu_shared_device"
+path = "wgpu_shared_device.rs"
+
 [features]
 debug = ["webrender/capture", "webrender/profiler"]
-wgpu_backend = ["webrender/wgpu_backend"]
+wgpu_backend = ["webrender/wgpu_backend", "dep:pollster"]
 
 [dependencies]
 app_units = "0.7"
@@ -65,6 +69,7 @@ euclid = "0.22"
 gleam = { workspace = true }
 glutin = "0.28"
 rayon = "1"
+pollster = { version = "0.4", optional = true }
 webrender = { path = "../webrender" }
 winit = "0.26"
 
