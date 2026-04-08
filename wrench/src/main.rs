@@ -481,6 +481,25 @@ fn make_window(
     wrapper
 }
 
+/// Create a winit window for the wgpu-hal backend (no Instance, no Surface).
+/// The window is only used for size/DPI tracking; rendering is fully headless.
+/// Returns a `WindowWrapper::Wgpu` so that `is_wgpu()` returns true and
+/// reftests apply the same wgpu tolerances.
+#[cfg(feature = "wgpu_backend")]
+fn make_wgpu_hal_window(
+    size: DeviceIntSize,
+    events_loop: &winit::event_loop::EventLoop<()>,
+) -> WindowWrapper {
+    let window = winit::window::WindowBuilder::new()
+        .with_title("WRench (wgpu-hal)")
+        .with_inner_size(LogicalSize::new(size.width as f64, size.height as f64))
+        .build(events_loop)
+        .expect("failed to create winit window for wgpu-hal");
+    println!("wgpu-hal backend: headless window created (size {}x{}, hidpi {})",
+             size.width, size.height, window.scale_factor());
+    WindowWrapper::Wgpu(window)
+}
+
 /// Create a wgpu-backed window + Instance + Surface.
 /// Returns the WindowWrapper and the (instance, surface) pair that should be
 /// passed to WebRender's RendererBackend::Wgpu.
@@ -795,11 +814,17 @@ pub fn main() {
 
     let using_compositor = args.is_present("compositor");
     let use_wgpu = args.is_present("wgpu");
+    let use_wgpu_hal = args.is_present("wgpu-hal");
 
     // wgpu state (instance + surface) — only populated when --wgpu is set.
     // Must outlive the Renderer, so declared here in main scope.
     #[cfg(feature = "wgpu_backend")]
     let wgpu_state: Option<(wgpu::Instance, wgpu::Surface<'static>)>;
+
+    // wgpu-hal adapter — only populated when --wgpu-hal is set.
+    // Arc so the factory closure can capture it.
+    #[cfg(feature = "wgpu_backend")]
+    let wgpu_hal_adapter: Option<std::sync::Arc<wgpu::Adapter>>;
 
     let mut window = if use_wgpu {
         #[cfg(feature = "wgpu_backend")]
@@ -807,15 +832,34 @@ pub fn main() {
             let el = events_loop.as_ref().expect("--wgpu requires a windowed event loop (no --headless)");
             let (wrapper, instance, surface) = make_wgpu_window(size, el);
             wgpu_state = Some((instance, surface));
+            wgpu_hal_adapter = None;
             wrapper
         }
         #[cfg(not(feature = "wgpu_backend"))]
         {
             panic!("--wgpu requires the wgpu_backend feature to be enabled");
         }
+    } else if use_wgpu_hal {
+        #[cfg(feature = "wgpu_backend")]
+        {
+            let el = events_loop.as_ref().expect("--wgpu-hal requires a windowed event loop (no --headless)");
+            let wrapper = make_wgpu_hal_window(size, el);
+            wgpu_state = None;
+            let instance = wgpu::Instance::default();
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions::default(),
+            )).expect("No wgpu adapter for wgpu-hal backend");
+            println!("wgpu-hal adapter: {:?} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+            wgpu_hal_adapter = Some(std::sync::Arc::new(adapter));
+            wrapper
+        }
+        #[cfg(not(feature = "wgpu_backend"))]
+        {
+            panic!("--wgpu-hal requires the wgpu_backend feature to be enabled");
+        }
     } else {
         #[cfg(feature = "wgpu_backend")]
-        { wgpu_state = None; }
+        { wgpu_state = None; wgpu_hal_adapter = None; }
         make_window(
             size,
             args.is_present("vsync"),
@@ -844,11 +888,23 @@ pub fn main() {
         None
     };
 
-    // Build the renderer backend — wgpu if --wgpu, else GL (default).
+    // Build the renderer backend — wgpu-hal if --wgpu-hal, wgpu if --wgpu, else GL (default).
     let backend = {
         #[cfg(feature = "wgpu_backend")]
         {
-            if let Some((instance, surface)) = wgpu_state {
+            if let Some(adapter) = wgpu_hal_adapter {
+                // WgpuHal: factory closure captures the adapter and opens a device on demand.
+                let device_factory: Box<dyn FnOnce() -> (wgpu::Device, wgpu::Queue) + Send> =
+                    Box::new(move || {
+                        pollster::block_on(adapter.request_device(
+                            &wgpu::DeviceDescriptor {
+                                label: Some("wrench wgpu-hal device"),
+                                ..Default::default()
+                            },
+                        )).expect("Failed to create device for wgpu-hal backend")
+                    });
+                Some(webrender::RendererBackend::WgpuHal { device_factory })
+            } else if let Some((instance, surface)) = wgpu_state {
                 Some(webrender::RendererBackend::Wgpu {
                     instance: Some(instance),
                     surface: Some(surface),

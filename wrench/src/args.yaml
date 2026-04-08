@@ -39,6 +39,9 @@ args:
   - wgpu:
       long: wgpu
       help: Use wgpu backend instead of OpenGL (requires wgpu_backend feature)
+  - wgpu-hal:
+      long: wgpu-hal
+      help: Use wgpu-hal backend (host-owned device, headless; requires wgpu_backend feature)
   - compositor:
       long: compositor
       help: Enable native OS compositor integration
