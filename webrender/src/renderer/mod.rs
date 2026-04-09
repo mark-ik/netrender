@@ -1495,6 +1495,16 @@ pub struct Renderer {
     /// Used by `read_pixels_rgba8()` for wgpu readback (e.g. wrench reftests).
     #[cfg(feature = "wgpu_backend")]
     wgpu_readback_texture: Option<crate::device::WgpuTexture>,
+
+    /// Optional host-provided render target.
+    ///
+    /// When set via `set_render_target()`, WebRender composites directly into
+    /// this texture instead of allocating its own `wgpu_readback_texture`.
+    /// The texture must have `RENDER_ATTACHMENT | TEXTURE_BINDING` usage and
+    /// `Bgra8Unorm` format. The host retains ownership via Arc; WebRender
+    /// holds the Arc only while the target is set.
+    #[cfg(feature = "wgpu_backend")]
+    wgpu_host_render_target: Option<(std::sync::Arc<wgpu::Texture>, u32, u32)>,
 }
 
 #[derive(Debug)]
@@ -1644,14 +1654,29 @@ impl Renderer {
         let h = device_size.height as u32;
         let surface_texture = wgpu_dev.acquire_surface_texture();
 
-        // Reuse the readback texture if dimensions match, else (re)create.
-        let reuse = self.wgpu_readback_texture.as_ref()
-            .map(|t| t.width == w && t.height == h)
-            .unwrap_or(false);
-        if !reuse {
-            self.wgpu_readback_texture = Some(wgpu_dev.create_render_target(w, h));
+        // Determine the render target view.
+        // Priority: host-provided texture > internal readback texture.
+        let target_view: wgpu::TextureView;
+        if let Some((ref host_tex, hw, hh)) = self.wgpu_host_render_target {
+            // Use host texture directly — zero-copy, no internal allocation needed.
+            // If the host resized their texture they must call set_render_target again.
+            debug_assert!(
+                hw == w && hh == h,
+                "Host render target size ({}x{}) does not match device size ({}x{}); \
+                 call set_render_target() again after resize",
+                hw, hh, w, h
+            );
+            target_view = host_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        } else {
+            // Reuse the internal readback texture if dimensions match, else (re)create.
+            let reuse = self.wgpu_readback_texture.as_ref()
+                .map(|t| t.width == w && t.height == h)
+                .unwrap_or(false);
+            if !reuse {
+                self.wgpu_readback_texture = Some(wgpu_dev.create_render_target(w, h));
+            }
+            target_view = self.wgpu_readback_texture.as_ref().unwrap().create_view();
         }
-        let target_view = self.wgpu_readback_texture.as_ref().unwrap().create_view();
 
         // Collect composite tiles into batches by type.
         let composite_state = &doc.frame.composite_state;
@@ -4485,6 +4510,59 @@ impl Renderer {
         // SAFETY: caller guarantees the backend matches A and the texture
         // is not reallocated while the returned reference is alive.
         unsafe { texture.as_hal::<A>() }
+    }
+
+    /// Set a host-provided texture as the composite render target.
+    ///
+    /// After this call, `render()` composites directly into `texture` instead
+    /// of the internal `wgpu_readback_texture`. This eliminates the intermediate
+    /// allocation and the copy that `composite_output()` otherwise requires.
+    ///
+    /// # Requirements
+    ///
+    /// The texture must:
+    /// - Be created on the **same** `wgpu::Device` as WebRender (i.e. the device
+    ///   passed to `WgpuShared` / `WgpuHal`).
+    /// - Have `RENDER_ATTACHMENT | TEXTURE_BINDING` usage flags.
+    /// - Have `Bgra8Unorm` format.
+    /// - Match `width` × `height` exactly. If the viewport is resized, call
+    ///   `set_render_target()` again with the new texture before the next render.
+    ///
+    /// # Typical usage (egui integration)
+    ///
+    /// ```rust,ignore
+    /// // Allocate an egui-managed texture on the shared device.
+    /// let texture = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
+    ///     format: wgpu::TextureFormat::Bgra8Unorm,
+    ///     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+    ///     // ...
+    /// }));
+    /// renderer.set_render_target(Arc::clone(&texture), width, height);
+    /// // Register texture with egui's wgpu renderer so it can be drawn as an image.
+    /// let egui_tex_id = egui_renderer.register_native_texture(
+    ///     &device, &texture.create_view(&Default::default()), wgpu::FilterMode::Linear,
+    /// );
+    /// // Each frame: render() writes directly into the texture; egui draws it.
+    /// renderer.render(/* ... */);
+    /// ui.image(egui_tex_id, [width as f32, height as f32]);
+    /// ```
+    #[cfg(feature = "wgpu_backend")]
+    pub fn set_render_target(
+        &mut self,
+        texture: std::sync::Arc<wgpu::Texture>,
+        width: u32,
+        height: u32,
+    ) {
+        self.wgpu_host_render_target = Some((texture, width, height));
+    }
+
+    /// Remove the host-provided render target.
+    ///
+    /// After this call, `render()` reverts to writing into the internal
+    /// `wgpu_readback_texture` as before.
+    #[cfg(feature = "wgpu_backend")]
+    pub fn unset_render_target(&mut self) {
+        self.wgpu_host_render_target = None;
     }
 
     /// Update the current position of the debug cursor.
