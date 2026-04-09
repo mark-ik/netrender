@@ -649,6 +649,8 @@ impl Into<TextureSlot> for TextureSampler {
 #[derive(Clone, Debug, PartialEq)]
 pub enum GraphicsApi {
     OpenGL,
+    #[cfg(feature = "wgpu_backend")]
+    Wgpu,
 }
 
 #[derive(Clone, Debug)]
@@ -4366,10 +4368,16 @@ impl Renderer {
     pub fn get_graphics_api_info(&self) -> GraphicsApiInfo {
         #[cfg(feature = "wgpu_backend")]
         if self.is_wgpu_only() {
+            let (version, renderer) = self.wgpu_device.as_ref()
+                .map(|dev| {
+                    let info = dev.adapter_info();
+                    (format!("{:?}", info.backend), info.name.clone())
+                })
+                .unwrap_or_else(|| ("unknown".into(), "wgpu".into()));
             return GraphicsApiInfo {
-                kind: GraphicsApi::OpenGL, // TODO: add wgpu GraphicsApi variant
-                version: "wgpu".to_string(),
-                renderer: "wgpu".to_string(),
+                kind: GraphicsApi::Wgpu,
+                version,
+                renderer,
             };
         }
         #[cfg(feature = "gl_backend")]

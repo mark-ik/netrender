@@ -513,6 +513,10 @@ pub struct WgpuDevice {
     /// Path where the pipeline cache blob is persisted on save / drop.
     /// `None` when cache persistence is disabled.
     pipeline_cache_path: Option<std::path::PathBuf>,
+    /// Adapter info captured at device creation time (for diagnostics /
+    /// `get_graphics_api_info`).  `None` when the device was provided by the
+    /// host via `from_shared_device` (no adapter was available to query).
+    adapter_info: Option<wgpu::AdapterInfo>,
 }
 
 impl Drop for WgpuDevice {
@@ -622,6 +626,7 @@ impl WgpuDevice {
         surface_config: Option<wgpu::SurfaceConfiguration>,
         pipeline_cache: Option<wgpu::PipelineCache>,
         pipeline_cache_path: Option<std::path::PathBuf>,
+        adapter_info: Option<wgpu::AdapterInfo>,
     ) -> Self {
         let bind_group_layout_0 = create_resource_bind_group_layout(&device);
         let bind_group_layout_1 = create_sampler_bind_group_layout(&device);
@@ -673,6 +678,7 @@ impl WgpuDevice {
             mali_workaround_buf,
             pipeline_cache,
             pipeline_cache_path,
+            adapter_info,
         }
     }
 
@@ -703,12 +709,13 @@ impl WgpuDevice {
         ))
         .ok()?;
 
+        let adapter_info = adapter.get_info();
         let (pipeline_cache, pipeline_cache_path) =
             cache_dir.map_or((None, None), |dir| {
-                load_pipeline_cache(&device, &adapter.get_info(), dir)
+                load_pipeline_cache(&device, &adapter_info, dir)
             });
 
-        Some(Self::init_gpu_resources(device, queue, required_features, None, None, pipeline_cache, pipeline_cache_path))
+        Some(Self::init_gpu_resources(device, queue, required_features, None, None, pipeline_cache, pipeline_cache_path, Some(adapter_info)))
     }
 
     /// Create a device with a window surface for presentation.
@@ -764,12 +771,13 @@ impl WgpuDevice {
         };
         surface.configure(&device, &surface_config);
 
+        let adapter_info = adapter.get_info();
         let (pipeline_cache, pipeline_cache_path) =
             cache_dir.map_or((None, None), |dir| {
-                load_pipeline_cache(&device, &adapter.get_info(), dir)
+                load_pipeline_cache(&device, &adapter_info, dir)
             });
 
-        Some(Self::init_gpu_resources(device, queue, required_features, Some(surface), Some(surface_config), pipeline_cache, pipeline_cache_path))
+        Some(Self::init_gpu_resources(device, queue, required_features, Some(surface), Some(surface_config), pipeline_cache, pipeline_cache_path, Some(adapter_info)))
     }
 
     /// Create a WgpuDevice from an externally-owned device and queue.
@@ -785,12 +793,35 @@ impl WgpuDevice {
     /// that the host can composite into its own render pass.
     pub fn from_shared_device(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let features = device.features();
-        Self::init_gpu_resources(device, queue, features, None, None, None, None)
+        Self::init_gpu_resources(device, queue, features, None, None, None, None, None)
     }
 
     /// Returns true if this device has a presentation surface.
     pub fn has_surface(&self) -> bool {
         self.surface.is_some()
+    }
+
+    /// Return a copy of the adapter information captured at device creation.
+    /// Returns a placeholder when the device was created via `from_shared_device`.
+    pub fn adapter_info(&self) -> wgpu::AdapterInfo {
+        self.adapter_info.clone().unwrap_or_else(|| wgpu::AdapterInfo {
+            name: "shared-device".to_string(),
+            vendor: 0,
+            device: 0,
+            device_type: wgpu::DeviceType::Other,
+            driver: String::new(),
+            driver_info: String::new(),
+            backend: wgpu::Backend::Vulkan, // placeholder; real info unavailable
+        })
+    }
+
+    /// The maximum texture dimension supported by this device.
+    ///
+    /// Derived from the adapter's `max_texture_dimension_2d` limit.  Falls
+    /// back to a conservative 8192 if adapter info is unavailable (shared
+    /// device case).
+    pub fn max_texture_size(&self) -> i32 {
+        self.device.limits().max_texture_dimension_2d as i32
     }
 
     /// Persist the driver-level pipeline cache to disk (Vulkan only).

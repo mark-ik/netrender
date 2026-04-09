@@ -941,8 +941,8 @@ pub fn create_webrender_instance_wgpu(
         }
     };
 
-    // Hardcoded capability answers for wgpu — no GL queries needed.
-    let max_texture_size: i32 = 16384;
+    // Query real device limits from the wgpu device.
+    let max_texture_size: i32 = wgpu_device.max_texture_size();
     let use_dual_source_blending = false;
     let ext_blend_equation_advanced = false;
     let ext_blend_equation_advanced_coherent = false;
