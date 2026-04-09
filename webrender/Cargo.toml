@@ -11,7 +11,7 @@ edition = "2018"
 [features]
 default = ["static_freetype", "gl_backend"]
 gl_backend = ["dep:gleam"]
-wgpu_backend = ["dep:wgpu", "dep:wgpu-hal", "dep:pollster", "webrender_build/wgsl", "dep:naga"]
+wgpu_backend = ["dep:wgpu", "dep:wgpu-hal", "dep:pollster", "webrender_build/wgsl", "dep:naga", "dep:ash"]
 profiler = ["tracy-rs/enable_profiler"]
 capture = ["api/serialize", "ron", "serde", "smallvec/serde", "etagere/serialization", "glyph_rasterizer/capture"]
 replay = ["api/deserialize", "ron", "serde", "smallvec/serde", "etagere/serialization", "glyph_rasterizer/replay"]
@@ -37,6 +37,7 @@ byteorder = "1.0"
 euclid = { version = "0.22.10", features = ["serde"] }
 rustc-hash = "2.1.1"
 gleam = { workspace = true, optional = true }
+ash = { version = "0.38", optional = true }
 wgpu = { version = "26.0", optional = true }
 wgpu-hal = { version = "26.0", optional = true }
 pollster = { version = "0.4", optional = true }

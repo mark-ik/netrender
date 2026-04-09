@@ -1020,6 +1020,38 @@ impl WgpuDevice {
             .collect()
     }
 
+    // ── Semaphore injection (Vulkan only) ────────────────────────────────────
+
+    /// Queue a Vulkan semaphore to be signaled when the next `flush_encoder`
+    /// submit completes.
+    ///
+    /// Call this **before** `render()` / `render_to_view()`. The semaphore is
+    /// appended to wgpu-hal's internal signal list and will be included in the
+    /// next `vkQueueSubmit2` call that WebRender issues.
+    ///
+    /// # Safety
+    /// - `raw_semaphore` must be a valid `VkSemaphore` for the Vulkan device
+    ///   that backs this `WgpuDevice`.
+    /// - The semaphore must not be destroyed until after the GPU signals it.
+    /// - This method is a no-op (returns `false`) if the backend is not Vulkan.
+    ///
+    /// Returns `true` if the semaphore was successfully enqueued.
+    #[cfg(feature = "wgpu_backend")]
+    pub unsafe fn add_completion_semaphore_vk(&self, raw_semaphore: u64) -> bool {
+        use wgpu_hal::api::Vulkan;
+        // as_hal returns Option<impl Deref<Target = hal::vulkan::Queue>> in wgpu 26+.
+        // ash::vk::Semaphore is #[repr(transparent)] over u64, so transmute is safe.
+        unsafe {
+            if let Some(vk_queue) = self.queue.as_hal::<Vulkan>() {
+                let semaphore: ash::vk::Semaphore = std::mem::transmute(raw_semaphore);
+                vk_queue.add_signal_semaphore(semaphore, None);
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     /// Persist the driver-level pipeline cache to disk (Vulkan only).
     ///
     /// A no-op if this device was created without a `cache_dir`, or if the

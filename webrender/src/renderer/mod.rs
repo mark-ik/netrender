@@ -4642,6 +4642,27 @@ impl Renderer {
         }
     }
 
+    /// Vulkan-only: enqueue a semaphore to be signaled when this frame's
+    /// GPU submissions complete.
+    ///
+    /// Call this **before** `render()` or `render_to_view()`.  The semaphore
+    /// is included in the next `vkQueueSubmit2` that WebRender issues.
+    ///
+    /// Returns `true` if the semaphore was successfully enqueued (Vulkan
+    /// backend active), `false` if the current backend is not Vulkan or the
+    /// renderer is in GL mode.
+    ///
+    /// # Safety
+    /// See [`WgpuDevice::add_completion_semaphore_vk`].
+    #[cfg(feature = "wgpu_backend")]
+    pub unsafe fn add_completion_semaphore_vk(&self, raw_semaphore: u64) -> bool {
+        if let Some(wgpu_dev) = &self.wgpu_device {
+            unsafe { wgpu_dev.add_completion_semaphore_vk(raw_semaphore) }
+        } else {
+            false
+        }
+    }
+
     /// Update the current position of the debug cursor.
     pub fn set_cursor_position(
         &mut self,
