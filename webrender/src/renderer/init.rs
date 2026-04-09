@@ -247,6 +247,12 @@ pub struct WebRenderOptions {
     pub precise_linear_gradients: bool,
     pub precise_radial_gradients: bool,
     pub precise_conic_gradients: bool,
+
+    /// Directory where the wgpu pipeline cache blob is loaded from and saved
+    /// to.  `None` disables disk persistence.  Only effective on Vulkan; on
+    /// other backends wgpu's pipeline cache is a no-op.
+    #[cfg(feature = "wgpu_backend")]
+    pub pipeline_cache_dir: Option<PathBuf>,
 }
 
 impl WebRenderOptions {
@@ -353,6 +359,8 @@ impl Default for WebRenderOptions {
             precise_linear_gradients: false,
             precise_radial_gradients: false,
             precise_conic_gradients: false,
+            #[cfg(feature = "wgpu_backend")]
+            pipeline_cache_dir: None,
         }
     }
 }
@@ -921,10 +929,10 @@ pub fn create_webrender_instance_wgpu(
             if let Some(surface) = surface {
                 let inst = instance.as_ref()
                     .expect("wgpu Instance must be provided when surface is Some");
-                WgpuDevice::new_with_surface(inst, surface, width, height)
+                WgpuDevice::new_with_surface(inst, surface, width, height, options.pipeline_cache_dir.as_deref())
                     .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available for surface"))?
             } else {
-                WgpuDevice::new_headless()
+                WgpuDevice::new_headless(options.pipeline_cache_dir.as_deref())
                     .ok_or(RendererError::UnsupportedBackend("no wgpu adapter available"))?
             }
         }

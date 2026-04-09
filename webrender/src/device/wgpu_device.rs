@@ -506,6 +506,21 @@ pub struct WgpuDevice {
     pub(crate) unit_quad_ib: wgpu::Buffer,
     /// Pre-allocated mali workaround uniform (constant 0u32).
     pub(crate) mali_workaround_buf: wgpu::Buffer,
+    /// Driver-level pipeline cache (Vulkan only; `get_data()` returns `None` on
+    /// backends that don't support it, so the field is always present but may
+    /// be a no-op).
+    pipeline_cache: Option<wgpu::PipelineCache>,
+    /// Path where the pipeline cache blob is persisted on save / drop.
+    /// `None` when cache persistence is disabled.
+    pipeline_cache_path: Option<std::path::PathBuf>,
+}
+
+impl Drop for WgpuDevice {
+    fn drop(&mut self) {
+        if let Err(e) = self.save_pipeline_cache() {
+            log::warn!("wgpu: failed to auto-save pipeline cache on drop: {}", e);
+        }
+    }
 }
 
 /// Texture bindings for a general-purpose draw call.
@@ -587,6 +602,8 @@ impl WgpuDevice {
         features: wgpu::Features,
         surface: Option<wgpu::Surface<'static>>,
         surface_config: Option<wgpu::SurfaceConfiguration>,
+        pipeline_cache: Option<wgpu::PipelineCache>,
+        pipeline_cache_path: Option<std::path::PathBuf>,
     ) -> Self {
         let bind_group_layout_0 = create_resource_bind_group_layout(&device);
         let bind_group_layout_1 = create_sampler_bind_group_layout(&device);
@@ -611,7 +628,8 @@ impl WgpuDevice {
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
         let dummy_texture_i32 =
             create_dummy_texture(&device, &queue, wgpu::TextureFormat::Rgba32Sint);
-        let (shaders, pipelines) = create_all_pipelines_threaded(&device, &pipeline_layout);
+        let (shaders, pipelines) =
+            create_all_pipelines_threaded(&device, &pipeline_layout, pipeline_cache.as_ref());
         let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
         WgpuDevice {
@@ -635,11 +653,18 @@ impl WgpuDevice {
             unit_quad_vb,
             unit_quad_ib,
             mali_workaround_buf,
+            pipeline_cache,
+            pipeline_cache_path,
         }
     }
 
     /// Create a headless device (no surface/window required).
-    pub fn new_headless() -> Option<Self> {
+    ///
+    /// `cache_dir` — if provided, WebRender will load/save a driver-level
+    /// pipeline cache blob from this directory using the adapter-specific
+    /// filename returned by [`wgpu::util::pipeline_cache_key`].  Only
+    /// effective on Vulkan; on other backends the cache is a no-op.
+    pub fn new_headless(cache_dir: Option<&std::path::Path>) -> Option<Self> {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::None,
@@ -660,7 +685,12 @@ impl WgpuDevice {
         ))
         .ok()?;
 
-        Some(Self::init_gpu_resources(device, queue, required_features, None, None))
+        let (pipeline_cache, pipeline_cache_path) =
+            cache_dir.map_or((None, None), |dir| {
+                load_pipeline_cache(&device, &adapter.get_info(), dir)
+            });
+
+        Some(Self::init_gpu_resources(device, queue, required_features, None, None, pipeline_cache, pipeline_cache_path))
     }
 
     /// Create a device with a window surface for presentation.
@@ -668,11 +698,14 @@ impl WgpuDevice {
     /// The caller creates the `wgpu::Instance` and `wgpu::Surface<'static>` from
     /// its window handle and passes them here along with the initial framebuffer
     /// size. The instance must be the same one that created the surface.
+    ///
+    /// `cache_dir` — optional directory for pipeline cache persistence (Vulkan only).
     pub fn new_with_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
         width: u32,
         height: u32,
+        cache_dir: Option<&std::path::Path>,
     ) -> Option<Self> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -713,7 +746,12 @@ impl WgpuDevice {
         };
         surface.configure(&device, &surface_config);
 
-        Some(Self::init_gpu_resources(device, queue, required_features, Some(surface), Some(surface_config)))
+        let (pipeline_cache, pipeline_cache_path) =
+            cache_dir.map_or((None, None), |dir| {
+                load_pipeline_cache(&device, &adapter.get_info(), dir)
+            });
+
+        Some(Self::init_gpu_resources(device, queue, required_features, Some(surface), Some(surface_config), pipeline_cache, pipeline_cache_path))
     }
 
     /// Create a WgpuDevice from an externally-owned device and queue.
@@ -729,12 +767,31 @@ impl WgpuDevice {
     /// that the host can composite into its own render pass.
     pub fn from_shared_device(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let features = device.features();
-        Self::init_gpu_resources(device, queue, features, None, None)
+        Self::init_gpu_resources(device, queue, features, None, None, None, None)
     }
 
     /// Returns true if this device has a presentation surface.
     pub fn has_surface(&self) -> bool {
         self.surface.is_some()
+    }
+
+    /// Persist the driver-level pipeline cache to disk (Vulkan only).
+    ///
+    /// A no-op if this device was created without a `cache_dir`, or if the
+    /// backend does not support pipeline caches (i.e. not Vulkan).  Uses an
+    /// atomic write (temp-file + rename) to avoid a torn cache on crash.
+    pub fn save_pipeline_cache(&self) -> std::io::Result<()> {
+        let (Some(cache), Some(path)) = (self.pipeline_cache.as_ref(), self.pipeline_cache_path.as_ref()) else {
+            return Ok(());
+        };
+        let Some(data) = cache.get_data() else {
+            return Ok(());
+        };
+        let temp = path.with_extension("tmp");
+        std::fs::write(&temp, &data)?;
+        std::fs::rename(&temp, path)?;
+        log::debug!("wgpu: pipeline cache saved ({} bytes) → {:?}", data.len(), path);
+        Ok(())
     }
 
     /// Submit the pending command encoder, if any.
@@ -819,6 +876,7 @@ impl WgpuDevice {
                 blend_mode,
                 depth_state,
                 target_format,
+                self.pipeline_cache.as_ref(),
             );
             self.pipelines.insert(pipeline_key, WgpuProgram { pipeline });
         }
@@ -1995,6 +2053,7 @@ impl WgpuDevice {
                 blend_mode,
                 depth_state,
                 target_format,
+                self.pipeline_cache.as_ref(),
             );
             self.pipelines.insert(pipeline_key, WgpuProgram { pipeline });
         }
@@ -2711,6 +2770,44 @@ fn build_debug_font_attrs() -> (Vec<wgpu::VertexAttribute>, u64) {
     (attrs, 20)
 }
 
+/// Load (or create empty) a driver-level pipeline cache.
+///
+/// Returns `(Some(cache), Some(path))` when `cache_dir` is provided and the
+/// backend supports caching (Vulkan only), otherwise `(None, None)`.
+///
+/// The returned path is where [`WgpuDevice::save_pipeline_cache`] will write
+/// the blob on shutdown.
+fn load_pipeline_cache(
+    device: &wgpu::Device,
+    adapter_info: &wgpu::AdapterInfo,
+    cache_dir: &std::path::Path,
+) -> (Option<wgpu::PipelineCache>, Option<std::path::PathBuf>) {
+    let Some(filename) = wgpu::util::pipeline_cache_key(adapter_info) else {
+        // Backend does not support pipeline caches (non-Vulkan).
+        return (None, None);
+    };
+    let path = cache_dir.join(&filename);
+    // Silently ignore read errors; an absent or corrupt cache is fine —
+    // wgpu will fall back to compilation from scratch.
+    let data = std::fs::read(&path).ok();
+    // SAFETY: wgpu validates the blob header internally.  With `fallback: true`
+    // invalid data results in an empty (but valid) cache rather than UB.
+    let cache = unsafe {
+        device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
+            label: Some("WebRender pipeline cache"),
+            data: data.as_deref(),
+            fallback: true,
+        })
+    };
+    log::debug!(
+        "wgpu: pipeline cache {} ({} bytes) from {:?}",
+        if data.is_some() { "loaded" } else { "created fresh" },
+        data.as_deref().map_or(0, |d| d.len()),
+        path,
+    );
+    (Some(cache), Some(path))
+}
+
 fn align_vertex_stride(stride: u64) -> u64 {
     let align = wgpu::VERTEX_STRIDE_ALIGNMENT;
     stride.div_ceil(align) * align
@@ -2727,6 +2824,7 @@ fn create_pipeline_for_blend(
     blend_mode: WgpuBlendMode,
     depth_state: WgpuDepthState,
     target_format: wgpu::TextureFormat,
+    pipeline_cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
     let pipeline_label = format!("{:?}#{:?}#{:?}#{:?}", variant, blend_mode, depth_state, target_format);
 
@@ -2795,7 +2893,7 @@ fn create_pipeline_for_blend(
         depth_stencil: depth_state.to_wgpu_depth_stencil(),
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
-        cache: None,
+        cache: pipeline_cache,
     })
 }
 
@@ -2807,26 +2905,35 @@ fn create_pipeline_for_blend(
 fn create_all_pipelines_threaded(
     device: &wgpu::Device,
     pipeline_layout: &wgpu::PipelineLayout,
+    pipeline_cache: Option<&wgpu::PipelineCache>,
 ) -> (
     HashMap<WgpuShaderVariant, ShaderEntry>,
     HashMap<(WgpuShaderVariant, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
 ) {
-    // SAFETY: `device` and `pipeline_layout` are borrowed from the caller's
-    // stack frame. We transmute them to 'static so they can cross the thread
-    // boundary, then join the thread before this function returns — so the
-    // references are always valid.
+    // SAFETY: `device`, `pipeline_layout`, and `pipeline_cache` are borrowed from
+    // the caller's stack frame / heap.  We transmute them to raw pointers so they
+    // can cross the thread boundary, then join the thread before this function
+    // returns — so the references remain valid for the entire thread lifetime.
+    // `wgpu::PipelineCache` is Send + Sync (it wraps Arc<…>), making this safe.
     struct SendPtr<T>(*const T);
     unsafe impl<T> Send for SendPtr<T> {}
 
     let device_ptr = SendPtr(device as *const wgpu::Device);
     let layout_ptr = SendPtr(pipeline_layout as *const wgpu::PipelineLayout);
+    // Encode `Option<&PipelineCache>` as a nullable raw pointer.
+    let cache_raw = pipeline_cache.map_or(std::ptr::null(), |c| c as *const wgpu::PipelineCache);
+    let cache_ptr = SendPtr(cache_raw);
+
     let handle = std::thread::Builder::new()
         .name("wgpu-shader-compile".into())
         .stack_size(16 * 1024 * 1024) // 16 MB
         .spawn(move || {
             let device = unsafe { &*device_ptr.0 };
             let layout = unsafe { &*layout_ptr.0 };
-            create_all_pipelines(device, layout)
+            let cache = unsafe {
+                if cache_ptr.0.is_null() { None } else { Some(&*cache_ptr.0) }
+            };
+            create_all_pipelines(device, layout, cache)
         })
         .expect("failed to spawn shader compile thread");
     handle.join().expect("shader compile thread panicked")
@@ -2835,6 +2942,7 @@ fn create_all_pipelines_threaded(
 fn create_all_pipelines(
     device: &wgpu::Device,
     pipeline_layout: &wgpu::PipelineLayout,
+    pipeline_cache: Option<&wgpu::PipelineCache>,
 ) -> (
     HashMap<WgpuShaderVariant, ShaderEntry>,
     HashMap<(WgpuShaderVariant, WgpuBlendMode, WgpuDepthState, wgpu::TextureFormat), WgpuProgram>,
@@ -2911,6 +3019,7 @@ fn create_all_pipelines(
             default_blend,
             default_depth,
             default_format,
+            pipeline_cache,
         );
 
         pipelines.insert(
@@ -2977,7 +3086,7 @@ mod tests {
     use super::*;
 
     fn try_device() -> Option<WgpuDevice> {
-        let dev = WgpuDevice::new_headless();
+        let dev = WgpuDevice::new_headless(None);
         if dev.is_none() {
             eprintln!("wgpu: no adapter available — skipping test");
         }

@@ -9,7 +9,7 @@ use webrender::{TextureFilter, WgpuDevice};
 
 #[cfg(feature = "wgpu_backend")]
 fn main() {
-    let mut device = match WgpuDevice::new_headless() {
+    let mut device = match WgpuDevice::new_headless(None) {
         Some(device) => device,
         None => {
             eprintln!("No wgpu adapter available.");
