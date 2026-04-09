@@ -1008,10 +1008,26 @@ pub fn create_webrender_instance_wgpu(
         }
         #[cfg(feature = "gl_backend")]
         CompositorConfig::Native { .. } => {
-            // Native compositor needs a device ref — not supported in wgpu-only mode yet.
-            return Err(RendererError::UnsupportedBackend(
-                "native compositor not supported in wgpu-only mode",
-            ));
+            // The native OS compositor (DirectComposition / Core Animation) is
+            // currently GL-only: every Compositor trait method takes &mut Device
+            // (the GL device).  A proper wgpu implementation would need either:
+            //   a) A parallel WgpuCompositor trait with &mut WgpuDevice methods, plus
+            //      platform interop to share wgpu HAL textures with the OS compositor.
+            //   b) A generic Compositor trait refactor that abstracts over both backends.
+            //
+            // Until that work is done, fall back to the software draw compositor so
+            // the caller gets a functional renderer rather than a hard error.  The
+            // native compositor box is dropped here; if it implements Drop it should
+            // release any OS resources it holds.
+            warn!(
+                "CompositorConfig::Native is not yet supported in wgpu-only mode; \
+                 falling back to CompositorKind::Draw. Native OS compositing (DirectComposition, \
+                 Core Animation) requires GL device interop that has not been ported to wgpu."
+            );
+            CompositorKind::Draw {
+                max_partial_present_rects: 0,
+                draw_previous_partial_present_regions: false,
+            }
         }
         CompositorConfig::Layer { .. } => {
             CompositorKind::Layer {}
