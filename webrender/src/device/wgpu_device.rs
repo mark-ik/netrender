@@ -957,10 +957,20 @@ impl WgpuDevice {
 
     /// Acquire the current surface texture for rendering.
     /// Returns None if no surface is configured or acquisition fails.
-    pub fn acquire_surface_texture(&self) -> Option<wgpu::SurfaceTexture> {
+    pub fn acquire_surface_texture(&mut self) -> Option<wgpu::SurfaceTexture> {
         let surface = self.surface.as_ref()?;
         match surface.get_current_texture() {
             Ok(tex) => Some(tex),
+            Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
+                // Surface lost or went out of date (e.g. window was resized
+                // just before this call).  Reconfigure at the current stored
+                // dimensions and try once more.
+                if let Some(ref config) = self.surface_config {
+                    log::debug!("wgpu: surface outdated/lost — reconfiguring {}×{}", config.width, config.height);
+                    surface.configure(&self.device, config);
+                }
+                self.surface.as_ref()?.get_current_texture().ok()
+            }
             Err(e) => {
                 warn!("wgpu: failed to acquire surface texture: {:?}", e);
                 None
@@ -973,8 +983,20 @@ impl WgpuDevice {
         self.surface_config.as_ref().map(|c| c.format)
     }
 
-    /// Resize the surface. Called when the window size changes.
+    /// Resize the surface and free any stale pooled depth textures.
+    ///
+    /// Call this whenever the window or framebuffer changes dimensions.
+    /// After this call:
+    /// - The wgpu surface (if any) is reconfigured at the new size.
+    /// - Depth textures whose size no longer matches any live render target
+    ///   are dropped.  The pool is cleared entirely — they will be recreated
+    ///   on demand by the next `acquire_depth_view` call.
+    /// - Any pending commands are flushed first so the GPU is not using the
+    ///   old surface texture when it is invalidated.
     pub fn resize_surface(&mut self, width: u32, height: u32) {
+        // Flush any in-flight commands before touching the surface.
+        self.flush_encoder();
+
         if let Some(ref mut config) = self.surface_config {
             config.width = width.max(1);
             config.height = height.max(1);
@@ -982,6 +1004,19 @@ impl WgpuDevice {
                 surface.configure(&self.device, config);
             }
         }
+
+        // Old depth textures are keyed by (width, height) — after a resize
+        // they will never match the new framebuffer dimensions, so drop them
+        // all now rather than leaking VRAM until the next evict call.
+        self.evict_all_depth_textures();
+    }
+
+    /// Return the current surface dimensions, or `(0, 0)` for headless.
+    pub fn surface_size(&self) -> (u32, u32) {
+        self.surface_config
+            .as_ref()
+            .map(|c| (c.width, c.height))
+            .unwrap_or((0, 0))
     }
 
     /// Acquire (or create) a depth texture for the given render target dimensions.
