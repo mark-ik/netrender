@@ -10,6 +10,7 @@
 //! buffers, render pass encoding, and pixel readback.
 
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 use api::{ImageBufferKind, ImageFormat};
 use api::units::{DeviceIntRect, FramebufferIntRect};
@@ -545,6 +546,29 @@ pub struct WgpuDevice {
     /// `get_graphics_api_info`).  `None` when the device was provided by the
     /// host via `from_shared_device` (no adapter was available to query).
     adapter_info: Option<wgpu::AdapterInfo>,
+
+    // ── GPU timestamp query infrastructure ───────────────────────────────────
+    //
+    // When `TIMESTAMP_QUERY` is available and `enable_gpu_timing` is set,
+    // WebRender writes begin/end timestamps around each major render pass.
+    // After `flush_encoder()`, the timestamps are resolved into a readback
+    // buffer so the CPU can retrieve nanosecond-precision GPU pass timings.
+    //
+    // Slot layout (2 slots per pass, MAX_TIMESTAMP_SLOTS / 2 passes max):
+    //   [0] composite-pass begin
+    //   [1] composite-pass end
+    //   [2] scene-pass begin   (future)
+    //   [3] scene-pass end
+    //   ...
+    /// QuerySet holding timestamp entries (None when feature is unavailable
+    /// or timing was not requested).
+    pub(crate) timestamp_query_set: Option<wgpu::QuerySet>,
+    /// CPU-mapped readback buffer for resolved timestamp values (u64 × slots).
+    timestamp_resolve_buf: Option<wgpu::Buffer>,
+    /// Number of timestamp slots written in the current frame.
+    pub(crate) timestamp_slots_used: u32,
+    /// Nanoseconds per GPU tick (from `queue.get_timestamp_period()`).
+    timestamp_period_ns: f32,
 }
 
 impl Drop for WgpuDevice {
@@ -640,6 +664,9 @@ fn create_constant_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer
     (vb, ib, mali)
 }
 
+/// Maximum number of timestamp slots per frame (begin+end per pass).
+const MAX_TIMESTAMP_SLOTS: u32 = 16;
+
 impl WgpuDevice {
     /// Common GPU resource initialisation shared by all constructors.
     ///
@@ -683,6 +710,27 @@ impl WgpuDevice {
             create_all_pipelines_threaded(&device, &pipeline_layout, pipeline_cache.as_ref());
         let (unit_quad_vb, unit_quad_ib, mali_workaround_buf) = create_constant_buffers(&device);
 
+        // Timestamp query resources — only created when the feature is present.
+        let has_timestamps = features.contains(wgpu::Features::TIMESTAMP_QUERY);
+        let (timestamp_query_set, timestamp_resolve_buf) = if has_timestamps {
+            let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("WR timestamp queries"),
+                ty: wgpu::QueryType::Timestamp,
+                count: MAX_TIMESTAMP_SLOTS,
+            });
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("WR timestamp resolve buf"),
+                size: (MAX_TIMESTAMP_SLOTS as u64) * std::mem::size_of::<u64>() as u64,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            (Some(qs), Some(buf))
+        } else {
+            (None, None)
+        };
+        let timestamp_period_ns = queue.get_timestamp_period();
+
         WgpuDevice {
             device,
             queue,
@@ -707,6 +755,10 @@ impl WgpuDevice {
             pipeline_cache,
             pipeline_cache_path,
             adapter_info,
+            timestamp_query_set,
+            timestamp_resolve_buf,
+            timestamp_slots_used: 0,
+            timestamp_period_ns,
         }
     }
 
@@ -726,7 +778,8 @@ impl WgpuDevice {
         .ok()?;
 
         let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
-            | wgpu::Features::DUAL_SOURCE_BLENDING;
+            | wgpu::Features::DUAL_SOURCE_BLENDING
+            | wgpu::Features::TIMESTAMP_QUERY;
         let required_features = adapter.features() & wanted;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -759,6 +812,7 @@ impl WgpuDevice {
         surface: wgpu::Surface<'static>,
         width: u32,
         height: u32,
+        present_mode: wgpu::PresentMode,
         cache_dir: Option<&std::path::Path>,
     ) -> Option<Self> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -769,7 +823,8 @@ impl WgpuDevice {
         .ok()?;
 
         let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
-            | wgpu::Features::DUAL_SOURCE_BLENDING;
+            | wgpu::Features::DUAL_SOURCE_BLENDING
+            | wgpu::Features::TIMESTAMP_QUERY;
         let required_features = adapter.features() & wanted;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -789,12 +844,24 @@ impl WgpuDevice {
             .copied()
             .unwrap_or(surface_caps.formats[0]);
 
+        // Use the requested present mode if supported; fall back to Fifo (always supported).
+        let effective_present_mode = if surface_caps.present_modes.contains(&present_mode) {
+            present_mode
+        } else {
+            log::warn!(
+                "Requested wgpu present mode {:?} is not supported by this surface; falling back to Fifo. \
+                 Supported modes: {:?}",
+                present_mode, surface_caps.present_modes
+            );
+            wgpu::PresentMode::Fifo
+        };
+
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
             format: surface_format,
             width,
             height,
-            present_mode: wgpu::PresentMode::Fifo,
+            present_mode: effective_present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
@@ -863,6 +930,94 @@ impl WgpuDevice {
     /// enabled, which allows subpixel AA text rendering.
     pub fn supports_dual_source_blending(&self) -> bool {
         self.features.contains(wgpu::Features::DUAL_SOURCE_BLENDING)
+    }
+
+    /// Whether GPU timestamp queries are available on this device.
+    pub fn supports_timestamp_query(&self) -> bool {
+        self.timestamp_query_set.is_some()
+    }
+
+    /// Write a timestamp into the query set at the next free slot, returning
+    /// the slot index written (for pairing with `end_pass_timestamp`).
+    ///
+    /// Returns `None` if timestamp queries are unavailable or the slot budget
+    /// is exhausted for this frame.
+    pub fn begin_pass_timestamp(&mut self, encoder: &mut wgpu::CommandEncoder) -> Option<u32> {
+        let qs = self.timestamp_query_set.as_ref()?;
+        let slot = self.timestamp_slots_used;
+        if slot >= MAX_TIMESTAMP_SLOTS {
+            return None;
+        }
+        encoder.write_timestamp(qs, slot);
+        self.timestamp_slots_used += 1;
+        Some(slot)
+    }
+
+    /// Write a closing timestamp for a pass started at `begin_slot`.
+    pub fn end_pass_timestamp(&mut self, encoder: &mut wgpu::CommandEncoder, begin_slot: u32) {
+        let Some(qs) = self.timestamp_query_set.as_ref() else { return };
+        let slot = self.timestamp_slots_used;
+        if slot >= MAX_TIMESTAMP_SLOTS {
+            return;
+        }
+        let _ = begin_slot; // kept for symmetry / future labelling
+        encoder.write_timestamp(qs, slot);
+        self.timestamp_slots_used += 1;
+    }
+
+    /// Resolve all written timestamps into the readback buffer and reset the
+    /// slot counter.  Call this after the last pass in a frame, before
+    /// `flush_encoder()`.
+    pub fn resolve_timestamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let slots = self.timestamp_slots_used;
+        if slots == 0 { return; }
+        let (Some(qs), Some(buf)) = (
+            self.timestamp_query_set.as_ref(),
+            self.timestamp_resolve_buf.as_ref(),
+        ) else { return };
+        encoder.resolve_query_set(qs, 0..slots, buf, 0);
+        self.timestamp_slots_used = 0;
+    }
+
+    /// Read back the last resolved timestamp pairs as millisecond durations.
+    ///
+    /// Returns a `Vec` of `(label_index, duration_ms)` for each begin/end pair.
+    /// Blocks until the GPU has written the results (poll + map).
+    ///
+    /// Returns an empty vec if timestamps are unavailable or no frame has been
+    /// rendered with timing enabled.
+    pub fn read_pass_timings_ms(&self) -> Vec<f64> {
+        let Some(buf) = self.timestamp_resolve_buf.as_ref() else {
+            return Vec::new();
+        };
+        // The buffer is COPY_SRC | MAP_READ.  We need to poll until idle then map.
+        let _ = self.device.poll(wgpu::PollType::Wait);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
+        let _ = self.device.poll(wgpu::PollType::Wait);
+        if rx.recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_err() {
+            return Vec::new();
+        }
+        let data = slice.get_mapped_range();
+        // Parse as u64 timestamps (little-endian).
+        let timestamps: Vec<u64> = data
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        drop(data);
+        buf.unmap();
+
+        // Convert pairs to millisecond durations.
+        let period_ns = self.timestamp_period_ns as f64;
+        timestamps
+            .chunks(2)
+            .filter(|pair| pair.len() == 2 && pair[1] >= pair[0])
+            .map(|pair| {
+                let ticks = pair[1] - pair[0];
+                (ticks as f64 * period_ns) / 1_000_000.0
+            })
+            .collect()
     }
 
     /// Persist the driver-level pipeline cache to disk (Vulkan only).

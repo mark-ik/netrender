@@ -1878,6 +1878,18 @@ impl Renderer {
             let (transform_buf, tex_size_buf) = wgpu_dev.create_target_uniforms(w, h);
             let mut encoder = wgpu_dev.take_encoder();
             {
+                // Wire up timestamp_writes for the composite pass if supported.
+                if wgpu_dev.timestamp_query_set.is_some() {
+                    wgpu_dev.timestamp_slots_used = 2; // slots 0 and 1 used by this pass
+                }
+                let timestamp_writes = wgpu_dev.timestamp_query_set.as_ref().map(|qs| {
+                    wgpu::RenderPassTimestampWrites {
+                        query_set: qs,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                });
+
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("composite pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1890,7 +1902,7 @@ impl Renderer {
                         depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes,
                     occlusion_query_set: None,
                 });
 
@@ -2042,6 +2054,13 @@ impl Renderer {
                 device_size.width,
                 device_size.height,
             );
+        }
+
+        // Resolve any GPU timestamps before submitting.
+        {
+            let mut encoder = wgpu_dev.take_encoder();
+            wgpu_dev.resolve_timestamps(&mut encoder);
+            wgpu_dev.return_encoder(encoder);
         }
 
         // Flush any pending GPU commands before copying/presenting.
@@ -4563,6 +4582,21 @@ impl Renderer {
     #[cfg(feature = "wgpu_backend")]
     pub fn unset_render_target(&mut self) {
         self.wgpu_host_render_target = None;
+    }
+
+    /// Returns GPU timing data (in milliseconds) for each instrumented begin/end pair in the last frame.
+    ///
+    /// Each element is the duration in milliseconds for one render pass. Returns an empty Vec if
+    /// `TIMESTAMP_QUERY` is not supported on the current device.
+    ///
+    /// This call blocks until the GPU has finished the most recent frame.
+    #[cfg(feature = "wgpu_backend")]
+    pub fn read_gpu_pass_timings_ms(&self) -> Vec<f64> {
+        if let Some(wgpu_dev) = &self.wgpu_device {
+            wgpu_dev.read_pass_timings_ms()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Update the current position of the debug cursor.
