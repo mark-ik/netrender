@@ -943,7 +943,11 @@ pub fn create_webrender_instance_wgpu(
 
     // Query real device limits from the wgpu device.
     let max_texture_size: i32 = wgpu_device.max_texture_size();
-    let use_dual_source_blending = false;
+    // Enable subpixel AA only when the adapter supports dual-source blending
+    // and the caller has not disabled AA. DUAL_SOURCE_BLENDING is a standard
+    // wgpu feature (available on Vulkan, DX12, Metal) — not nightly.
+    let use_dual_source_blending = options.enable_aa
+        && wgpu_device.supports_dual_source_blending();
     let ext_blend_equation_advanced = false;
     let ext_blend_equation_advanced_coherent = false;
     let enable_clear_scissor = options.enable_clear_scissor.unwrap_or(false);

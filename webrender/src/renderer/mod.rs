@@ -3843,10 +3843,17 @@ impl Renderer {
                 if is_alpha { WgpuShaderVariant::BrushYuvImageAlpha } else { WgpuShaderVariant::BrushYuvImage }
             }
             BatchKind::TextRun(glyph_format) => {
-                match glyph_format {
-                    GlyphFormat::TransformedAlpha |
-                    GlyphFormat::TransformedSubpixel => WgpuShaderVariant::PsTextRunGlyphTransform,
-                    _ => WgpuShaderVariant::PsTextRun,
+                let dual = matches!(
+                    key.blend_mode,
+                    BlendMode::SubpixelDualSource | BlendMode::MultiplyDualSource
+                );
+                match (glyph_format, dual) {
+                    (GlyphFormat::TransformedAlpha | GlyphFormat::TransformedSubpixel, false) =>
+                        WgpuShaderVariant::PsTextRunGlyphTransform,
+                    (GlyphFormat::TransformedAlpha | GlyphFormat::TransformedSubpixel, true) =>
+                        WgpuShaderVariant::PsTextRunGlyphTransformDualSource,
+                    (_, false) => WgpuShaderVariant::PsTextRun,
+                    (_, true)  => WgpuShaderVariant::PsTextRunDualSource,
                 }
             }
             BatchKind::Quad(pattern_kind) => {
@@ -3867,10 +3874,7 @@ impl Renderer {
 
     /// Convert a WebRender `BlendMode` to its wgpu equivalent.
     ///
-    /// Dual-source and advanced blend modes that have no direct wgpu mapping
-    /// fall back to `PremultipliedAlpha`, which gives correct compositing for
-    /// the common case.  Proper advanced blend support will require shader-side
-    /// emulation or wgpu extensions.
+    /// Convert a WebRender `BlendMode` to its wgpu equivalent.
     #[cfg(feature = "wgpu_backend")]
     fn blend_mode_to_wgpu(blend_mode: &BlendMode) -> crate::device::WgpuBlendMode {
         use crate::device::WgpuBlendMode;
@@ -3882,11 +3886,14 @@ impl Renderer {
             BlendMode::Screen => WgpuBlendMode::Screen,
             BlendMode::Exclusion => WgpuBlendMode::Exclusion,
             BlendMode::PlusLighter => WgpuBlendMode::PlusLighter,
-            // Dual-source and advanced modes don't have direct wgpu equivalents.
-            // Fall back to premultiplied alpha for now.
-            BlendMode::SubpixelDualSource
-            | BlendMode::MultiplyDualSource
-            | BlendMode::Advanced(..) => WgpuBlendMode::PremultipliedAlpha,
+            // Subpixel AA: map to the SubpixelDualSource blend mode.
+            // The caller is responsible for selecting the dual-source shader
+            // variant (PsTextRunDualSource) to match.
+            BlendMode::SubpixelDualSource | BlendMode::MultiplyDualSource => {
+                WgpuBlendMode::SubpixelDualSource
+            }
+            // Advanced blend modes have no wgpu equivalent yet.
+            BlendMode::Advanced(..) => WgpuBlendMode::PremultipliedAlpha,
         }
     }
 

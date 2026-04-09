@@ -268,9 +268,14 @@ pub fn get_shader_features(flags: ShaderFeatureFlags) -> ShaderFeatures {
 
 /// Returns the ShaderFeatureFlags to use when generating shaders for the wgpu
 /// backend.  Excludes extension-dependent and GL-only variant families
-/// (TEXTURE_RECT, TEXTURE_EXTERNAL*, ADVANCED_BLEND, DUAL_SOURCE_BLENDING)
-/// since those have no wgpu/WGSL equivalent.
+/// (TEXTURE_RECT, TEXTURE_EXTERNAL*, ADVANCED_BLEND).
+///
+/// DUAL_SOURCE_BLENDING is included: naga 26+ can translate the GLSL
+/// `layout(location=0, index=1)` output to WGSL `@blend_src(1)` with
+/// the `enable dual_source_blending;` extension, and wgpu 26+ exposes
+/// `wgpu::Features::DUAL_SOURCE_BLENDING` on Vulkan, DX12, and Metal.
 pub fn wgpu_shader_feature_flags() -> ShaderFeatureFlags {
     ShaderFeatureFlags::DITHERING
         | ShaderFeatureFlags::DEBUG
+        | ShaderFeatureFlags::DUAL_SOURCE_BLENDING
 }

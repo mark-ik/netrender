@@ -93,6 +93,9 @@ pub enum WgpuShaderVariant {
     // -- Text --
     PsTextRun,
     PsTextRunGlyphTransform,
+    /// Subpixel AA: dual-source blending (requires DUAL_SOURCE_BLENDING feature)
+    PsTextRunDualSource,
+    PsTextRunGlyphTransformDualSource,
 
     // -- Quad shaders --
     PsQuadTextured,
@@ -160,8 +163,10 @@ impl WgpuShaderVariant {
             Self::BrushOpacityAlpha         => ("brush_opacity", "ALPHA_PASS"),
             Self::BrushYuvImage             => ("brush_yuv_image", "TEXTURE_2D,YUV"),
             Self::BrushYuvImageAlpha        => ("brush_yuv_image", "ALPHA_PASS,TEXTURE_2D,YUV"),
-            Self::PsTextRun                 => ("ps_text_run", "ALPHA_PASS,TEXTURE_2D"),
-            Self::PsTextRunGlyphTransform   => ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D"),
+            Self::PsTextRun                           => ("ps_text_run", "ALPHA_PASS,TEXTURE_2D"),
+            Self::PsTextRunGlyphTransform             => ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D"),
+            Self::PsTextRunDualSource                 => ("ps_text_run", "ALPHA_PASS,DUAL_SOURCE_BLENDING,TEXTURE_2D"),
+            Self::PsTextRunGlyphTransformDualSource   => ("ps_text_run", "ALPHA_PASS,DUAL_SOURCE_BLENDING,GLYPH_TRANSFORM,TEXTURE_2D"),
             Self::PsQuadTextured            => ("ps_quad_textured", ""),
             Self::PsQuadGradient            => ("ps_quad_gradient", "DITHERING"),
             Self::PsQuadRadialGradient      => ("ps_quad_radial_gradient", "DITHERING"),
@@ -216,8 +221,10 @@ impl WgpuShaderVariant {
             ("brush_opacity", "ALPHA_PASS")                         => Self::BrushOpacityAlpha,
             ("brush_yuv_image", "TEXTURE_2D,YUV")                   => Self::BrushYuvImage,
             ("brush_yuv_image", "ALPHA_PASS,TEXTURE_2D,YUV")        => Self::BrushYuvImageAlpha,
-            ("ps_text_run", "ALPHA_PASS,TEXTURE_2D")                => Self::PsTextRun,
-            ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D") => Self::PsTextRunGlyphTransform,
+            ("ps_text_run", "ALPHA_PASS,TEXTURE_2D")                             => Self::PsTextRun,
+            ("ps_text_run", "ALPHA_PASS,GLYPH_TRANSFORM,TEXTURE_2D")            => Self::PsTextRunGlyphTransform,
+            ("ps_text_run", "ALPHA_PASS,DUAL_SOURCE_BLENDING,TEXTURE_2D")       => Self::PsTextRunDualSource,
+            ("ps_text_run", "ALPHA_PASS,DUAL_SOURCE_BLENDING,GLYPH_TRANSFORM,TEXTURE_2D") => Self::PsTextRunGlyphTransformDualSource,
             ("ps_quad_textured", "")                                => Self::PsQuadTextured,
             ("ps_quad_gradient", "DITHERING")                       => Self::PsQuadGradient,
             ("ps_quad_radial_gradient", "DITHERING")                => Self::PsQuadRadialGradient,
@@ -281,6 +288,7 @@ impl WgpuShaderVariant {
             | Self::BrushOpacity | Self::BrushOpacityAlpha
             | Self::BrushYuvImage | Self::BrushYuvImageAlpha
             | Self::PsTextRun | Self::PsTextRunGlyphTransform
+            | Self::PsTextRunDualSource | Self::PsTextRunGlyphTransformDualSource
             | Self::PsQuadTextured | Self::PsQuadGradient
             | Self::PsQuadRadialGradient | Self::PsQuadConicGradient
             | Self::PsSplitComposite => Some(PRIMITIVE_INSTANCE_LAYOUT),
@@ -313,6 +321,9 @@ pub enum WgpuBlendMode {
     PlusLighter,
     /// Multiplicative clip mask: dst * src (for accumulating secondary clip masks).
     MultiplyClipMask,
+    /// Subpixel dual-source: color = src_color * src1_alpha + dst * (1 - src1_alpha).
+    /// Requires the `DUAL_SOURCE_BLENDING` device feature and matching shader.
+    SubpixelDualSource,
 }
 
 impl WgpuBlendMode {
@@ -396,6 +407,23 @@ impl WgpuBlendMode {
                 alpha: BlendComponent {
                     src_factor: Zero,
                     dst_factor: SrcAlpha,
+                    operation: Add,
+                },
+            }),
+            // Dual-source subpixel AA: the shader writes the mask to blend_src(1).
+            //   color = src0_color * src1_alpha + dst * (1 - src1_alpha)
+            //   alpha = premultiplied
+            // BlendFactor::Src1Alpha / OneMinusSrc1Alpha map to the second
+            // blend source written by the @blend_src(1) shader output.
+            WgpuBlendMode::SubpixelDualSource => Some(wgpu::BlendState {
+                color: BlendComponent {
+                    src_factor: wgpu::BlendFactor::Src1Alpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrc1Alpha,
+                    operation: Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: One,
+                    dst_factor: OneMinusSrcAlpha,
                     operation: Add,
                 },
             }),
@@ -697,7 +725,8 @@ impl WgpuDevice {
         }))
         .ok()?;
 
-        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+            | wgpu::Features::DUAL_SOURCE_BLENDING;
         let required_features = adapter.features() & wanted;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -739,7 +768,8 @@ impl WgpuDevice {
         }))
         .ok()?;
 
-        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM;
+        let wanted = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+            | wgpu::Features::DUAL_SOURCE_BLENDING;
         let required_features = adapter.features() & wanted;
 
         let (device, queue) = pollster::block_on(adapter.request_device(
@@ -822,6 +852,12 @@ impl WgpuDevice {
     /// device case).
     pub fn max_texture_size(&self) -> i32 {
         self.device.limits().max_texture_dimension_2d as i32
+    }
+
+    /// Returns true if the device was created with `DUAL_SOURCE_BLENDING`
+    /// enabled, which allows subpixel AA text rendering.
+    pub fn supports_dual_source_blending(&self) -> bool {
+        self.features.contains(wgpu::Features::DUAL_SOURCE_BLENDING)
     }
 
     /// Persist the driver-level pipeline cache to disk (Vulkan only).
