@@ -3226,7 +3226,7 @@ fn load_pipeline_cache(
 }
 
 fn align_vertex_stride(stride: u64) -> u64 {
-    let align = wgpu::VERTEX_STRIDE_ALIGNMENT;
+    let align = wgpu::VERTEX_ALIGNMENT;
     stride.div_ceil(align) * align
 }
 

@@ -7,7 +7,7 @@
 //!  - vertex layout descriptors
 //!  - textures bound at vertex stage
 
-use std::{marker::PhantomData, mem, num::NonZeroUsize, ops};
+use std::{marker::PhantomData, num::NonZeroUsize, ops};
 use api::units::*;
 use crate::{
     device::{

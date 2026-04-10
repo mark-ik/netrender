@@ -36,7 +36,7 @@ use crate::renderer::{
 use crate::renderer::{ShaderPrecacheFlags, SharedShaders};
 #[cfg(feature = "gl_backend")]
 use crate::renderer::{
-    debug, gpu_cache, vertex, gl,
+    debug, gpu_cache, vertex,
     TextureResolver,
     upload::{RendererUploadState, UploadTexturePool},
     shade::Shaders,

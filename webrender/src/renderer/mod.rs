@@ -47,8 +47,6 @@ use api::units::*;
 use api::channel::{Sender, Receiver};
 pub use api::DebugFlags;
 use core::time::Duration;
-use std::path::Path;
-
 use crate::pattern::PatternKind;
 use crate::render_api::{DebugCommand, ApiMsg, MemoryReport};
 use crate::batch::{AlphaBatchContainer, BatchKind, BatchFeatures, BatchTextures, BrushBatchKind, ClipBatchList, PrimitiveBatch};
@@ -1807,7 +1805,7 @@ impl Renderer {
         // back-to-front order (painter's algorithm): iterate in reverse so that
         // background tiles (large z_id) are pushed into the instance arrays first
         // and foreground tiles (small z_id) are pushed last and drawn on top.
-        for (tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
+        for (_tile_idx, tile) in composite_state.tiles.iter().rev().enumerate() {
             let tile_rect = composite_state.get_device_rect(
                 &tile.local_rect,
                 tile.transform_index,
@@ -3417,7 +3415,7 @@ impl Renderer {
                         });
 
                         for alpha_batch_container in &target.alpha_batch_containers {
-                            let has_opaque = !alpha_batch_container.opaque_batches.is_empty();
+                            let _has_opaque = !alpha_batch_container.opaque_batches.is_empty();
                             let scissor = alpha_batch_container.task_scissor_rect.map(|r| {
                                 (r.min.x as u32, r.min.y as u32, r.width() as u32, r.height() as u32)
                             });
@@ -3610,7 +3608,7 @@ impl Renderer {
 
                 // Use the target's clear_color if available, otherwise
                 // transparent black (matching the GL backend's default).
-                let tile_clear_color: wgpu::Color = match picture_target.clear_color {
+                let _tile_clear_color: wgpu::Color = match picture_target.clear_color {
                     Some(c) => wgpu::Color {
                         r: c.r as f64,
                         g: c.g as f64,
