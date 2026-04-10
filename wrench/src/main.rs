@@ -147,6 +147,10 @@ pub enum WindowWrapper {
     /// The wgpu Instance and Surface are created separately and passed to the Renderer.
     #[cfg(feature = "wgpu_backend")]
     Wgpu(winit::window::Window),
+    /// wgpu-hal headless backend: no window, no surface.
+    /// Renders to offscreen textures; readback via WgpuDevice.
+    #[cfg(feature = "wgpu_backend")]
+    WgpuHeadless(i32, i32),
 }
 
 pub struct HeadlessEventIterater;
@@ -188,7 +192,7 @@ impl WindowWrapper {
             WindowWrapper::Angle(_, ref context, _, _) => context.swap_buffers().unwrap(),
             WindowWrapper::Headless(_, _, _) => {}
             #[cfg(feature = "wgpu_backend")]
-            WindowWrapper::Wgpu(_) => {
+            WindowWrapper::Wgpu(_) | WindowWrapper::WgpuHeadless(..) => {
                 // wgpu presents in Renderer::render_wgpu() — nothing to do here.
             }
         }
@@ -207,6 +211,8 @@ impl WindowWrapper {
             WindowWrapper::Headless(ref context, ..) => DeviceIntSize::new(context.width, context.height),
             #[cfg(feature = "wgpu_backend")]
             WindowWrapper::Wgpu(ref window) => inner_size(window),
+            #[cfg(feature = "wgpu_backend")]
+            WindowWrapper::WgpuHeadless(w, h) => DeviceIntSize::new(w, h),
         }
     }
 
@@ -219,6 +225,8 @@ impl WindowWrapper {
             WindowWrapper::Headless(..) => 1.0,
             #[cfg(feature = "wgpu_backend")]
             WindowWrapper::Wgpu(ref window) => window.scale_factor() as f32,
+            #[cfg(feature = "wgpu_backend")]
+            WindowWrapper::WgpuHeadless(..) => 1.0,
         }
     }
 
@@ -236,6 +244,8 @@ impl WindowWrapper {
             WindowWrapper::Wgpu(ref window) => {
                 window.set_inner_size(LogicalSize::new(size.width as f64, size.height as f64))
             },
+            #[cfg(feature = "wgpu_backend")]
+            WindowWrapper::WgpuHeadless(..) => {}, // headless — nothing to resize
         }
     }
 
@@ -248,6 +258,8 @@ impl WindowWrapper {
             WindowWrapper::Headless(..) => (),
             #[cfg(feature = "wgpu_backend")]
             WindowWrapper::Wgpu(ref window) => window.set_title(title),
+            #[cfg(feature = "wgpu_backend")]
+            WindowWrapper::WgpuHeadless(..) => (),
         }
     }
 
@@ -257,7 +269,7 @@ impl WindowWrapper {
             WindowWrapper::Angle(_, _, _, ref swgl) |
             WindowWrapper::Headless(_, _, ref swgl) => swgl.as_ref(),
             #[cfg(feature = "wgpu_backend")]
-            WindowWrapper::Wgpu(_) => None,
+            WindowWrapper::Wgpu(_) | WindowWrapper::WgpuHeadless(..) => None,
         }
     }
 
@@ -267,7 +279,7 @@ impl WindowWrapper {
             WindowWrapper::Angle(_, _, ref gl, _) |
             WindowWrapper::Headless(_, ref gl, _) => &**gl,
             #[cfg(feature = "wgpu_backend")]
-            WindowWrapper::Wgpu(_) => panic!("native_gl() not available in wgpu mode"),
+            WindowWrapper::Wgpu(_) | WindowWrapper::WgpuHeadless(..) => panic!("native_gl() not available in wgpu mode"),
         }
     }
 
@@ -303,14 +315,14 @@ impl WindowWrapper {
                 }
             }
             #[cfg(feature = "wgpu_backend")]
-            WindowWrapper::Wgpu(_) => panic!("clone_gl() not available in wgpu mode"),
+            WindowWrapper::Wgpu(_) | WindowWrapper::WgpuHeadless(..) => panic!("clone_gl() not available in wgpu mode"),
         }
     }
 
     /// Whether this is a wgpu backend window.
     #[cfg(feature = "wgpu_backend")]
     pub fn is_wgpu(&self) -> bool {
-        matches!(*self, WindowWrapper::Wgpu(_))
+        matches!(*self, WindowWrapper::Wgpu(_) | WindowWrapper::WgpuHeadless(..))
     }
 
 
@@ -818,6 +830,7 @@ pub fn main() {
     let using_compositor = args.is_present("compositor");
     let use_wgpu = args.is_present("wgpu");
     let use_wgpu_hal = args.is_present("wgpu-hal");
+    let use_wgpu_hal_headless = args.is_present("wgpu-hal-headless");
 
     // wgpu state (instance + surface) — only populated when --wgpu is set.
     // Must outlive the Renderer, so declared here in main scope.
@@ -841,6 +854,28 @@ pub fn main() {
         #[cfg(not(feature = "wgpu_backend"))]
         {
             panic!("--wgpu requires the wgpu_backend feature to be enabled");
+        }
+    } else if use_wgpu_hal_headless {
+        #[cfg(feature = "wgpu_backend")]
+        {
+            wgpu_state = None;
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                flags: wgpu::InstanceFlags::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                display: None,
+            });
+            let adapter = pollster::block_on(instance.request_adapter(
+                &wgpu::RequestAdapterOptions::default(),
+            )).expect("No wgpu adapter for wgpu-hal-headless backend");
+            println!("wgpu-hal-headless adapter: {:?} ({:?})", adapter.get_info().name, adapter.get_info().backend);
+            wgpu_hal_adapter = Some(std::sync::Arc::new(adapter));
+            WindowWrapper::WgpuHeadless(size.width, size.height)
+        }
+        #[cfg(not(feature = "wgpu_backend"))]
+        {
+            panic!("--wgpu-hal-headless requires the wgpu_backend feature to be enabled");
         }
     } else if use_wgpu_hal {
         #[cfg(feature = "wgpu_backend")]
