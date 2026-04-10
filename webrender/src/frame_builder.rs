@@ -48,6 +48,10 @@ use crate::internal_types::{FrameVec, FrameMemory};
 pub struct FrameBuilderConfig {
     pub default_font_render_mode: FontRenderMode,
     pub dual_source_blending_is_supported: bool,
+    /// Whether dual-source blending can be used for mix-blend-mode (Multiply).
+    /// On the wgpu path this is false because BrushImage lacks a dual-source
+    /// shader variant; the two-pass brush_mix_blend fallback is used instead.
+    pub dual_source_mix_blend_supported: bool,
     /// True if we're running tests (i.e. via wrench).
     pub testing: bool,
     pub gpu_supports_fast_clears: bool,
@@ -761,6 +765,7 @@ impl FrameBuilder {
                     clip_store: &scene.clip_store,
                     resource_cache,
                     use_dual_source_blending,
+                    use_dual_source_mix_blend: scene.config.dual_source_mix_blend_supported,
                     use_advanced_blending: scene.config.gpu_supports_advanced_blend,
                     break_advanced_blend_batches: !scene.config.advanced_blend_is_coherent,
                     batch_lookback_count: scene.config.batch_lookback_count,
@@ -804,6 +809,7 @@ impl FrameBuilder {
                     prim_store: &scene.prim_store,
                     resource_cache,
                     use_dual_source_blending,
+                    use_dual_source_mix_blend: scene.config.dual_source_mix_blend_supported,
                     use_advanced_blending: scene.config.gpu_supports_advanced_blend,
                     break_advanced_blend_batches: !scene.config.advanced_blend_is_coherent,
                     batch_lookback_count: scene.config.batch_lookback_count,

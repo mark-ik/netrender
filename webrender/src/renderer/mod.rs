@@ -4063,9 +4063,8 @@ impl Renderer {
             // Subpixel AA: map to the SubpixelDualSource blend mode.
             // The caller is responsible for selecting the dual-source shader
             // variant (PsTextRunDualSource) to match.
-            BlendMode::SubpixelDualSource | BlendMode::MultiplyDualSource => {
-                WgpuBlendMode::SubpixelDualSource
-            }
+            BlendMode::SubpixelDualSource => WgpuBlendMode::SubpixelDualSource,
+            BlendMode::MultiplyDualSource => WgpuBlendMode::MultiplyDualSource,
             // Advanced blend modes have no wgpu equivalent yet.
             BlendMode::Advanced(..) => WgpuBlendMode::PremultipliedAlpha,
         }

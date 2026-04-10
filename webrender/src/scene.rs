@@ -315,6 +315,7 @@ impl BuiltScene {
             config: FrameBuilderConfig {
                 default_font_render_mode: FontRenderMode::Mono,
                 dual_source_blending_is_supported: false,
+                dual_source_mix_blend_supported: false,
                 testing: false,
                 gpu_supports_fast_clears: false,
                 gpu_supports_advanced_blend: false,

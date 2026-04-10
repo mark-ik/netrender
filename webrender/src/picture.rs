@@ -6230,7 +6230,7 @@ impl PicturePrimitive {
                         mode,
                         frame_context.fb_config.gpu_supports_advanced_blend,
                         frame_context.fb_config.advanced_blend_is_coherent,
-                        frame_context.fb_config.dual_source_blending_is_supported,
+                        frame_context.fb_config.dual_source_mix_blend_supported,
                     ).is_none() => {
                         let parent_surface = &frame_state.surfaces[parent_surface_index.0];
 

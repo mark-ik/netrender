@@ -333,6 +333,11 @@ pub enum WgpuBlendMode {
     /// Subpixel dual-source: color = src_color * src1_alpha + dst * (1 - src1_alpha).
     /// Requires the `DUAL_SOURCE_BLENDING` device feature and matching shader.
     SubpixelDualSource,
+    /// Multiply mix-blend-mode via dual-source blending.
+    /// color = src * (1 - dst_alpha) + dst * (1 - src1_color)
+    /// alpha  = src + dst * (1 - src_alpha)
+    /// Requires the `DUAL_SOURCE_BLENDING` device feature and matching shader.
+    MultiplyDualSource,
 }
 
 impl WgpuBlendMode {
@@ -428,6 +433,20 @@ impl WgpuBlendMode {
                 color: BlendComponent {
                     src_factor: wgpu::BlendFactor::Src1Alpha,
                     dst_factor: wgpu::BlendFactor::OneMinusSrc1Alpha,
+                    operation: Add,
+                },
+                alpha: BlendComponent {
+                    src_factor: One,
+                    dst_factor: OneMinusSrcAlpha,
+                    operation: Add,
+                },
+            }),
+            // Multiply: Cs*(1-Ad) + Cd*(1-SRC1) where SRC1 = (As-Cs).
+            // Matches GL's (ONE_MINUS_DST_ALPHA, ONE_MINUS_SRC1_COLOR) / (ONE, ONE_MINUS_SRC_ALPHA).
+            WgpuBlendMode::MultiplyDualSource => Some(wgpu::BlendState {
+                color: BlendComponent {
+                    src_factor: wgpu::BlendFactor::OneMinusDstAlpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrc1,
                     operation: Add,
                 },
                 alpha: BlendComponent {
@@ -571,8 +590,10 @@ pub struct WgpuDevice {
     /// QuerySet holding timestamp entries (None when feature is unavailable
     /// or timing was not requested).
     pub(crate) timestamp_query_set: Option<wgpu::QuerySet>,
-    /// CPU-mapped readback buffer for resolved timestamp values (u64 × slots).
+    /// GPU-side buffer for resolved timestamp values (QUERY_RESOLVE | COPY_SRC).
     timestamp_resolve_buf: Option<wgpu::Buffer>,
+    /// CPU-mappable staging buffer for reading back timestamps (MAP_READ | COPY_DST).
+    timestamp_readback_buf: Option<wgpu::Buffer>,
     /// Number of timestamp slots written in the current frame.
     pub(crate) timestamp_slots_used: u32,
     /// Nanoseconds per GPU tick (from `queue.get_timestamp_period()`).
@@ -735,22 +756,28 @@ impl WgpuDevice {
 
         // Timestamp query resources — only created when the feature is present.
         let has_timestamps = features.contains(wgpu::Features::TIMESTAMP_QUERY);
-        let (timestamp_query_set, timestamp_resolve_buf) = if has_timestamps {
+        let (timestamp_query_set, timestamp_resolve_buf, timestamp_readback_buf) = if has_timestamps {
             let qs = device.create_query_set(&wgpu::QuerySetDescriptor {
                 label: Some("WR timestamp queries"),
                 ty: wgpu::QueryType::Timestamp,
                 count: MAX_TIMESTAMP_SLOTS,
             });
-            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+            let buf_size = (MAX_TIMESTAMP_SLOTS as u64) * std::mem::size_of::<u64>() as u64;
+            let resolve_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("WR timestamp resolve buf"),
-                size: (MAX_TIMESTAMP_SLOTS as u64) * std::mem::size_of::<u64>() as u64,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::MAP_READ,
+                size: buf_size,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
-            (Some(qs), Some(buf))
+            let readback_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("WR timestamp readback buf"),
+                size: buf_size,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            (Some(qs), Some(resolve_buf), Some(readback_buf))
         } else {
-            (None, None)
+            (None, None, None)
         };
         let timestamp_period_ns = queue.get_timestamp_period();
 
@@ -780,6 +807,7 @@ impl WgpuDevice {
             adapter_info,
             timestamp_query_set,
             timestamp_resolve_buf,
+            timestamp_readback_buf,
             timestamp_slots_used: 0,
             timestamp_period_ns,
         }
@@ -1014,11 +1042,14 @@ impl WgpuDevice {
     pub fn resolve_timestamps(&mut self, encoder: &mut wgpu::CommandEncoder) {
         let slots = self.timestamp_slots_used;
         if slots == 0 { return; }
-        let (Some(qs), Some(buf)) = (
+        let (Some(qs), Some(resolve_buf), Some(readback_buf)) = (
             self.timestamp_query_set.as_ref(),
             self.timestamp_resolve_buf.as_ref(),
+            self.timestamp_readback_buf.as_ref(),
         ) else { return };
-        encoder.resolve_query_set(qs, 0..slots, buf, 0);
+        let byte_len = (slots as u64) * std::mem::size_of::<u64>() as u64;
+        encoder.resolve_query_set(qs, 0..slots, resolve_buf, 0);
+        encoder.copy_buffer_to_buffer(resolve_buf, 0, readback_buf, 0, byte_len);
         self.timestamp_slots_used = 0;
     }
 
@@ -1030,10 +1061,10 @@ impl WgpuDevice {
     /// Returns an empty vec if timestamps are unavailable or no frame has been
     /// rendered with timing enabled.
     pub fn read_pass_timings_ms(&self) -> Vec<f64> {
-        let Some(buf) = self.timestamp_resolve_buf.as_ref() else {
+        let Some(buf) = self.timestamp_readback_buf.as_ref() else {
             return Vec::new();
         };
-        // The buffer is COPY_SRC | MAP_READ.  We need to poll until idle then map.
+        // The buffer is MAP_READ | COPY_DST.  We need to poll until idle then map.
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let slice = buf.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();

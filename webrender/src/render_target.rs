@@ -53,6 +53,7 @@ pub struct RenderTargetContext<'a, 'rc> {
     pub clip_store: &'a ClipStore,
     pub resource_cache: &'rc mut ResourceCache,
     pub use_dual_source_blending: bool,
+    pub use_dual_source_mix_blend: bool,
     pub use_advanced_blending: bool,
     pub break_advanced_blend_batches: bool,
     pub batch_lookback_count: usize,

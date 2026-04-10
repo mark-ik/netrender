@@ -1395,7 +1395,7 @@ impl BatchBuilder {
                             mode,
                             ctx.use_advanced_blending,
                             !ctx.break_advanced_blend_batches,
-                            ctx.use_dual_source_blending,
+                            ctx.use_dual_source_mix_blend,
                         ).is_some() => {
                             let key = BatchKey::new(
                                 BatchKind::Brush(
@@ -1405,7 +1405,7 @@ impl BatchBuilder {
                                     mode,
                                     ctx.use_advanced_blending,
                                     !ctx.break_advanced_blend_batches,
-                                    ctx.use_dual_source_blending,
+                                    ctx.use_dual_source_mix_blend,
                                 ).unwrap(),
                                 textures,
                             );

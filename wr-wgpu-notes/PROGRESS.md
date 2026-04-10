@@ -8,6 +8,8 @@ This file is the short index for the surviving `wr-wgpu-notes/` set.
   - main planning and current-state note
 - `2026-04-08_live_full_reftest_confirmation.md`
   - latest direct full local reftest confirmation
+- `archive/progress/2026-04-10_p15_progress_report.md`
+  - wgpu 29 bump, inter-stage vars root cause, headless reftest mode
 - `servo_wgpu_integration.md`
   - downstream Servo integration notes and host/device-sharing shape
 - `shader_translation_journal.md`

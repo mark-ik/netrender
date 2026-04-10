@@ -590,6 +590,7 @@ fn create_webrender_instance_with_device(
     let config = FrameBuilderConfig {
         default_font_render_mode,
         dual_source_blending_is_supported: use_dual_source_blending,
+        dual_source_mix_blend_supported: use_dual_source_blending,
         testing: options.testing,
         gpu_supports_fast_clears: options.gpu_supports_fast_clears,
         gpu_supports_advanced_blend: ext_blend_equation_advanced,
@@ -1066,6 +1067,9 @@ pub fn create_webrender_instance_wgpu(
     let config = FrameBuilderConfig {
         default_font_render_mode,
         dual_source_blending_is_supported: use_dual_source_blending,
+        // wgpu path: BrushImage has no dual-source shader variant yet,
+        // so Multiply must use the two-pass brush_mix_blend fallback.
+        dual_source_mix_blend_supported: false,
         testing: options.testing,
         gpu_supports_fast_clears: options.gpu_supports_fast_clears,
         gpu_supports_advanced_blend: ext_blend_equation_advanced,

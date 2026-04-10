@@ -221,6 +221,26 @@ cargo build --bin servoshell
 SERVO_WGPU_BACKEND=1 cargo run --bin servoshell
 ```
 
+## Device limits: max_inter_stage_shader_variables
+
+wgpu 29 renamed `max_inter_stage_shader_components` to
+`max_inter_stage_shader_variables` and dropped the default from 60 to 16.
+WebRender's composite vertex shader uses outputs up to `@location(17)`,
+requiring at least 18 variables. Without this, the Composite pipeline
+silently fails validation and all wgpu rendering produces black output.
+
+Any code creating a wgpu device for WebRender must request:
+
+```rust
+required_limits: wgpu::Limits {
+    max_inter_stage_shader_variables: 28, // WebRender needs >= 18
+    ..Default::default()
+},
+```
+
+The constant `webrender::WgpuDevice::MIN_INTER_STAGE_VARS` (= 18) is
+exposed for external device creators. Using 28 provides headroom.
+
 ## HiDPI notes
 
 Servo handles HiDPI by pushing a 2x reference frame transform
