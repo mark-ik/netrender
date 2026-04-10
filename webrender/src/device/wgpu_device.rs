@@ -43,6 +43,14 @@ pub struct WgpuTexture {
 }
 
 impl WgpuTexture {
+    /// Wrap a pre-existing `wgpu::Texture` (e.g. imported from an external source).
+    ///
+    /// The format is inferred from the texture descriptor.
+    pub fn from_raw(texture: wgpu::Texture, width: u32, height: u32) -> Self {
+        let format = texture.format();
+        Self { texture, format, width, height }
+    }
+
     /// Create a default texture view for this texture.
     pub fn create_view(&self) -> wgpu::TextureView {
         self.texture.create_view(&wgpu::TextureViewDescriptor::default())
@@ -586,7 +594,7 @@ impl Drop for WgpuDevice {
         // `device.poll(Wait)` ensures the GPU has finished consuming all
         // submitted work before the device handle is released.  This prevents
         // validation layer errors about resources being destroyed while in use.
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         log::debug!(
             "wgpu: WgpuDevice dropped — {} shader(s), {} pipeline(s), {} depth texture(s)",
@@ -688,7 +696,7 @@ impl WgpuDevice {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("WR pipeline layout"),
             bind_group_layouts: &[&bind_group_layout_0, &bind_group_layout_1],
-            push_constant_ranges: &[],
+            immediate_size: 0,
         });
 
         let global_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -698,7 +706,7 @@ impl WgpuDevice {
             ..Default::default()
         });
 
-        device.on_uncaptured_error(Box::new(|err| {
+        device.on_uncaptured_error(std::sync::Arc::new(|err| {
             log::warn!("wgpu uncaptured error: {}", err);
         }));
 
@@ -768,6 +776,9 @@ impl WgpuDevice {
     /// pipeline cache blob from this directory using the adapter-specific
     /// filename returned by [`wgpu::util::pipeline_cache_key`].  Only
     /// effective on Vulkan; on other backends the cache is a no-op.
+    ///
+    /// Not available on wasm — use `WgpuShared` with a pre-created device instead.
+    #[cfg(feature = "wgpu_native")]
     pub fn new_headless(cache_dir: Option<&std::path::Path>) -> Option<Self> {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -807,6 +818,9 @@ impl WgpuDevice {
     /// size. The instance must be the same one that created the surface.
     ///
     /// `cache_dir` — optional directory for pipeline cache persistence (Vulkan only).
+    ///
+    /// Not available on wasm — use `WgpuShared` with a pre-created device instead.
+    #[cfg(feature = "wgpu_native")]
     pub fn new_with_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -914,6 +928,10 @@ impl WgpuDevice {
             driver: String::new(),
             driver_info: String::new(),
             backend: wgpu::Backend::Noop, // real info unavailable for shared devices
+            device_pci_bus_id: String::new(),
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
         })
     }
 
@@ -991,11 +1009,11 @@ impl WgpuDevice {
             return Vec::new();
         };
         // The buffer is COPY_SRC | MAP_READ.  We need to poll until idle then map.
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         let slice = buf.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| { let _ = tx.send(r); });
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         if rx.recv().unwrap_or(Err(wgpu::BufferAsyncError)).is_err() {
             return Vec::new();
         }
@@ -1036,7 +1054,7 @@ impl WgpuDevice {
     /// - This method is a no-op (returns `false`) if the backend is not Vulkan.
     ///
     /// Returns `true` if the semaphore was successfully enqueued.
-    #[cfg(feature = "wgpu_backend")]
+    #[cfg(feature = "wgpu_native")]
     pub unsafe fn add_completion_semaphore_vk(&self, raw_semaphore: u64) -> bool {
         use wgpu_hal::api::Vulkan;
         // as_hal returns Option<impl Deref<Target = hal::vulkan::Queue>> in wgpu 26+.
@@ -1086,9 +1104,12 @@ impl WgpuDevice {
                     log::error!("wgpu flush_encoder: encoder.finish() panicked (invalid encoder)");
                 }
             }
-            let err = pollster::block_on(self.device.pop_error_scope());
-            if let Some(e) = err {
-                log::error!("wgpu flush_encoder validation error: {}", e);
+            #[cfg(feature = "wgpu_native")]
+            {
+                let err = pollster::block_on(self.device.pop_error_scope());
+                if let Some(e) = err {
+                    log::error!("wgpu flush_encoder validation error: {}", e);
+                }
             }
         }
     }
@@ -1320,7 +1341,7 @@ impl WgpuDevice {
     }
 
     pub fn end_frame(&mut self) {
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
     pub fn create_texture(
@@ -1533,6 +1554,7 @@ impl WgpuDevice {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
         }
         self.queue.submit([encoder.finish()]);
@@ -1829,7 +1851,7 @@ impl WgpuDevice {
 
         let slice = staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::Wait).unwrap();
+        self.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
 
         let mapped = slice.get_mapped_range();
         let dst_stride = (texture.width * bpp) as usize;
@@ -1889,7 +1911,7 @@ impl WgpuDevice {
 
         let slice = staging.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device.poll(wgpu::PollType::Wait).unwrap();
+        self.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
 
         let mapped = slice.get_mapped_range();
         let dst_stride = (width * bpp) as usize;
@@ -1997,6 +2019,7 @@ impl WgpuDevice {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bg0, &[]);
@@ -2106,6 +2129,7 @@ impl WgpuDevice {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bg0, &[]);
@@ -2247,6 +2271,7 @@ impl WgpuDevice {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&program.pipeline);
             pass.set_bind_group(0, &bg0, &[]);
@@ -2448,6 +2473,7 @@ impl WgpuDevice {
                 depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&program.pipeline);
             if let Some((x, y, w, h)) = scissor_rect {
@@ -3220,7 +3246,7 @@ fn create_pipeline_for_blend(
         },
         depth_stencil: depth_state.to_wgpu_depth_stencil(),
         multisample: wgpu::MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: pipeline_cache,
     })
 }

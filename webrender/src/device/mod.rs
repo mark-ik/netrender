@@ -81,7 +81,9 @@ pub enum RendererBackend {
     /// wgpu backend.  WebRender creates its own adapter + device, optionally
     /// targeting a window surface for presentation.  Pass `None` for both
     /// `instance` and `surface` for headless mode.
-    #[cfg(feature = "wgpu_backend")]
+    ///
+    /// Not available on wasm — use `WgpuShared` with a pre-created device instead.
+    #[cfg(feature = "wgpu_native")]
     Wgpu {
         instance: Option<wgpu::Instance>,
         surface: Option<wgpu::Surface<'static>>,

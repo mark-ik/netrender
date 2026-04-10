@@ -15,4 +15,4 @@ wgsl = ["dep:naga"]
 bitflags = "2"
 lazy_static = "1"
 serde = { optional = true, version = "1.0", features = ["serde_derive"] }
-naga = { version = "26.0", features = ["glsl-in", "wgsl-out"], optional = true }
+naga = { version = "28.0", features = ["glsl-in", "wgsl-out"], optional = true }

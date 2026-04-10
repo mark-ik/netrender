@@ -227,6 +227,47 @@ pub(super) mod data_texture_layout {
     }
 }
 
+// ── Wgpu external image handler ──────────────────────────────────────────────
+//
+// On the wgpu render path, external images (e.g. WebGL canvases) cannot be
+// consumed as GL texture handles.  This trait allows the embedder to import
+// external images directly into wgpu textures, bypassing the GL path entirely.
+
+/// Handler for importing external images (WebGL, media, etc.) as wgpu textures.
+///
+/// Implement this in the embedder and set it via
+/// [`Renderer::set_wgpu_external_image_handler`].  During `render_wgpu()`,
+/// WebRender calls `lock_wgpu` for each deferred resolve and composites the
+/// returned texture into the frame.
+#[cfg(feature = "wgpu_backend")]
+pub trait WgpuExternalImageHandler {
+    /// Import the external image identified by `key` into a wgpu texture.
+    ///
+    /// Returns the imported texture, its dimensions, and a UV rect in texel
+    /// coordinates.  Returns `None` if this image cannot be imported (WebRender
+    /// will skip the tile).
+    fn lock_wgpu(
+        &mut self,
+        key: api::ExternalImageId,
+        channel_index: u8,
+    ) -> Option<WgpuExternalImage>;
+
+    /// Release the lock on the external image.
+    fn unlock_wgpu(&mut self, key: api::ExternalImageId, channel_index: u8);
+}
+
+/// A wgpu texture imported from an external source (e.g. WebGL canvas).
+#[cfg(feature = "wgpu_backend")]
+pub struct WgpuExternalImage {
+    /// The imported wgpu texture.
+    pub texture: wgpu::Texture,
+    /// Texture dimensions in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// UV rect in texel coordinates.
+    pub uv: api::units::TexelRect,
+}
+
 /// Shared GPU cache utilities used by both GL and wgpu backends.
 ///
 /// `CacheRow` mirrors one row of the GPU cache texture on the CPU, with
@@ -1511,6 +1552,19 @@ pub struct Renderer {
     /// Takes priority over `wgpu_host_render_target` and the internal readback texture.
     #[cfg(feature = "wgpu_backend")]
     wgpu_frame_view_override: Option<wgpu::TextureView>,
+
+    /// Optional handler for resolving external images (e.g. WebGL canvases)
+    /// directly into wgpu textures. Set via `set_wgpu_external_image_handler()`.
+    ///
+    /// On the wgpu render path, deferred resolves call this handler instead of
+    /// the GL-oriented `ExternalImageHandler::lock()`.
+    #[cfg(feature = "wgpu_backend")]
+    wgpu_external_image_handler: Option<Box<dyn WgpuExternalImageHandler>>,
+
+    /// Synthetic CacheTextureId counter for externally-imported wgpu textures.
+    /// Starts at a high value to avoid collisions with WebRender's internal IDs.
+    #[cfg(feature = "wgpu_backend")]
+    wgpu_external_texture_id_counter: u32,
 }
 
 #[derive(Debug)]
@@ -1692,6 +1746,38 @@ impl Renderer {
             target_view = self.wgpu_readback_texture.as_ref().unwrap().create_view();
         }
 
+        // ── Resolve external images into wgpu textures ────────────
+        // On the GL path, external images (WebGL, video) are resolved via
+        // deferred resolves into GL texture handles.  On the wgpu path, we
+        // use the WgpuExternalImageHandler to import them as wgpu textures,
+        // then insert them into the texture cache under synthetic IDs so the
+        // compositor can batch and draw them like any other texture tile.
+        let mut external_remap: FastHashMap<DeferredResolveIndex, CacheTextureId> = FastHashMap::default();
+        {
+            let deferred_resolves = &doc.frame.deferred_resolves;
+            if let Some(handler) = &mut self.wgpu_external_image_handler {
+                for (i, deferred_resolve) in deferred_resolves.iter().enumerate() {
+                    let ext_image = match deferred_resolve.image_properties.external_image {
+                        Some(ref ext) => ext,
+                        None => continue,
+                    };
+
+                    if let Some(imported) = handler.lock_wgpu(ext_image.id, ext_image.channel_index) {
+                        let synthetic_id = CacheTextureId(self.wgpu_external_texture_id_counter);
+                        self.wgpu_external_texture_id_counter += 1;
+
+                        let wgpu_tex = crate::device::WgpuTexture::from_raw(
+                            imported.texture,
+                            imported.width,
+                            imported.height,
+                        );
+                        self.wgpu_texture_cache.insert(synthetic_id, wgpu_tex);
+                        external_remap.insert(DeferredResolveIndex(i as u32), synthetic_id);
+                    }
+                }
+            }
+        }
+
         // Collect composite tiles into batches by type.
         let composite_state = &doc.frame.composite_state;
         let mut color_instances: Vec<CompositeInstance> = Vec::new();
@@ -1775,7 +1861,16 @@ impl Renderer {
                     let surface = &composite_state.external_surfaces[external_surface_index.0];
                     match surface.color_data {
                         ResolvedExternalSurfaceColorData::Rgb { ref plane, .. } => {
-                            if let TextureSource::TextureCache(cache_id, _swizzle) = plane.texture {
+                            // Resolve the texture source — either a texture cache entry
+                            // or an externally-imported wgpu texture (via deferred resolve remap).
+                            let cache_id = match plane.texture {
+                                TextureSource::TextureCache(id, _) => Some(id),
+                                TextureSource::External(TextureSourceExternal { index, .. }) => {
+                                    external_remap.get(&index).copied()
+                                }
+                                _ => None,
+                            };
+                            if let Some(cache_id) = cache_id {
                                 if self.wgpu_texture_cache.contains_key(&cache_id) {
                                     // Pass texel-space UV (UV_TYPE_UNNORMALIZED) so the Composite
                                     // shader applies the 0.5-pixel uvBounds inset before normalising,
@@ -1918,6 +2013,7 @@ impl Renderer {
                     depth_stencil_attachment: None,
                     timestamp_writes,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 });
 
                 // Color tiles: use the Composite shader with no source texture.
@@ -2107,6 +2203,22 @@ impl Renderer {
                 wgpu_dev.flush_encoder();
             }
             st.present();
+        }
+
+        // ── Unlock external images and remove synthetic cache entries ──
+        {
+            let doc = self.active_documents.get(&doc_id);
+            if let (Some(doc), Some(handler)) = (doc, &mut self.wgpu_external_image_handler) {
+                for deferred_resolve in doc.frame.deferred_resolves.iter() {
+                    if let Some(ref ext) = deferred_resolve.image_properties.external_image {
+                        handler.unlock_wgpu(ext.id, ext.channel_index);
+                    }
+                }
+            }
+            // Remove synthetic textures so they don't accumulate across frames.
+            for (_index, cache_id) in &external_remap {
+                self.wgpu_texture_cache.remove(cache_id);
+            }
         }
 
         // Drain notifications that expect FrameRendered
@@ -2760,6 +2872,7 @@ impl Renderer {
                         depth_stencil_attachment: depth_attachment,
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
 
                     // Clear specific render task regions before drawing.
@@ -3300,6 +3413,7 @@ impl Renderer {
                             depth_stencil_attachment: depth_attach_load,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
 
                         for alpha_batch_container in &target.alpha_batch_containers {
@@ -3607,6 +3721,7 @@ impl Renderer {
                         depth_stencil_attachment: depth_attachment,
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
 
                     // Clear only the dirty_rect region of the tile (matching the GL
@@ -3807,6 +3922,7 @@ impl Renderer {
                             depth_stencil_attachment: depth_attach_load,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
 
                         for batch in alpha_batch_container.alpha_batches.iter() {
@@ -4535,7 +4651,7 @@ impl Renderer {
     /// `wgpu::wgc::api::Vulkan` only when running on a Vulkan adapter).
     /// Returns `None` if there is no composited output yet or if the backend
     /// does not match `A`.
-    #[cfg(feature = "wgpu_backend")]
+    #[cfg(feature = "wgpu_native")]
     pub unsafe fn composite_output_hal<A: wgpu::wgc::hal_api::HalApi>(
         &self,
     ) -> Option<impl std::ops::Deref<Target = <A as wgpu_hal::Api>::Texture> + '_> {
@@ -4654,7 +4770,7 @@ impl Renderer {
     ///
     /// # Safety
     /// See [`WgpuDevice::add_completion_semaphore_vk`].
-    #[cfg(feature = "wgpu_backend")]
+    #[cfg(feature = "wgpu_native")]
     pub unsafe fn add_completion_semaphore_vk(&self, raw_semaphore: u64) -> bool {
         if let Some(wgpu_dev) = &self.wgpu_device {
             unsafe { wgpu_dev.add_completion_semaphore_vk(raw_semaphore) }
@@ -5130,6 +5246,15 @@ impl Renderer {
     /// Set a callback for handling external images.
     pub fn set_external_image_handler(&mut self, handler: Box<dyn ExternalImageHandler>) {
         self.external_image_handler = Some(handler);
+    }
+
+    /// Set a callback for importing external images as wgpu textures.
+    ///
+    /// Used on the wgpu render path to resolve WebGL canvases, video frames,
+    /// etc. into wgpu textures for compositing.
+    #[cfg(feature = "wgpu_backend")]
+    pub fn set_wgpu_external_image_handler(&mut self, handler: Box<dyn WgpuExternalImageHandler>) {
+        self.wgpu_external_image_handler = Some(handler);
     }
 
     /// Retrieve (and clear) the current list of recorded frame profiles.

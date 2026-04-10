@@ -85,6 +85,8 @@ mod profiler;
 // lists → primitives → batches → render tasks).  They are backend-agnostic and
 // required by both GL and wgpu render paths.  Gated on "any backend enabled".
 #[cfg(any(feature = "gl_backend", feature = "wgpu_backend"))]
+mod thread_util;
+#[cfg(any(feature = "gl_backend", feature = "wgpu_backend"))]
 mod telemetry;
 #[cfg(any(feature = "gl_backend", feature = "wgpu_backend"))]
 mod batch;
@@ -264,6 +266,8 @@ pub use crate::renderer::{
 // RendererBackend and create_webrender_instance_with_backend cover all
 // backends and are always exported (when any backend is enabled).
 pub use crate::device::RendererBackend;
+#[cfg(feature = "wgpu_backend")]
+pub use crate::renderer::{WgpuExternalImageHandler, WgpuExternalImage};
 #[cfg(any(feature = "gl_backend", feature = "wgpu_backend"))]
 pub use crate::renderer::init::{
     WebRenderOptions, create_webrender_instance_with_backend,
@@ -277,6 +281,8 @@ pub use crate::renderer::{
 pub use crate::renderer::init::{create_webrender_instance, ONE_TIME_USAGE_HINT};
 #[cfg(feature = "gl_backend")]
 pub use crate::hit_test::SharedHitTester;
+#[cfg(feature = "wasm")]
+pub use crate::thread_util::init_wasm_rayon_pool;
 pub use crate::internal_types::FastHashMap;
 #[cfg(feature = "gl_backend")]
 pub use crate::screen_capture::{AsyncScreenshotHandle, RecordedFrameHandle};

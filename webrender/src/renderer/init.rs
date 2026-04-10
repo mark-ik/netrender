@@ -46,7 +46,6 @@ use crate::debugger::Debugger;
 
 use std::{
     mem,
-    thread,
     cell::RefCell,
     collections::VecDeque,
     rc::Rc,
@@ -417,7 +416,7 @@ pub fn create_webrender_instance_with_backend(
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
 ) -> Result<(Renderer, RenderApiSender), RendererError> {
-    #[cfg(feature = "wgpu_backend")]
+    #[cfg(feature = "wgpu_native")]
     if let RendererBackend::Wgpu { instance, surface, width, height } = backend {
         let present_mode = options.wgpu_present_mode;
         return create_webrender_instance_wgpu(notifier, options, WgpuInit::CreateDevice { instance, surface, width, height, present_mode });
@@ -665,7 +664,7 @@ fn create_webrender_instance_with_device(
 
     let sb_fonts = fonts.clone();
 
-    thread::Builder::new().name(scene_thread_name.clone()).spawn(move || {
+    crate::thread_util::spawn_named(scene_thread_name.clone(), move || {
         register_thread_with_profiler(scene_thread_name.clone());
         profiler::register_thread(&scene_thread_name);
 
@@ -689,7 +688,7 @@ fn create_webrender_instance_with_device(
             tile_pool: api::BlobTilePool::new(),
         };
 
-        thread::Builder::new().name(lp_scene_thread_name.clone()).spawn(move || {
+        crate::thread_util::spawn_named(lp_scene_thread_name.clone(), move || {
             register_thread_with_profiler(lp_scene_thread_name.clone());
             profiler::register_thread(&lp_scene_thread_name);
 
@@ -729,7 +728,7 @@ fn create_webrender_instance_with_device(
     let rb_scene_tx = scene_tx.clone();
     let rb_fonts = fonts.clone();
     let enable_multithreading = options.enable_multithreading;
-    thread::Builder::new().name(rb_thread_name.clone()).spawn(move || {
+    crate::thread_util::spawn_named(rb_thread_name.clone(), move || {
         if let Some(hooks) = render_backend_hooks {
             hooks.init_thread();
         }
@@ -866,6 +865,10 @@ fn create_webrender_instance_with_device(
         wgpu_host_render_target: None,
         #[cfg(feature = "wgpu_backend")]
         wgpu_frame_view_override: None,
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_external_image_handler: None,
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_external_texture_id_counter: 0xF000_0000,
     };
 
     // We initially set the flags to default and then now call set_debug_flags
@@ -898,6 +901,8 @@ fn create_webrender_instance_with_device(
 #[cfg(feature = "wgpu_backend")]
 pub(crate) enum WgpuInit {
     /// WebRender creates its own adapter + device, optionally with a surface.
+    /// Not available on wasm — use `SharedDevice` instead.
+    #[cfg(feature = "wgpu_native")]
     CreateDevice {
         instance: Option<wgpu::Instance>,
         surface: Option<wgpu::Surface<'static>>,
@@ -945,6 +950,7 @@ pub fn create_webrender_instance_wgpu(
 
     // Create or adopt the wgpu device.
     let mut wgpu_device = match init {
+        #[cfg(feature = "wgpu_native")]
         WgpuInit::CreateDevice { instance, surface, width, height, present_mode } => {
             if let Some(surface) = surface {
                 let inst = instance.as_ref()
@@ -1132,7 +1138,7 @@ pub fn create_webrender_instance_wgpu(
 
     let sb_fonts = fonts.clone();
 
-    thread::Builder::new().name(scene_thread_name.clone()).spawn(move || {
+    crate::thread_util::spawn_named(scene_thread_name.clone(), move || {
         register_thread_with_profiler(scene_thread_name.clone());
         profiler::register_thread(&scene_thread_name);
 
@@ -1156,7 +1162,7 @@ pub fn create_webrender_instance_wgpu(
             tile_pool: api::BlobTilePool::new(),
         };
 
-        thread::Builder::new().name(lp_scene_thread_name.clone()).spawn(move || {
+        crate::thread_util::spawn_named(lp_scene_thread_name.clone(), move || {
             register_thread_with_profiler(lp_scene_thread_name.clone());
             profiler::register_thread(&lp_scene_thread_name);
 
@@ -1195,7 +1201,7 @@ pub fn create_webrender_instance_wgpu(
     let rb_scene_tx = scene_tx.clone();
     let rb_fonts = fonts.clone();
     let enable_multithreading = options.enable_multithreading;
-    thread::Builder::new().name(rb_thread_name.clone()).spawn(move || {
+    crate::thread_util::spawn_named(rb_thread_name.clone(), move || {
         if let Some(hooks) = render_backend_hooks {
             hooks.init_thread();
         }
@@ -1332,6 +1338,10 @@ pub fn create_webrender_instance_wgpu(
         wgpu_readback_texture: None,
         wgpu_host_render_target: None,
         wgpu_frame_view_override: None,
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_external_image_handler: None,
+        #[cfg(feature = "wgpu_backend")]
+        wgpu_external_texture_id_counter: 0xF000_0000,
     };
 
     renderer.set_debug_flags(debug_flags);

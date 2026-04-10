@@ -15,6 +15,7 @@ use webrender_build::shader::*;
 use webrender_build::shader_features::{ShaderFeatureFlags, get_shader_features};
 
 // glsopt is known to leak, but we don't particularly care.
+#[cfg(feature = "gl_backend")]
 #[no_mangle]
 pub extern "C" fn __lsan_default_options() -> *const u8 {
     b"detect_leaks=0\0".as_ptr()
@@ -2429,10 +2430,21 @@ fn main() -> Result<(), std::io::Error> {
 
     writeln!(shader_file, "lazy_static! {{")?;
 
-    // Always emit GL shaders — both backends can coexist in one build.
-    write_unoptimized_shaders(glsl_files, &mut shader_file)?;
-    writeln!(shader_file, "")?;
-    write_optimized_shaders(&res_dir, &mut shader_file, &out_dir)?;
+    if gl_backend {
+        write_unoptimized_shaders(glsl_files, &mut shader_file)?;
+        writeln!(shader_file, "")?;
+        write_optimized_shaders(&res_dir, &mut shader_file, &out_dir)?;
+    } else {
+        // Emit empty GL shader maps so shader_source.rs compiles
+        // regardless of backend.
+        writeln!(shader_file, "  pub static ref SHADERS: HashMap<&'static str, SourceWithDigest> = {{")?;
+        writeln!(shader_file, "    HashMap::new()")?;
+        writeln!(shader_file, "  }};")?;
+        writeln!(shader_file, "")?;
+        writeln!(shader_file, "  pub static ref OPTIMIZED_SHADERS: HashMap<(ShaderVersion, &'static str), OptimizedSourceWithDigest> = {{")?;
+        writeln!(shader_file, "    HashMap::new()")?;
+        writeln!(shader_file, "  }};")?;
+    }
 
     #[cfg(feature = "wgpu_backend")]
     webrender_build::wgsl::write_wgsl_shaders(&res_dir, &out_dir, &mut shader_file)?;
