@@ -292,3 +292,4 @@ Standards rule:
 - `ESSL 100` and other extension-heavy GL-only families stay on the legacy path until their SPIR-V derivation is explicitly validated
 - `wasm32-unknown-unknown` remains a first-class portability constraint: wasm runtime paths consume generated WGSL and metadata, not SPIR-V directly
 - No public embedders-facing renderer API changes are required; the meaningful interface changes are internal generated shader registry/types and backend device initialization logic
+- Not in scope: this plan does not affect Servo's RenderingContext* trait surface, the compositor/embedder API, or the WebGL/WebXR producer paths. Shader compilation is entirely internal to webrender-wgpu; consumers supply a wgpu::Device + Queue and receive completed pipelines as before.
