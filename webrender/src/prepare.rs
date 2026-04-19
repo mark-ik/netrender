@@ -30,7 +30,6 @@ use crate::picture::{ClusterFlags, PictureCompositeMode, PicturePrimitive};
 use crate::picture::{PrimitiveList, PrimitiveCluster, SurfaceIndex, SubpixelMode, Picture3DContext};
 use crate::tile_cache::{SliceId, TileCacheInstance};
 use crate::prim_store::*;
-use crate::prim_store::borders::NormalBorderScratch;
 use crate::quad::{self, QuadTransformState};
 use crate::render_backend::DataStores;
 use crate::render_task_cache::RenderTaskCacheKeyKind;
@@ -568,20 +567,21 @@ fn prepare_interned_prim_for_render(
 
             return;
         }
-        PrimitiveInstanceKind::LineDecoration { data_handle, ref mut scratch_handle } => {
+        PrimitiveInstanceKind::LineDecoration { data_handle, ref mut render_task, .. } => {
             profile_scope!("LineDecoration");
             let prim_data = &mut data_stores.line_decoration[*data_handle];
             let common_data = &mut prim_data.common;
             let line_dec_data = &mut prim_data.kind;
 
+            // Update the template this instane references, which may refresh the GPU
+            // cache with any shared template data.
             line_dec_data.update(common_data, frame_state);
 
-            let render_task = line_dec_data.prepare_render_task(
+            *render_task = line_dec_data.prepare_render_task(
                 prim_spatial_node_index,
                 frame_context,
                 frame_state,
             );
-            *scratch_handle = scratch.arena.push(render_task);
         }
         PrimitiveInstanceKind::TextRun { run_index, data_handle, .. } => {
             profile_scope!("TextRun");
@@ -648,7 +648,7 @@ fn prepare_interned_prim_for_render(
 
             prim_data.update(frame_state);
         }
-        PrimitiveInstanceKind::NormalBorder { data_handle, ref mut scratch_handle } => {
+        PrimitiveInstanceKind::NormalBorder { data_handle, ref mut render_task_ids, .. } => {
             profile_scope!("NormalBorder");
             let prim_data = &mut data_stores.normal_border[*data_handle];
             let common_data = &mut prim_data.common;
@@ -656,9 +656,7 @@ fn prepare_interned_prim_for_render(
 
             border_data.write_brush_gpu_blocks(common_data, frame_state);
 
-            let segment_count = border_data.border_segments.len() as u32;
-            let handle = scratch.arena.push(NormalBorderScratch { segment_count });
-            scratch.arena.push_zeroed::<RenderTaskId>(segment_count);
+            let mut handles: SmallVec<[RenderTaskId; 8]> = SmallVec::new();
 
             border_data.update(
                 common_data,
@@ -666,11 +664,12 @@ fn prepare_interned_prim_for_render(
                 device_pixel_scale,
                 frame_context,
                 frame_state,
-                handle,
-                &mut scratch.arena,
+                &mut |task_id| {
+                    handles.push(task_id);
+                }
             );
 
-            *scratch_handle = handle;
+            *render_task_ids = scratch.border_cache_handles.extend(handles)
         }
         PrimitiveInstanceKind::ImageBorder { data_handle, .. } => {
             profile_scope!("ImageBorder");

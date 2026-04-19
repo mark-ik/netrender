@@ -22,27 +22,7 @@ use crate::render_task_graph::RenderTaskId;
 use crate::spatial_tree::SpatialNodeIndex;
 use crate::util::clamp_to_scale_factor;
 
-use crate::scratch_buffer::{ScratchBuffer, ScratchHandle};
-
-/// Per-frame scratch data for a NormalBorder primitive.
-/// Arena layout: [NormalBorderScratch] [RenderTaskId * segment_count]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct NormalBorderScratch {
-    pub segment_count: u32,
-}
-
-impl NormalBorderScratch {
-    pub fn get_cache_handles<'a>(handle: ScratchHandle<Self>, arena: &'a ScratchBuffer) -> &'a [RenderTaskId] {
-        let count = arena.read(handle).segment_count;
-        arena.read_slice_at(handle.end_offset(), count)
-    }
-
-    pub fn get_cache_handles_mut<'a>(handle: ScratchHandle<Self>, arena: &'a mut ScratchBuffer) -> &'a mut [RenderTaskId] {
-        let count = arena.read(handle).segment_count;
-        arena.read_slice_at_mut(handle.end_offset(), count)
-    }
-}
+use super::storage;
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
@@ -114,8 +94,7 @@ impl NormalBorderData {
         device_pixel_scale: DevicePixelScale,
         frame_context: &FrameBuildingContext,
         frame_state: &mut FrameBuildingState,
-        scratch_handle: ScratchHandle<NormalBorderScratch>,
-        arena: &mut ScratchBuffer,
+        segment_cb: &mut dyn FnMut(RenderTaskId),
     ) {
         common_data.may_need_repetition =
             matches!(self.border.top.style, BorderStyle::Dotted | BorderStyle::Dashed) ||
@@ -154,9 +133,7 @@ impl NormalBorderData {
         // TODO: this does not ensure that segments will be in the same cache
         // texture, though? The brush code path relies on that.
 
-        let cache_handles = NormalBorderScratch::get_cache_handles_mut(scratch_handle, arena);
-
-        for (i, segment) in self.border_segments.iter().enumerate() {
+        for segment in &self.border_segments {
             // Update the cache key device size based on requested scale.
             let cache_size = to_cache_size(segment.local_task_size, &mut scale);
             let cache_key = RenderTaskCacheKey {
@@ -187,7 +164,7 @@ impl NormalBorderData {
                 }
             );
 
-            cache_handles[i] = task_id;
+            segment_cb(task_id);
         }
     }
 }
@@ -254,7 +231,7 @@ impl InternablePrimitive for NormalBorderPrim {
     ) -> PrimitiveInstanceKind {
         PrimitiveInstanceKind::NormalBorder {
             data_handle,
-            scratch_handle: ScratchHandle::INVALID,
+            render_task_ids: storage::Range::empty(),
         }
     }
 }
