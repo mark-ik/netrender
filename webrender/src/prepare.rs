@@ -21,7 +21,7 @@ use crate::clip::{ClipStore, ClipNodeRange};
 use crate::render_task_graph::RenderTaskId;
 use crate::renderer::{GpuBufferAddress, GpuBufferWriterF};
 use crate::spatial_tree::SpatialNodeIndex;
-use crate::clip::{ClipNodeFlags, ClipChainInstance, ClipItemKind};
+use crate::clip::{clamped_radius, ClipNodeFlags, ClipChainInstance, ClipItemKind};
 use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureContext, PictureState};
 use crate::gpu_types::{BrushFlags, BlurEdgeMode};
 use crate::render_target::RenderTargetKind;
@@ -1643,13 +1643,12 @@ fn write_brush_segment_description(
         }
 
         let (local_clip_rect, radius, mode) = match clip_node.item.kind {
-            ClipItemKind::RoundedRectangle { size, radius, mode } => {
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
-                (rect, Some(radius), mode)
+            ClipItemKind::RoundedRectangle { radius, mode } => {
+                let radius = clamped_radius(&radius, clip_instance.clip_rect.size());
+                (clip_instance.clip_rect, Some(radius), mode)
             }
-            ClipItemKind::Rectangle { size, mode } => {
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
-                (rect, None, mode)
+            ClipItemKind::Rectangle { mode } => {
+                (clip_instance.clip_rect, None, mode)
             }
             ClipItemKind::Image { .. } => {
                 panic!("bug: masks not supported on old segment path");

@@ -11,7 +11,7 @@ use crate::pattern::repeat::RepeatedPattern;
 use crate::render_task::{SubTask, RectangleClipSubTask, ImageClipSubTask};
 use crate::transform::TransformPalette;
 use crate::batch::{BatchKey, BatchKind, BatchTextures};
-use crate::clip::{ClipChainInstance, ClipIntern, ClipItemKind, ClipNodeRange, ClipStore, ClipNodeInstance, ClipItem};
+use crate::clip::{clamped_radius, ClipChainInstance, ClipIntern, ClipItemKind, ClipNodeRange, ClipStore, ClipNodeInstance, ClipItem};
 use crate::command_buffer::{CommandBufferIndex, PrimitiveCommand, QuadFlags};
 use crate::frame_builder::{FrameBuildingContext, FrameBuildingState, PictureContext};
 use crate::gpu_types::{PrimitiveInstanceData, QuadHeader, QuadInstance, QuadPrimitive, QuadSegment, ZBufferId};
@@ -1133,18 +1133,17 @@ fn prepare_tiles(
 
         // Add regions to the classifier depending on the clip kind
         match clip_node.item.kind {
-            ClipItemKind::Rectangle { mode, ref size } => {
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, *size);
-                let rect = transform.map_rect(&rect);
+            ClipItemKind::Rectangle { mode } => {
+                let rect = transform.map_rect(&clip_instance.clip_rect);
                 scratch.quad_tile_classifier.add_clip_rect(rect, mode);
             }
-            ClipItemKind::RoundedRectangle { mode: ClipMode::Clip, ref size, ref radius } => {
+            ClipItemKind::RoundedRectangle { mode: ClipMode::Clip, ref radius } => {
                 // For rounded-rects with Clip mode, we need a mask for each corner,
                 // and to add the clip rect itself (to cull tiles outside that rect)
 
                 // Map the local rect and radii
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, *size);
-                let clip_device_rect = transform.map_rect(&rect);
+                let radius = clamped_radius(radius, clip_instance.clip_rect.size());
+                let clip_device_rect = transform.map_rect(&clip_instance.clip_rect);
                 // If the transform has a negative scale, the rect will be correctly
                 // flipped by the transform so that it isn't empty, but the sizes will
                 // be negative. Make sure that the size stay positive.
@@ -1186,17 +1185,17 @@ fn prepare_tiles(
                 scratch.quad_tile_classifier.add_mask_region(c_br);
                 scratch.quad_tile_classifier.add_mask_region(c_bl);
             }
-            ClipItemKind::RoundedRectangle { mode: ClipMode::ClipOut, ref size, ref radius } => {
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, *size);
+            ClipItemKind::RoundedRectangle { mode: ClipMode::ClipOut, ref radius } => {
+                let radius = clamped_radius(radius, clip_instance.clip_rect.size());
                 // Try to find an inner rect within the clip-out rounded rect that we can
                 // use to cull inner tiles. If we can't, the entire rect needs to be masked
-                match extract_inner_rect_k(&rect, radius, 0.5) {
+                match extract_inner_rect_k(&clip_instance.clip_rect, &radius, 0.5) {
                     Some(ref inner_rect) => {
                         let rect = transform.map_rect(inner_rect);
                         scratch.quad_tile_classifier.add_clip_rect(rect, ClipMode::ClipOut);
                     }
                     None => {
-                        let clip_device_rect = transform.map_rect(&rect);
+                        let clip_device_rect = transform.map_rect(&clip_instance.clip_rect);
                         scratch.quad_tile_classifier.add_mask_region(clip_device_rect);
                     }
                 }
@@ -1350,8 +1349,9 @@ fn get_prim_render_strategy(
         let clip_instance = clip_store.get_instance_from_range(&clip_chain.clips_range, 0);
         let clip_node = &interned_clips[clip_instance.handle];
 
-        if let ClipItemKind::RoundedRectangle { ref radius, mode: ClipMode::Clip, size, .. } = clip_node.item.kind {
-            let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+        if let ClipItemKind::RoundedRectangle { ref radius, mode: ClipMode::Clip, .. } = clip_node.item.kind {
+            let size = clip_instance.clip_rect.size();
+            let radius = clamped_radius(radius, size);
             let max_corner_width = radius.top_left.width
                                         .max(radius.bottom_left.width)
                                         .max(radius.top_right.width)
@@ -1361,8 +1361,8 @@ fn get_prim_render_strategy(
                                         .max(radius.top_right.height)
                                         .max(radius.bottom_right.height);
 
-            if max_corner_width <= 0.5 * rect.size().width &&
-                max_corner_height <= 0.5 * rect.size().height {
+            if max_corner_width <= 0.5 * size.width &&
+                max_corner_height <= 0.5 * size.height {
 
                 let clip_prim_coords_match = spatial_tree.is_matching_coord_system(
                     prim_spatial_node_index,
@@ -1377,7 +1377,7 @@ fn get_prim_render_strategy(
                         spatial_tree,
                     );
 
-                    if let Some(rect) = map_clip_to_prim.map(&rect) {
+                    if let Some(rect) = map_clip_to_prim.map(&clip_instance.clip_rect) {
                         return QuadRenderStrategy::NinePatch {
                             radius: LayoutVector2D::new(max_corner_width, max_corner_height),
                             clip_rect: rect,
@@ -1713,11 +1713,11 @@ pub fn prepare_clip_task(
     sub_tasks: &mut SubTaskRange,
 ) {
     let (clip_address, fast_path) = match clip_item.kind {
-        ClipItemKind::RoundedRectangle { size, radius, mode } => {
-            let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
-            let (fast_path, clip_address) = if radius.can_use_fast_path_in(&rect) {
+        ClipItemKind::RoundedRectangle { radius, mode } => {
+            let radius = clamped_radius(&radius, clip_instance.clip_rect.size());
+            let (fast_path, clip_address) = if radius.can_use_fast_path_in(&clip_instance.clip_rect) {
                 let mut writer = gpu_buffer.write_blocks(3);
-                writer.push_one(rect);
+                writer.push_one(clip_instance.clip_rect);
                 writer.push_one([
                     radius.bottom_right.width,
                     radius.top_right.width,
@@ -1730,7 +1730,7 @@ pub fn prepare_clip_task(
                 (true, clip_address)
             } else {
                 let mut writer = gpu_buffer.write_blocks(4);
-                writer.push_one(rect);
+                writer.push_one(clip_instance.clip_rect);
                 writer.push_one([
                     radius.top_left.width,
                     radius.top_left.height,
@@ -1751,10 +1751,9 @@ pub fn prepare_clip_task(
 
             (clip_address, fast_path)
         }
-        ClipItemKind::Rectangle { size, mode, .. } => {
-            let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+        ClipItemKind::Rectangle { mode, .. } => {
             let mut writer = gpu_buffer.write_blocks(3);
-            writer.push_one(rect);
+            writer.push_one(clip_instance.clip_rect);
             writer.push_one([0.0, 0.0, 0.0, 0.0]);
             writer.push_one([mode as i32 as f32, 0.0, 0.0, 0.0]);
             let clip_address = writer.finish();

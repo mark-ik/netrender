@@ -15,7 +15,7 @@ pub mod slice_builder;
 use api::{AlphaType, BorderRadius, ClipMode, ColorF, ColorDepth, DebugFlags, ImageKey, ImageRendering};
 use api::{PropertyBindingId, PrimitiveFlags, YuvFormat, YuvRangedColorSpace};
 use api::units::*;
-use crate::clip::{ClipNodeId, ClipLeafId, ClipItemKind, ClipSpaceConversion, ClipChainInstance, ClipStore, intersect_rounded_rects};
+use crate::clip::{clamped_radius, ClipNodeId, ClipLeafId, ClipItemKind, ClipSpaceConversion, ClipChainInstance, ClipStore, intersect_rounded_rects};
 use crate::composite::{CompositorKind, CompositeState, CompositorSurfaceKind, ExternalSurfaceDescriptor};
 use crate::composite::{ExternalSurfaceDependency, NativeSurfaceId, NativeTileId};
 use crate::composite::{CompositorClipIndex, CompositorTransformIndex};
@@ -1119,10 +1119,10 @@ impl TileCacheInstance {
                             .get_instance_from_range(&clip_chain.clips_range, i);
                         let clip_node = &frame_state.data_stores.clip[clip_instance.handle];
 
-                        if let ClipItemKind::RoundedRectangle { size, radius, mode } = clip_node.item.kind {
+                        if let ClipItemKind::RoundedRectangle { radius, mode } = clip_node.item.kind {
                             assert_eq!(mode, ClipMode::Clip);
 
-                            let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+                            let radius = clamped_radius(&radius, clip_instance.clip_rect.size());
 
                             // Map to device space. All shared rounded-rect clips are in the
                             // root coordinate system (is_rcs), so only a 2D axis-aligned
@@ -1135,9 +1135,9 @@ impl TileCacheInstance {
                             );
 
                             let (device_rect, device_radius) = match map {
-                                ClipSpaceConversion::Local => (rect.cast_unit(), radius),
+                                ClipSpaceConversion::Local => (clip_instance.clip_rect.cast_unit(), radius),
                                 ClipSpaceConversion::ScaleOffset(so) => (
-                                    so.map_rect(&rect),
+                                    so.map_rect(&clip_instance.clip_rect),
                                     BorderRadius {
                                         top_left: so.map_size(&radius.top_left),
                                         top_right: so.map_size(&radius.top_right),
@@ -1549,7 +1549,9 @@ impl TileCacheInstance {
                             let clip_instance = clip_store.get_instance_from_range(&prim_clip_chain.clips_range, 0);
                             let clip_node = &data_stores.clip[clip_instance.handle];
 
-                            if let ClipItemKind::RoundedRectangle { ref radius, mode: ClipMode::Clip, size, .. } = clip_node.item.kind {
+                            if let ClipItemKind::RoundedRectangle { ref radius, mode: ClipMode::Clip, .. } = clip_node.item.kind {
+                                let size = clip_instance.clip_rect.size();
+                                let radius = clamped_radius(radius, size);
                                 let max_corner_width = radius.top_left.width
                                                             .max(radius.bottom_left.width)
                                                             .max(radius.top_right.width)
@@ -1887,8 +1889,8 @@ impl TileCacheInstance {
 
             let clip_instance = clip_store.get_instance_from_range(&prim_clip_chain.clips_range, 0);
             let clip_node = &data_stores.clip[clip_instance.handle];
-            if let ClipItemKind::RoundedRectangle { radius, mode: ClipMode::Clip, size, .. } = clip_node.item.kind {
-                let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+            if let ClipItemKind::RoundedRectangle { radius, mode: ClipMode::Clip, .. } = clip_node.item.kind {
+                let radius = clamped_radius(&radius, clip_instance.clip_rect.size());
 
                 // Map the clip in to device space. We know from the shared
                 // clip creation logic it's in root coord system, so only a
@@ -1903,11 +1905,11 @@ impl TileCacheInstance {
 
                 let (rect, radius) = match map {
                     ClipSpaceConversion::Local => {
-                        (rect.cast_unit(), radius)
+                        (clip_instance.clip_rect.cast_unit(), radius)
                     }
                     ClipSpaceConversion::ScaleOffset(scale_offset) => {
                         (
-                            scale_offset.map_rect(&rect),
+                            scale_offset.map_rect(&clip_instance.clip_rect),
                             BorderRadius {
                                 top_left: scale_offset.map_size(&radius.top_left),
                                 top_right: scale_offset.map_size(&radius.top_right),
@@ -2771,15 +2773,9 @@ impl TileCacheInstance {
         for clip_instance in clip_instances {
             let clip = &data_stores.clip[clip_instance.handle];
             let clip_local_rect = match clip.item.kind {
-                ClipItemKind::Rectangle { size, .. } => {
-                    Some(LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size))
-                }
-                ClipItemKind::RoundedRectangle { size, .. } => {
-                    Some(LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size))
-                }
-                ClipItemKind::Image { size, .. } => {
-                    Some(LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size))
-                }
+                ClipItemKind::Rectangle { .. }
+                | ClipItemKind::RoundedRectangle { .. }
+                | ClipItemKind::Image { .. } => Some(clip_instance.clip_rect),
             };
             let clip_scratch = match clip_local_rect {
                 Some(rect) => self.corners_cache.compute_to_scratch(

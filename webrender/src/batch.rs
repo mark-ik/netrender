@@ -5,7 +5,7 @@
 use api::{AlphaType, ClipMode, ImageBufferKind};
 use api::{FontInstanceFlags, YuvColorSpace, YuvFormat, ColorDepth, ColorRange, PremultipliedColorF};
 use api::units::*;
-use crate::clip::{ClipNodeFlags, ClipNodeRange, ClipItemKind, ClipStore};
+use crate::clip::{clamped_radius, ClipNodeFlags, ClipNodeRange, ClipItemKind, ClipStore};
 use crate::command_buffer::PrimitiveCommand;
 use crate::composite::CompositorSurfaceKind;
 use crate::pattern::PatternKind;
@@ -2997,26 +2997,24 @@ impl ClipBatcher {
                 ClipItemKind::Image { .. } => {
                     unreachable!();
                 }
-                ClipItemKind::Rectangle { size, mode: ClipMode::ClipOut } => {
-                    let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+                ClipItemKind::Rectangle { mode: ClipMode::ClipOut } => {
                     self.get_batch_list(is_first_clip)
                         .slow_rectangles
                         .push(ClipMaskInstanceRect {
                             common,
-                            local_pos: rect.min,
-                            clip_data: ClipData::uniform(rect.size(), 0.0, ClipMode::ClipOut),
+                            local_pos: clip_instance.clip_rect.min,
+                            clip_data: ClipData::uniform(clip_instance.clip_rect.size(), 0.0, ClipMode::ClipOut),
                         });
 
                     true
                 }
-                ClipItemKind::Rectangle { size, mode: ClipMode::Clip } => {
-                    let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+                ClipItemKind::Rectangle { mode: ClipMode::Clip } => {
                     if clip_instance.flags.contains(ClipNodeFlags::SAME_COORD_SYSTEM) {
                         false
                     } else {
                         if self.add_tiled_clip_mask(
                             actual_rect,
-                            rect,
+                            clip_instance.clip_rect,
                             clip_instance.spatial_node_index,
                             ctx.spatial_tree,
                             &ctx.screen_world_rect,
@@ -3030,21 +3028,22 @@ impl ClipBatcher {
                                 .slow_rectangles
                                 .push(ClipMaskInstanceRect {
                                     common,
-                                    local_pos: rect.min,
-                                    clip_data: ClipData::uniform(rect.size(), 0.0, ClipMode::Clip),
+                                    local_pos: clip_instance.clip_rect.min,
+                                    clip_data: ClipData::uniform(clip_instance.clip_rect.size(), 0.0, ClipMode::Clip),
                                 });
                         }
 
                         true
                     }
                 }
-                ClipItemKind::RoundedRectangle { size, ref radius, mode, .. } => {
-                    let rect = LayoutRect::from_origin_and_size(clip_instance.clip_rect_origin, size);
+                ClipItemKind::RoundedRectangle { ref radius, mode, .. } => {
+                    let size = clip_instance.clip_rect.size();
+                    let radius = clamped_radius(radius, size);
                     let batch_list = self.get_batch_list(is_first_clip);
                     let instance = ClipMaskInstanceRect {
                         common,
-                        local_pos: rect.min,
-                        clip_data: ClipData::rounded_rect(rect.size(), radius, mode),
+                        local_pos: clip_instance.clip_rect.min,
+                        clip_data: ClipData::rounded_rect(size, &radius, mode),
                     };
                     if clip_instance.flags.contains(ClipNodeFlags::USE_FAST_PATH) {
                         batch_list.fast_rectangles.push(instance);
