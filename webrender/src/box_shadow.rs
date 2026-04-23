@@ -68,7 +68,6 @@ impl InternablePrimitive for BoxShadow {
     ) -> PrimitiveInstanceKind {
         PrimitiveInstanceKind::BoxShadow {
             data_handle,
-            render_task: None,
         }
     }
 }

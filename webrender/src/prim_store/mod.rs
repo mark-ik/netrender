@@ -24,7 +24,6 @@ use crate::picture::PicturePrimitive;
 use crate::render_task_graph::RenderTaskId;
 use crate::resource_cache::ImageProperties;
 use std::{hash, u32, usize};
-use crate::scratch_buffer::{ScratchBuffer, ScratchHandle};
 use crate::util::Recycler;
 use crate::internal_types::{FastHashSet, LayoutPrimitiveInfo};
 use crate::visibility::PrimitiveVisibility;
@@ -39,13 +38,13 @@ pub mod rectangle;
 pub mod text_run;
 pub mod interned;
 
-mod storage;
+pub mod storage;
 
 use backdrop::{BackdropCaptureDataHandle, BackdropRenderDataHandle};
-use borders::{ImageBorderDataHandle, NormalBorderDataHandle};
+use borders::{ImageBorderDataHandle, NormalBorderDataHandle, NormalBorderScratch};
 use gradient::{LinearGradientDataHandle, RadialGradientDataHandle, ConicGradientDataHandle};
 use image::{ImageDataHandle, ImageInstance, YuvImageDataHandle};
-use line_dec::LineDecorationDataHandle;
+use line_dec::{LineDecorationDataHandle, LineDecorationScratch};
 use picture::PictureDataHandle;
 use rectangle::RectangleDataHandle;
 use text_run::{TextRunDataHandle, TextRunPrimitive};
@@ -749,12 +748,12 @@ pub enum PrimitiveInstanceKind {
     LineDecoration {
         /// Handle to the common interned data for this primitive.
         data_handle: LineDecorationDataHandle,
-        scratch_handle: ScratchHandle<RenderTaskId>,
+        scratch_handle: storage::Index<LineDecorationScratch>,
     },
     NormalBorder {
         /// Handle to the common interned data for this primitive.
         data_handle: NormalBorderDataHandle,
-        scratch_handle: ScratchHandle<borders::NormalBorderScratch>,
+        scratch_handle: storage::Index<NormalBorderScratch>,
     },
     ImageBorder {
         /// Handle to the common interned data for this primitive.
@@ -800,7 +799,6 @@ pub enum PrimitiveInstanceKind {
     },
     BoxShadow {
         data_handle: BoxShadowDataHandle,
-        render_task: Option<RenderTaskId>,
     },
 }
 
@@ -936,8 +934,15 @@ pub type ImageInstanceIndex = storage::Index<ImageInstance>;
 /// and read during batching.
 #[cfg_attr(feature = "capture", derive(Serialize))]
 pub struct PrimitiveScratchBuffer {
-    /// Per-frame bump arena for heterogeneous prepare-to-batch data.
-    pub arena: ScratchBuffer,
+    /// Per-frame scratch for LineDecoration primitives.
+    pub line_decoration: storage::Storage<LineDecorationScratch>,
+
+    /// Per-frame scratch for NormalBorder primitives.
+    pub normal_border: storage::Storage<NormalBorderScratch>,
+
+    /// Trailing-array store for per-segment cached render-task ids
+    /// referenced by NormalBorderScratch entries.
+    pub border_task_ids: storage::Storage<RenderTaskId>,
 
     /// Contains a list of clip mask instance parameters
     /// per segment generated.
@@ -978,7 +983,9 @@ pub struct PrimitiveScratchBuffer {
 impl Default for PrimitiveScratchBuffer {
     fn default() -> Self {
         PrimitiveScratchBuffer {
-            arena: ScratchBuffer::new(),
+            line_decoration: storage::Storage::new(0),
+            normal_border: storage::Storage::new(0),
+            border_task_ids: storage::Storage::new(0),
             clip_mask_instances: Vec::new(),
             glyph_keys: GlyphKeyStorage::new(0),
             segments: SegmentStorage::new(0),
@@ -996,7 +1003,9 @@ impl Default for PrimitiveScratchBuffer {
 
 impl PrimitiveScratchBuffer {
     pub fn recycle(&mut self, recycler: &mut Recycler) {
-        self.arena.recycle(recycler);
+        self.line_decoration.recycle(recycler);
+        self.normal_border.recycle(recycler);
+        self.border_task_ids.recycle(recycler);
         recycler.recycle_vec(&mut self.clip_mask_instances);
         self.glyph_keys.recycle(recycler);
         self.segments.recycle(recycler);
@@ -1008,7 +1017,9 @@ impl PrimitiveScratchBuffer {
     }
 
     pub fn begin_frame(&mut self) {
-        self.arena.clear();
+        self.line_decoration.clear();
+        self.normal_border.clear();
+        self.border_task_ids.clear();
 
         // Clear the clip mask tasks for the beginning of the frame. Append
         // a single kind representing no clip mask, at the ClipTaskIndex::INVALID

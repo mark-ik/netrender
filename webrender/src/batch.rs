@@ -23,7 +23,6 @@ use crate::prim_store::{PrimitiveInstanceKind, ClipData};
 use crate::prim_store::{PrimitiveInstance, PrimitiveOpacity, SegmentInstanceIndex};
 use crate::prim_store::{BrushSegment, ClipMaskKind, ClipTaskIndex};
 use crate::prim_store::VECS_PER_SEGMENT;
-use crate::prim_store::borders::NormalBorderScratch;
 use crate::quad;
 use crate::render_target::RenderTargetContext;
 use crate::render_task_graph::{RenderTaskId, RenderTaskGraph};
@@ -1689,7 +1688,7 @@ impl BatchBuilder {
             }
             PrimitiveInstanceKind::NormalBorder { data_handle, scratch_handle, .. } => {
                 let prim_data = &ctx.data_stores.normal_border[data_handle];
-                let task_ids = NormalBorderScratch::get_cache_handles(scratch_handle, &ctx.scratch.arena);
+                let task_ids = &ctx.scratch.border_task_ids[ctx.scratch.normal_border[scratch_handle].task_ids];
                 let mut segment_data: SmallVec<[SegmentInstanceData; 8]> = SmallVec::new();
 
                 // Collect the segment instance data from each render
@@ -1970,7 +1969,7 @@ impl BatchBuilder {
                 );
             }
             PrimitiveInstanceKind::LineDecoration { scratch_handle, .. } => {
-                let render_task_id = *ctx.scratch.arena.read(scratch_handle);
+                let render_task_id = ctx.scratch.line_decoration[scratch_handle].task_id;
 
                 let (clip_task_address, clip_mask_texture_id) = ctx.get_prim_clip_task_and_texture(
                     prim_info.clip_task_index,

@@ -22,12 +22,19 @@ use crate::prim_store::{
     InternablePrimitive, PrimitiveStore,
 };
 use crate::prim_store::PrimitiveInstanceKind;
-use crate::scratch_buffer::ScratchHandle;
+use crate::prim_store::storage;
 use crate::spatial_tree::SpatialNodeIndex;
 use crate::util::clamp_to_scale_factor;
 
 /// Maximum resolution in device pixels at which line decorations are rasterized.
 pub const MAX_LINE_DECORATION_RESOLUTION: u32 = 4096;
+
+/// Per-frame scratch data for a LineDecoration primitive.
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+pub struct LineDecorationScratch {
+    pub task_id: RenderTaskId,
+}
 
 #[derive(Clone, Debug, Hash, MallocSizeOf, PartialEq, Eq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
@@ -232,7 +239,7 @@ impl InternablePrimitive for LineDecoration {
     ) -> PrimitiveInstanceKind {
         PrimitiveInstanceKind::LineDecoration {
             data_handle,
-            scratch_handle: ScratchHandle::INVALID,
+            scratch_handle: storage::Index::INVALID,
         }
     }
 }
