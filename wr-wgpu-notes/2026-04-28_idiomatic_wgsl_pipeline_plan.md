@@ -460,20 +460,31 @@ not change.
 ### S3 — Reference oracle capture
 
 **Done condition**: a chosen seed scene set has frozen oracle PNGs,
-captured from `upstream/upstream` + GL via Wrench.
+captured from a GL build of WebRender via Wrench.
 
 Checklist:
 
-- [ ] Side branch `oracle-capture` (or a separate worktree); clean
-  `upstream/upstream` + `gl_backend` enabled there.
-- [ ] Wrench harness: render N seed scenes (start: solid, linear
-  gradient, radial gradient, basic image, basic text, simple clip),
-  capture PNG output.
-- [ ] Freeze oracle PNGs as test fixtures in `tests/oracle/<scene>.png`
-  on `wgpu-native`.
-- [ ] Document the capture procedure so the oracle is reproducible.
-- [ ] **The oracle build is not in the main branch.** GL never
-  appears on `wgpu-native`.
+- [x] Side worktree at `../webrender-wgpu-oracle` off **`upstream/0.68`**
+  (not `upstream/upstream` — Mozilla's gecko-dev mirror dropped
+  `wrench/reftests/` from the standalone webrender tree; 0.68 is the
+  closest source for both wrench and the reftest corpus). GL is
+  unconditional on 0.68; the fork's `gl_backend` feature does not
+  exist there yet.
+- [x] Wrench rendered five initial seed scenes via
+  `wrench png <YAML> <OUT.png>` — narrower than the original
+  "5–10 scenes" suggestion's full breadth (image / text deferred
+  pending asset-dependency handling), but covers clear / shape / AA /
+  transform / gradient. Seed list in
+  [`webrender/tests/oracle/README.md`](../webrender/tests/oracle/README.md).
+- [x] Frozen as `webrender/tests/oracle/<scene>.{png,yaml}` on
+  `idiomatic-wgpu-pipeline` (both the YAML and the rendered PNG —
+  S4 will need both to render-and-compare).
+- [x] Capture procedure documented in
+  [`webrender/tests/oracle/README.md`](../webrender/tests/oracle/README.md);
+  reproducible from a fresh checkout.
+- [x] **GL never appears on `idiomatic-wgpu-pipeline`.** Verified —
+  the only places GL builds are the worktree and the inherited
+  upstream/0.68 source files (which we'll delete in S9).
 
 ### S4 — Reference scene rendering
 
@@ -639,8 +650,16 @@ S0 → (S1 ∥ S3) → S2 → S4 → (S5 ∥ S6) → S7 → S8 → S9.
   dynamic-offset uniform + immediate (push constant), §4.8 record-
   then-flush, §4.9 WGSL override specialization. 0.78s for both
   wgpu tests combined.
-- **S3**: oracle PNGs frozen for the seed scene set; capture procedure
-  documented.
+- **S3**: ✅ landed 2026-04-28. Five seed scenes (`blank`,
+  `rotated_line`, `fractional_radii`, `indirect_rotate`,
+  `linear_aligned_border_radius`) captured via `wrench png` on a
+  worktree at `upstream/0.68` (NVIDIA RTX 4060, OpenGL 3.2). PNGs +
+  YAMLs frozen in `webrender/tests/oracle/`; capture procedure
+  documented in the same dir's README. Gotcha logged: wrench's
+  `YamlFrameReader::new_from_args` panics on clap 3 because the
+  `png` subcommand on 0.68 doesn't declare the
+  `keyframes`/`list-resources`/`watch` args; local oracle worktree
+  carries a one-function patch to skip those decorators.
 - **S4**: each seed scene passes pixel-diff against oracle.
 - **S5**: chosen CTS subset green in CI.
 - **S6**: all ~50 shader programs authored; family-level reftests
