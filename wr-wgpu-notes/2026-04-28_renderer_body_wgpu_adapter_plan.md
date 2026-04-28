@@ -182,6 +182,68 @@ samples a texture goes through `WgpuDevice` instead of `device::Texture`.
 `cargo check -p webrender` green; no `gl.rs::Texture` reachable from
 renderer/.
 
+**Status (2026-04-28)**:
+
+- [x] **A2.0 Design seed.**
+  [`device/wgpu/texture.rs`](../webrender/src/device/wgpu/texture.rs)
+  defines `WgpuTexture` (wraps `wgpu::Texture` + format + dimensions)
+  and `TextureDesc`. `WgpuDevice::create_texture(&TextureDesc) ->
+  WgpuTexture` in [`adapter.rs`](../webrender/src/device/wgpu/adapter.rs).
+  Smoke test `wgpu_device_a2_create_texture_smoke` boots the device,
+  creates a 16×16 RGBA8 texture, produces a default view. **No
+  `renderer/*` callsites touched yet** — that's the per-sub-slice
+  work below.
+- [ ] **A2.1+ Per-callsite migration (multi-turn).** Each sub-slice
+  has `cargo check -p webrender` green as its mid-build gate; A2
+  closure has the imports check. Suggested ordering — smallest
+  contained subsystem first, biggest last:
+  - **A2.1 — dither texture lifecycle**: smallest contained
+    create/bind/delete trinity. Sites: `mod.rs:2079` (create),
+    `mod.rs:2178/3501/3528/3555` (bind), `mod.rs:4640` (delete).
+  - **A2.2 — zoom-debug texture lifecycle**:
+    `mod.rs:4643` (delete) plus its create site (TBD during
+    sub-slice).
+  - **A2.3 — read-pixels path**:
+    `mod.rs:1262/4614/4619`. `tests::readback_target` is the
+    prototype; promote into `WgpuDevice::read_pixels(...)`.
+  - **A2.4 — bind_draw_target / clear_target**: every per-pass
+    code path in the renderer. Biggest sub-slice; touches
+    `mod.rs` lines 1507, 1983, 2332, 2844, 2909, 3182, 3222,
+    3234, 3338, 3674, …. Becomes
+    `WgpuDevice::encode_pass(target, clear, draws...)`.
+  - **A2.5 — blit_render_target**: wgpu has no direct blit;
+    same-format / same-size cases use
+    `CommandEncoder::copy_texture_to_texture`, others need a
+    render-pass helper. Sites: `mod.rs:2321/2635/2814/2946/
+    4362/4374`.
+  - **A2.6 — misc**: `max_texture`, `attach_read_texture`,
+    `use_batched_texture`, `delete_external_texture`,
+    `delete_fbo` (no-op in wgpu), `begin_frame` / `end_frame`.
+- [ ] **A2 close**: confirm no `device::Texture` /
+  `device::ExternalTexture` / `TextureSlot` / `TextureFilter` /
+  `TextureFlags` / `Texel` / `FormatDesc` imports remain in
+  `renderer/`. Rolls into A8.
+
+#### A2 recon (2026-04-28, at A2.0 closure)
+
+Renderer-side texture coupling:
+
+| Surface | Methods | Notes |
+|---|---|---|
+| Texture lifecycle | `create_texture`, `delete_texture`, `bind_texture`, `use_batched_texture` | `bind_texture` has no wgpu equivalent — bindings live on `BindGroup` at pass-encoding time |
+| Render-target / FBO | `bind_draw_target`, `bind_read_target_impl`, `attach_read_texture`, `clear_target`, `blit_render_target`, `invalidate_depth_target`, `delete_fbo` | wgpu has no FBO concept; views are passed to `BeginRenderPass`. `invalidate_depth_target` → `StoreOp::Discard` |
+| Frame lifecycle | `begin_frame`, `end_frame` | Maps to `wgpu::CommandEncoder` lifecycle in `device/wgpu/frame.rs` |
+| Pixel readback | `read_pixels`, `read_pixels_into` | Already prototyped in `tests::readback_target` |
+| Query | `max_texture` | `wgpu::Limits::max_texture_dimension_2d` |
+| External | `delete_external_texture` | Embedder hands us a `wgpu::TextureView` (per servo-wgpu pattern); no separate delete needed |
+
+No file in `renderer/` is both small AND self-contained:
+`external_image.rs` (4 KB, smallest) goes through the cross-repo
+`ExternalImageHandler` API in `webrender_api`. `debug.rs` (14 KB,
+next smallest) is a full mini-renderer touching `Program`, `VAO`,
+`Texture`, `TextureSlot` together. Migration therefore proceeds
+per-method-per-callsite within sub-slices, not per-file.
+
 ### A3 — Vertex / buffer path migration
 
 **Done condition**: renderer callsites that create / bind VAOs /

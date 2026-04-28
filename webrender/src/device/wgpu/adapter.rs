@@ -19,6 +19,7 @@ use std::sync::Mutex;
 
 use super::core;
 use super::pipeline::{BrushSolidPipeline, build_brush_solid};
+use super::texture::{TextureDesc, WgpuTexture};
 
 /// Wgpu-native device adapter. Owned by the renderer body once
 /// adapter-plan slices A2..A8 land; for now used only by the wgpu
@@ -53,5 +54,36 @@ impl WgpuDevice {
             .entry(format)
             .or_insert_with(|| build_brush_solid(&self.core.device, format))
             .clone()
+    }
+
+    /// Create a new texture per `desc`. wgpu-native shape: returns
+    /// an owned `WgpuTexture`; deletion is implicit at Drop. Per
+    /// adapter plan §A2: replaces `device::Device::create_texture`'s
+    /// `(target, format, width, height, filter, render_target,
+    /// layer_count) -> Texture` shape — sampler / swizzle / filter
+    /// details migrate to the sampler cache (separate slice), and
+    /// `render_target` becomes a `usage` bit
+    /// (`TextureUsages::RENDER_ATTACHMENT`).
+    pub fn create_texture(&self, desc: &TextureDesc<'_>) -> WgpuTexture {
+        let texture = self.core.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(desc.label),
+            size: wgpu::Extent3d {
+                width: desc.width,
+                height: desc.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: desc.format,
+            usage: desc.usage,
+            view_formats: &[],
+        });
+        WgpuTexture {
+            texture,
+            format: desc.format,
+            width: desc.width,
+            height: desc.height,
+        }
     }
 }

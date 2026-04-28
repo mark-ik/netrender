@@ -246,6 +246,26 @@ fn wgpu_device_a1_smoke() {
     let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Bgra8Unorm);
 }
 
+/// Adapter-plan §A2 design seed: `WgpuDevice::create_texture` works
+/// in isolation; produces a `WgpuTexture` that can hand out a
+/// default view. Not yet wired into renderer/* (callsite migration
+/// is per-call-site sub-slices of A2).
+#[test]
+fn wgpu_device_a2_create_texture_smoke() {
+    let dev = adapter::WgpuDevice::boot().expect("WgpuDevice boot");
+    let tex = dev.create_texture(&texture::TextureDesc {
+        label: "A2 smoke",
+        width: 16,
+        height: 16,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+    });
+    assert_eq!((tex.width, tex.height), (16, 16));
+    assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
+    let _view = tex.create_view();
+}
+
 /// S4 first slice: render the `blank` oracle scene (full-frame white
 /// clear at wrench's 3840×2160 hidpi default) through the new wgpu path
 /// and pixel-diff against the captured oracle PNG. Tolerance: 0 (exact
