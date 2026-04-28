@@ -266,6 +266,34 @@ fn wgpu_device_a2_create_texture_smoke() {
     let _view = tex.create_view();
 }
 
+/// Adapter-plan §A2.1 prep: dither-shaped texture (8×8 R8) gets
+/// created and uploaded via `WgpuDevice::create_texture` +
+/// `upload_texture`. Mirrors what `init.rs:484` does today via
+/// `device::Device::create_texture` + `upload_texture_immediate`.
+/// Receipt for the texture API surface that the dither migration
+/// will use once the per-pass encoding (A2.4) is in place to handle
+/// the bind sites.
+#[test]
+fn wgpu_device_a21_dither_create_upload_smoke() {
+    let dev = adapter::WgpuDevice::boot().expect("WgpuDevice boot");
+    let tex = dev.create_texture(&texture::TextureDesc {
+        label: "dither_matrix (A2.1 prep)",
+        width: 8,
+        height: 8,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    });
+    // Synthetic 8×8 dither pattern (real dither matrix is in
+    // init.rs; this test just exercises upload).
+    let data: Vec<u8> = (0..64).collect();
+    dev.upload_texture(&tex, &data);
+    // Force a flush so the upload is observable.
+    dev.core
+        .device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll");
+}
+
 /// S4 first slice: render the `blank` oracle scene (full-frame white
 /// clear at wrench's 3840×2160 hidpi default) through the new wgpu path
 /// and pixel-diff against the captured oracle PNG. Tolerance: 0 (exact

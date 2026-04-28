@@ -86,4 +86,33 @@ impl WgpuDevice {
             height: desc.height,
         }
     }
+
+    /// Upload a tightly-packed pixel buffer to the full extent of
+    /// `tex`. wgpu-native replacement for
+    /// `device::Device::upload_texture_immediate`. The wgpu queue
+    /// is async-by-default; the upload is in flight after this
+    /// returns and is observable on the next submit.
+    pub fn upload_texture(&self, tex: &WgpuTexture, data: &[u8]) {
+        let bytes_per_row = tex.width
+            * super::format::format_bytes_per_pixel_wgpu(tex.format);
+        self.core.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(tex.height),
+            },
+            wgpu::Extent3d {
+                width: tex.width,
+                height: tex.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 }

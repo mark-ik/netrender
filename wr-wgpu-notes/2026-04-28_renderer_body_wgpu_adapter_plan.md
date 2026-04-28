@@ -193,36 +193,73 @@ renderer/.
   creates a 16×16 RGBA8 texture, produces a default view. **No
   `renderer/*` callsites touched yet** — that's the per-sub-slice
   work below.
-- [ ] **A2.1+ Per-callsite migration (multi-turn).** Each sub-slice
-  has `cargo check -p webrender` green as its mid-build gate; A2
-  closure has the imports check. Suggested ordering — smallest
-  contained subsystem first, biggest last:
-  - **A2.1 — dither texture lifecycle**: smallest contained
-    create/bind/delete trinity. Sites: `mod.rs:2079` (create),
-    `mod.rs:2178/3501/3528/3555` (bind), `mod.rs:4640` (delete).
-  - **A2.2 — zoom-debug texture lifecycle**:
-    `mod.rs:4643` (delete) plus its create site (TBD during
-    sub-slice).
-  - **A2.3 — read-pixels path**:
-    `mod.rs:1262/4614/4619`. `tests::readback_target` is the
-    prototype; promote into `WgpuDevice::read_pixels(...)`.
-  - **A2.4 — bind_draw_target / clear_target**: every per-pass
-    code path in the renderer. Biggest sub-slice; touches
-    `mod.rs` lines 1507, 1983, 2332, 2844, 2909, 3182, 3222,
-    3234, 3338, 3674, …. Becomes
-    `WgpuDevice::encode_pass(target, clear, draws...)`.
-  - **A2.5 — blit_render_target**: wgpu has no direct blit;
-    same-format / same-size cases use
-    `CommandEncoder::copy_texture_to_texture`, others need a
-    render-pass helper. Sites: `mod.rs:2321/2635/2814/2946/
-    4362/4374`.
-  - **A2.6 — misc**: `max_texture`, `attach_read_texture`,
-    `use_batched_texture`, `delete_external_texture`,
-    `delete_fbo` (no-op in wgpu), `begin_frame` / `end_frame`.
+- [x] **A2.1.0 dither texture API prep.** Reading the actual
+  dither sites surfaced an architectural dependency: the field
+  type `Option<Texture>` (mod.rs:824) is bound at four sites via
+  `self.device.bind_texture(slot, &Texture, swizzle)`. wgpu has no
+  implicit-bind state machine; bindings live on `BindGroup` at
+  pass-encoding time, so migrating the field type to `WgpuTexture`
+  cannot work in isolation — it requires the bind sites to be
+  pass-encoding-shaped (i.e. A2.X foundational pass encoding) to
+  exist first. **A2.1 full lifecycle migration is gated on
+  A2.X closure.** What landed instead this sub-slice:
+  [`format.rs`](../webrender/src/device/wgpu/format.rs)
+  defines `image_format_to_wgpu` / `image_format_bytes_per_pixel`
+  / `format_bytes_per_pixel_wgpu` for the `ImageFormat` variants
+  the renderer body actually uses (R8, R16, RG8, RGBA8, BGRA8,
+  RGBAF32). `WgpuDevice::upload_texture(&WgpuTexture, &[u8])`
+  added in `adapter.rs` (wraps `Queue::write_texture`). Smoke
+  test `wgpu_device_a21_dither_create_upload_smoke` exercises an
+  8×8 R8 dither-shaped texture create + upload + flush, mirroring
+  what `init.rs:484` does today via the GL device.
+- [ ] **A2.X — foundational pass encoding (was A2.4).** Promoted
+  to first per-callsite migration because every other lifecycle
+  migration depends on it. Builds out `WgpuDevice::encode_pass(...)`
+  / `flush_pass(...)` (extending `pass.rs::flush_pass`) for the
+  renderer's per-pass code paths: `bind_draw_target`,
+  `clear_target`, `invalidate_depth_target`, plus the binding
+  side of `bind_texture`. Once the renderer's pass-encoding goes
+  through this, `bind_texture` callsites become BindGroup setup
+  inside the pass encoder rather than free-floating state
+  mutations. Sites: `mod.rs:1507, 1983, 2332, 2844, 2909, 3182,
+  3222, 3234, 3338, 3674, …`. Biggest sub-slice; foundational.
+- [ ] **A2.1 — dither texture lifecycle** (full): now gated on
+  A2.X. Sites: `init.rs:484` (create + upload),
+  `mod.rs:824` (field type), `mod.rs:2178/3501/3528/3555` (bind,
+  rewritten to BindGroup setup once pass encoding is wgpu-native),
+  `mod.rs:4640` (delete → drop).
+- [ ] **A2.2 — zoom-debug texture lifecycle**: gated on A2.X for
+  the same reason as A2.1.
+- [ ] **A2.3 — read-pixels path**:
+  `mod.rs:1262/4614/4619`. The `tests::readback_target` helper is
+  the prototype; promote to `WgpuDevice::read_pixels(...)`.
+  *Possibly* unblocked earlier than A2.X — `copy_texture_to_buffer`
+  takes a `TextureView` directly with no FBO state — but the
+  callsites today come after a `bind_read_target_impl` setup that
+  is part of pass encoding. Decide during sub-slice scoping whether
+  read-pixels can ride ahead.
+- [ ] **A2.5 — blit_render_target**: wgpu has no direct blit;
+  same-format / same-size cases use
+  `CommandEncoder::copy_texture_to_texture`, others need a
+  render-pass helper. Sites: `mod.rs:2321/2635/2814/2946/
+  4362/4374`. Gated on A2.X.
+- [ ] **A2.6 — misc**: `max_texture`, `attach_read_texture`,
+  `use_batched_texture`, `delete_external_texture`,
+  `delete_fbo` (no-op in wgpu), `begin_frame` / `end_frame`.
 - [ ] **A2 close**: confirm no `device::Texture` /
   `device::ExternalTexture` / `TextureSlot` / `TextureFilter` /
   `TextureFlags` / `Texel` / `FormatDesc` imports remain in
   `renderer/`. Rolls into A8.
+
+**Sequenced finding during A2.1 prep**: the original ordering
+(smallest-contained-first → biggest-last) inverted the actual
+dependency graph. The "smallest" texture-lifecycle migrations all
+depend on pass-encoding being wgpu-native because of how
+`bind_texture` and per-pass `bind_draw_target` interact. Revised
+order puts A2.X (pass encoding) first as foundational; per-texture
+lifecycles drop in afterward. The texture-creation + upload + format
+API surface (A2.0 + A2.1.0) can ship ahead because it's
+self-contained — the renderer body just doesn't call it yet.
 
 #### A2 recon (2026-04-28, at A2.0 closure)
 
