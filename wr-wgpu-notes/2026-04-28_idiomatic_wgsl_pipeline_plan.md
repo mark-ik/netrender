@@ -494,13 +494,27 @@ new wgpu path; pixel-diff passes within tolerance.
 Checklist:
 
 - [ ] Author WGSL for each shader family the seed scenes need.
+  Currently `blank` is rendered (no shader needed — pure clear).
+  `rotated_line` and `indirect_rotate` need a transformed-quad
+  shader (extends `brush_solid` with a transform uniform);
+  `fractional_radii` needs the `cs_clip_rectangle` rounded-corner
+  mask path; `linear_aligned_border_radius` needs `ps_quad_gradient`.
+- [x] **Reftest harness landed**: `tests::load_oracle_png`,
+  `tests::readback_target`, `tests::count_pixel_diffs` plus the
+  `oracle_blank_smoke` test in
+  [`webrender/src/device/wgpu/tests.rs`](../webrender/src/device/wgpu/tests.rs)
+  exercise the load-render-diff loop end-to-end at the captured
+  oracle resolution (3840×2160).
 - [ ] Connect to the inherited renderer body — adapt at the device
-  boundary; do not modify `frame_builder` / picture caching.
-- [ ] Reftest harness: load oracle PNG, render scene through new wgpu
-  device, pixel-diff.
-- [ ] Tolerance policy: exact match by default; documented `fuzzy-if`
-  per scene only with a root-cause comment (per dual-servo plan §"No
-  hacks"). No undocumented tolerances.
+  boundary; do not modify `frame_builder` / picture caching. **Not
+  yet exercised** — `blank` is a pure clear so doesn't traverse
+  webrender's frame builder. The remaining four scenes will surface
+  this.
+- [x] Tolerance policy in place: exact match by default.
+  `oracle_blank_smoke` asserts `count_pixel_diffs(..., tolerance=0)
+  == 0` and passes. Documented `fuzzy-if` per scene only when a
+  concrete root cause emerges (per dual-servo plan §"No hacks");
+  no undocumented tolerances.
 
 ### S5 — WebGPU CTS gate
 
@@ -660,7 +674,15 @@ S0 → (S1 ∥ S3) → S2 → S4 → (S5 ∥ S6) → S7 → S8 → S9.
   `png` subcommand on 0.68 doesn't declare the
   `keyframes`/`list-resources`/`watch` args; local oracle worktree
   carries a one-function patch to skip those decorators.
-- **S4**: each seed scene passes pixel-diff against oracle.
+- **S4**: ⏳ in progress.
+  - `blank` ✅ matches oracle exactly (3840×2160, tolerance 0) via
+    `oracle_blank_smoke` (2026-04-28). Load-render-diff harness
+    landed; usable for the remaining scenes once their shaders /
+    renderer-body integration land.
+  - `rotated_line`, `fractional_radii`, `indirect_rotate`,
+    `linear_aligned_border_radius` — pending. Each requires
+    primitive rendering through the renderer body (or a wgpu-native
+    equivalent) + at least one new shader family.
 - **S5**: chosen CTS subset green in CI.
 - **S6**: all ~50 shader programs authored; family-level reftests
   pass.
