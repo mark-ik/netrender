@@ -5,6 +5,7 @@
 //! RenderPipeline cache; async compile; `wgpu::PipelineCache` disk-backed
 //! reuse. See plan §4.11, §6 S1.
 
+#[derive(Clone)]
 pub struct BrushSolidPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub layout: wgpu::BindGroupLayout,

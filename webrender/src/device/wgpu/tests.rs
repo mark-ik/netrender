@@ -233,6 +233,19 @@ fn render_rect_smoke() {
     assert_eq!(&mapped[row_start..row_start + 4], &[255, 0, 0, 255]);
 }
 
+/// Adapter-plan §A1 receipt: `WgpuDevice::boot()` succeeds, and
+/// the lazy `ensure_<family>` cache pattern works for both
+/// repeated and distinct format keys. Compiling + non-panicking is
+/// the receipt; cache hit/miss is a `HashMap` invariant we don't
+/// need to retest.
+#[test]
+fn wgpu_device_a1_smoke() {
+    let dev = adapter::WgpuDevice::boot().expect("WgpuDevice boot");
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Bgra8Unorm);
+}
+
 /// S4 first slice: render the `blank` oracle scene (full-frame white
 /// clear at wrench's 3840×2160 hidpi default) through the new wgpu path
 /// and pixel-diff against the captured oracle PNG. Tolerance: 0 (exact

@@ -144,18 +144,34 @@ before code lands.
 
 ### A1 — wgpu-native `Device` adapter struct
 
-**Done condition**: a `webrender::device::wgpu::WgpuDevice` (working
-name) struct that:
+**Done condition** (✅ landed 2026-04-28):
 
-- Holds `core::Device` (instance/adapter/device/queue) plus the
-  caches from `device/wgpu/{pipeline,binding,texture,buffer}.rs`
-- Exposes wgpu-native methods named to match the rendering verbs
-  the renderer body needs (encode_pass, create_texture,
-  ensure_pipeline, etc.) — *not* the GL-named verbs
-- Does *not* mimic `gl.rs::Device` API; the shape is intentionally
-  different
-- Compiles in isolation; covered by a unit test that builds it
-  via `core::boot()`
+- [x] [`webrender/src/device/wgpu/adapter.rs`](../webrender/src/device/wgpu/adapter.rs)
+  defines `WgpuDevice`, composing `core::Device` plus a lazy
+  pipeline cache keyed by `wgpu::TextureFormat`. Cache pattern is
+  `Mutex<HashMap<Key, Family>>::entry().or_insert_with()` —
+  returns clones (wgpu 29 handle types are `Clone`, Arc-wrapped
+  internally). This is the model A2..A7 replicate for every other
+  cache (bind-group layouts, samplers, vertex layouts, etc.).
+- [~] **Method surface kicked off** with `WgpuDevice::ensure_brush_solid(format)`.
+  Broader rendering verbs (`encode_pass`, `create_texture`,
+  `ensure_<other_family>`, `upload_texture`, …) added by A2..A7
+  as each path migrates.
+- [x] **Does not mimic `gl.rs::Device` API.** No `bind_program`,
+  no `set_uniform`, no per-call binding-state mutations. The
+  receiver is `&self`; per-pass state lives inside `pass.rs`'s
+  `flush_pass`.
+- [x] Smoke test `device::wgpu::tests::wgpu_device_a1_smoke`
+  boots the device and exercises lazy build for two formats.
+
+**Sequenced fix during A1**:
+
+- `wgpu::RenderPipeline` in wgpu 29 has no `global_id()` method
+  (used in older wgpu for handle-equality assertions). Adapter
+  smoke test relies on `cargo test` non-panicking + no compile
+  errors for cache verification rather than handle equality;
+  `HashMap::entry().or_insert_with()` is a `std` invariant we
+  don't need to retest.
 
 ### A2 — Texture path migration
 
