@@ -506,10 +506,14 @@ Checklist:
   exercise the load-render-diff loop end-to-end at the captured
   oracle resolution (3840×2160).
 - [ ] Connect to the inherited renderer body — adapt at the device
-  boundary; do not modify `frame_builder` / picture caching. **Not
-  yet exercised** — `blank` is a pure clear so doesn't traverse
-  webrender's frame builder. The remaining four scenes will surface
-  this.
+  boundary; do not modify `frame_builder` / picture caching.
+  **Promoted to its own follow-up plan**: the recon at S4-1/5
+  closure (2026-04-28) showed 169 `self.device.*` callsites + 57
+  unique device methods + ~25 GL-shaped imported types in
+  ~11.6k LOC of `webrender/src/renderer/`. Tracked in
+  [`2026-04-28_renderer_body_wgpu_adapter_plan.md`](2026-04-28_renderer_body_wgpu_adapter_plan.md).
+  Closure of that plan's slice A8 also closes this S4 checkbox and
+  starts the remaining four oracle scenes passing.
 - [x] Tolerance policy in place: exact match by default.
   `oracle_blank_smoke` asserts `count_pixel_diffs(..., tolerance=0)
   == 0` and passes. Documented `fuzzy-if` per scene only when a
@@ -674,15 +678,16 @@ S0 → (S1 ∥ S3) → S2 → S4 → (S5 ∥ S6) → S7 → S8 → S9.
   `png` subcommand on 0.68 doesn't declare the
   `keyframes`/`list-resources`/`watch` args; local oracle worktree
   carries a one-function patch to skip those decorators.
-- **S4**: ⏳ in progress.
+- **S4**: ⏳ paused at 1/5 pending the renderer-body adapter plan.
   - `blank` ✅ matches oracle exactly (3840×2160, tolerance 0) via
     `oracle_blank_smoke` (2026-04-28). Load-render-diff harness
-    landed; usable for the remaining scenes once their shaders /
-    renderer-body integration land.
+    landed.
   - `rotated_line`, `fractional_radii`, `indirect_rotate`,
-    `linear_aligned_border_radius` — pending. Each requires
-    primitive rendering through the renderer body (or a wgpu-native
-    equivalent) + at least one new shader family.
+    `linear_aligned_border_radius` — gated on
+    [`2026-04-28_renderer_body_wgpu_adapter_plan.md`](2026-04-28_renderer_body_wgpu_adapter_plan.md)
+    slice A8. The remaining scenes need primitive rendering through
+    the renderer body, which itself needs its GL-shaped device
+    boundary rewritten to wgpu-native first.
 - **S5**: chosen CTS subset green in CI.
 - **S6**: all ~50 shader programs authored; family-level reftests
   pass.
