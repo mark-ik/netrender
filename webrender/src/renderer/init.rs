@@ -752,10 +752,16 @@ pub fn create_webrender_instance(
     #[cfg(feature = "capture")]
     let read_fbo = device.create_fbo();
 
+    // Renderer-body adapter plan §A2.X.5: boot the wgpu-native device
+    // adapter alongside the GL `Device`. Both coexist while renderer
+    // callsites migrate; A8 retires GL.
+    let wgpu_device = crate::device::wgpu::adapter::WgpuDevice::boot()?;
+
     let mut renderer = Renderer {
         result_rx,
         api_tx: api_tx.clone(),
         device,
+        wgpu_device,
         active_documents: FastHashMap::default(),
         pending_texture_updates: Vec::new(),
         pending_texture_cache_updates: false,

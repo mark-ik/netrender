@@ -263,7 +263,20 @@ renderer/.
     oracle receipts acquire and submit encoders through the adapter,
     so upcoming renderer callsites no longer need to reach through
     `core.device` / `core.queue` for the frame command lifecycle.
-  - [ ] **A2.X.5+ per-callsite migration**: renderer's per-pass
+  - [x] **A2.X.5 — `WgpuDevice` field on `Renderer` (2026-04-29).**
+    Foundational install: `Renderer` now carries
+    `pub wgpu_device: WgpuDevice` alongside the GL `Device`, booted
+    independently in `create_webrender_instance`
+    ([`renderer/init.rs`](../webrender/src/renderer/init.rs)).
+    `RendererError::WgpuBoot(BootError)` surfaces adapter-selection
+    failures via `?`. No callsites changed; both devices coexist
+    while subsequent sub-slices migrate verbs. Receipt:
+    `cargo check -p webrender` green (warnings fall 30→6 as adapter
+    methods become reachable); 7 wgpu tests still pass in 1.77s.
+    Established the dual-device transitional pattern A2.X.6+ build
+    on. Pitfall #7 watch: servo-wgpu now hits a second wgpu boot
+    inside webrender; verify before its next pull.
+  - [ ] **A2.X.6+ per-callsite migration**: renderer's per-pass
     code paths shift from "GL state machine" (`bind_draw_target`,
     `clear_target`, `invalidate_depth_target`, plus per-draw
     `bind_texture`) to "open `wgpu::RenderPass`, replay
@@ -271,8 +284,15 @@ renderer/.
     2844, 2909, 3182, 3222, 3234, 3338, 3674, …`. Each sub-slice
     migrates one per-pass code path; the renderer's traversal
     accumulates `DrawIntent`s into a per-pass bucket and calls
-    `WgpuDevice::encode_pass` to flip them into wgpu calls.
-    Multi-turn.
+    `self.wgpu_device.encode_pass` to flip them into wgpu calls.
+    Multi-turn. **First-callsite recon required before A2.X.6
+    starts**: every named candidate (1507/1983/3338) sits behind
+    GL-shaped state (`FBOId`, `Texture`, `DrawTarget`) that A2.1+
+    has not yet migrated, so the actual first per-pass migration
+    needs either (a) parallel wgpu-native target plumbing isolated
+    to the migrated path, or (b) a Texture/DrawTarget dual-handle
+    bridge so one path can run wgpu-native while the rest stays GL.
+    Decision deferred to A2.X.6 entry.
 - [ ] **A2.1 — dither texture lifecycle** (full): now gated on
   A2.X. Sites: `init.rs:484` (create + upload),
   `mod.rs:824` (field type), `mod.rs:2178/3501/3528/3555` (bind,

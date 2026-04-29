@@ -774,6 +774,11 @@ pub struct Renderer {
     result_rx: Receiver<ResultMsg>,
     api_tx: Sender<ApiMsg>,
     pub device: Device,
+    /// Wgpu-native device adapter (renderer-body adapter plan §A2.X.5).
+    /// Boots independently of the GL `Device` above; both coexist while
+    /// renderer callsites migrate from GL-shaped verbs to `WgpuDevice`
+    /// methods. A8 (re-export flip) is the receipt for GL deletion.
+    pub wgpu_device: crate::device::wgpu::adapter::WgpuDevice,
     pending_texture_updates: Vec<TextureUpdateList>,
     /// True if there are any TextureCacheUpdate pending.
     pending_texture_cache_updates: bool,
@@ -915,6 +920,7 @@ pub enum RendererError {
     MaxTextureSize,
     SoftwareRasterizer,
     OutOfMemory,
+    WgpuBoot(crate::device::wgpu::core::BootError),
 }
 
 impl From<ShaderError> for RendererError {
@@ -926,6 +932,12 @@ impl From<ShaderError> for RendererError {
 impl From<std::io::Error> for RendererError {
     fn from(err: std::io::Error) -> Self {
         RendererError::Thread(err)
+    }
+}
+
+impl From<crate::device::wgpu::core::BootError> for RendererError {
+    fn from(err: crate::device::wgpu::core::BootError) -> Self {
+        RendererError::WgpuBoot(err)
     }
 }
 
