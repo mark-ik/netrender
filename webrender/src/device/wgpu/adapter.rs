@@ -17,6 +17,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use super::core::{REQUIRED_FEATURES, WgpuHandles};
+#[cfg(test)]
 use super::core;
 use super::frame;
 use super::pass::{self, DrawIntent, RenderPassTarget};
@@ -24,21 +26,47 @@ use super::pipeline::{BrushSolidPipeline, build_brush_solid};
 use super::readback;
 use super::texture::{TextureDesc, WgpuTexture};
 
-/// Wgpu-native device adapter. Owned by the renderer body once
-/// adapter-plan slices A2..A8 land; for now used only by the wgpu
-/// test infrastructure.
+/// Wgpu-native device adapter. Holds the embedder-supplied wgpu
+/// primitives plus renderer-owned caches (pipelines, bind groups,
+/// samplers, vertex layouts).
+///
+/// Constructed via `with_external(handles)` in production; the test
+/// shortcut `boot()` exists for device-side tests that don't have an
+/// embedder fixture.
 pub struct WgpuDevice {
-    pub core: core::Device,
+    pub core: WgpuHandles,
     /// Pipeline cache keyed by family + render-target format. The
     /// `Mutex<HashMap<Key, Pipeline>>::entry().or_insert_with()`
-    /// pattern is the model A2..A7 replicate for every other cache
+    /// pattern is the model later P slices replicate for other caches
     /// (bind-group layouts, samplers, vertex layouts, etc.).
     brush_solid: Mutex<HashMap<wgpu::TextureFormat, BrushSolidPipeline>>,
 }
 
 impl WgpuDevice {
-    /// Boot the device. Wraps `core::boot` and initialises empty
-    /// caches.
+    /// Adopt embedder-supplied wgpu primitives. The embedder has already
+    /// created instance / adapter / device / queue for its own surface
+    /// or compositor work; the renderer borrows the same ones so it
+    /// shares a device with the embedder (P0 — pipeline-first migration
+    /// plan §6).
+    ///
+    /// Verifies `REQUIRED_FEATURES` are present on the adapter. Returns
+    /// the missing-features set on failure so the embedder can decide
+    /// whether to fall back, retry with different power preference, or
+    /// surface the error.
+    pub fn with_external(handles: WgpuHandles) -> Result<Self, wgpu::Features> {
+        let missing = REQUIRED_FEATURES - handles.adapter.features();
+        if !missing.is_empty() {
+            return Err(missing);
+        }
+        Ok(Self {
+            core: handles,
+            brush_solid: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Test-only standalone boot. Wraps `core::boot()` for
+    /// device-side tests; production goes through `with_external`.
+    #[cfg(test)]
     pub fn boot() -> Result<Self, core::BootError> {
         Ok(Self {
             core: core::boot()?,

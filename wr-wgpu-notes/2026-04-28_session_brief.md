@@ -10,11 +10,8 @@ actionable sequencing lives in the new plan.
 ## Where we're at
 
 **Branch shape**: `idiomatic-wgpu-pipeline` off `upstream/upstream`,
-tracking `origin/idiomatic-wgpu-pipeline`. HEAD:
-`40661cd22 Revert "a2.x.5: install WgpuDevice on Renderer"`. Working
-tree clean of code changes; doc refactor (this brief + new plan +
-supersession notice + parent plan reference updates) is the next
-commit.
+tracking `origin/idiomatic-wgpu-pipeline`. P0 (webrender side) just
+landed. Pre-P0 tag `pre-p0` at `aa1850ed7` for servo-wgpu pinning.
 
 **Plans in play**:
 
@@ -48,6 +45,7 @@ commit.
 | Foundational A2.0 / A2.1.0 | ✅ | `WgpuTexture` + create / upload + format map (kept for legit textures only) |
 | Foundational A2.3.0 | ✅ | `WgpuDevice::read_rgba8_texture`; oracle harness uses it |
 | ❌ A2.X.5 | reverted | independent `WgpuDevice::boot()` was a hack — embedder must own the wgpu device. Reverted as `40661cd22`; original `ad655dc09` preserved in branch history. |
+| **P0 — Embedder wgpu handoff** | ✅ webrender side | `WgpuHandles` struct, `WgpuDevice::with_external`, `Renderer.wgpu_device`, new `create_webrender_instance(gl, wgpu, …)` signature, `RendererError::WgpuFeaturesMissing`. `core::boot()` + `WgpuDevice::boot()` gated behind `cfg(test)`. Servo-wgpu side outstanding (pin against `pre-p0` tag until its call-site updates). |
 
 **Concrete artifacts**:
 
@@ -76,11 +74,9 @@ commit.
 
 **Critical path** (per new plan §6):
 
-1. **P0 — Embedder wgpu handoff.** `create_webrender_instance`
-   takes `WgpuHandles` from the caller. `WgpuDevice::with_external`
-   replaces internal-boot for production; `core::boot()` survives
-   as a test helper. Servo-wgpu updated to pass its already-
-   existing wgpu device / queue. Pre-P0 tag for servo-wgpu pinning.
+1. ~~**P0 — Embedder wgpu handoff.**~~ ✅ webrender side landed
+   2026-04-29. Servo-wgpu side outstanding — pins against `pre-p0`
+   tag (`aa1850ed7`) until its call-site updates land.
 2. **P1 — `brush_solid` end-to-end pilot.** First family migrated.
    Largest single slice; forces every architectural decision in
    parent §4.6–4.11 to land at once: storage-buffer reshape of
@@ -198,17 +194,20 @@ de-risk later work:
 
 ## Bottom line
 
-Design is over; the wgpu module foundation (boot, pass encoding,
-encoder lifecycle, texture create / upload, readback) is in place
-and seven tests are green. The renderer body has not yet been
-touched — `Renderer.device: Device` is still the only GPU surface,
-and `gl.rs` still owns it.
+Design is over; the wgpu module foundation is in place and seven
+tests are green. **P0 (embedder wgpu handoff) landed on the
+webrender side 2026-04-29**: `create_webrender_instance` now takes a
+`WgpuHandles` parameter, `Renderer.wgpu_device` is installed via the
+embedder's wgpu primitives (no second boot), `RendererError::WgpuFeaturesMissing`
+surfaces adapter mismatches, and `boot()` is `cfg(test)` only. The
+renderer body has not yet been migrated — `Renderer.device: Device`
+(GL) is still what every callsite uses. `gl.rs` still owns the
+GPU surface for production rendering.
 
-The next real milestone is P0: change `create_webrender_instance`'s
-signature so the embedder hands wgpu primitives to webrender,
-matching how it hands the GL context today. P1 (`brush_solid`
-end-to-end through the renderer body) is the architectural-pattern
-slice that the rest of the plan reuses.
+The next milestone is P1 (`brush_solid` end-to-end through the
+renderer body) — the architectural-pattern slice that the rest of
+the plan reuses. Forces every §4.6–4.11 decision to land at once
+for one family. Multi-week.
 
 The project's three principles — idiomatic wgsl/wgpu backend, no
 hacks, no unnecessary GL structure carryover — are the bar the

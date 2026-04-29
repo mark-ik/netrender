@@ -774,6 +774,11 @@ pub struct Renderer {
     result_rx: Receiver<ResultMsg>,
     api_tx: Sender<ApiMsg>,
     pub device: Device,
+    /// Wgpu-native device adapter (pipeline-first migration plan §6
+    /// P0). Holds the embedder-supplied wgpu primitives. Both `device`
+    /// (GL) and `wgpu_device` coexist while shader families migrate;
+    /// phase D retires GL.
+    pub wgpu_device: crate::device::wgpu::adapter::WgpuDevice,
     pending_texture_updates: Vec<TextureUpdateList>,
     /// True if there are any TextureCacheUpdate pending.
     pending_texture_cache_updates: bool,
@@ -915,6 +920,10 @@ pub enum RendererError {
     MaxTextureSize,
     SoftwareRasterizer,
     OutOfMemory,
+    /// Embedder-supplied wgpu adapter is missing one or more required
+    /// features (see `device::wgpu::core::REQUIRED_FEATURES`). Surfaced
+    /// from `WgpuDevice::with_external` at `create_webrender_instance`.
+    WgpuFeaturesMissing(::wgpu::Features),
 }
 
 impl From<ShaderError> for RendererError {

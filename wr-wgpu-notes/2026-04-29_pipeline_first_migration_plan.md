@@ -172,36 +172,60 @@ deletes GL.
 
 ### P0 — Embedder wgpu handoff
 
-**Done condition**: `create_webrender_instance` accepts wgpu primitives
-from the embedder; webrender does not boot wgpu in production. Servo-
-wgpu's call site updated to pass its already-existing wgpu device /
-queue.
+**Done condition** (✅ landed 2026-04-29 webrender side; servo-wgpu
+side outstanding):
 
-Checklist:
+- [x] New `WgpuHandles` struct in `device::wgpu::core` carrying
+  `wgpu::Instance` / `Adapter` / `Device` / `Queue` by value. wgpu 29
+  handle types are `Clone` (Arc-wrapped internally), so the bundle
+  is itself `#[derive(Clone)]` — passing by value is four cheap Arc
+  bumps. Renamed the prior `core::Device` shape to `WgpuHandles` in
+  the same change (clearer boundary against `WgpuDevice` and resolves
+  the parent §10 Q1 shadow concern at the type level).
+- [x] `WgpuDevice::with_external(handles: WgpuHandles) -> Result<Self,
+  wgpu::Features>` replaces internal-boot for production. Returns the
+  missing-features set on adapter mismatch so the embedder can decide
+  fallback / retry / surface. `core::boot()` and `WgpuDevice::boot()`
+  both gated behind `#[cfg(test)]`.
+- [x] `core::REQUIRED_FEATURES` check runs against the embedder's
+  adapter at `with_external(...)`; mismatch surfaces as
+  `RendererError::WgpuFeaturesMissing(::wgpu::Features)` (the
+  absolute-path `::wgpu` is intentional — defends against the local
+  `wgpu` module shadow).
+- [x] `create_webrender_instance(gl, wgpu: WgpuHandles, notifier,
+  options, shaders)` — new `wgpu` parameter as the second positional
+  argument. GL parameter remains during transition.
+- [x] `Renderer.wgpu_device: WgpuDevice` field installed correctly
+  (this time via the embedder handoff, not via an internal boot —
+  the misstep the A2.X.5 revert documented).
+- [ ] **Servo-wgpu's call site update** is the outstanding piece.
+  Pre-P0 tag `pre-p0` (at `aa1850ed7`) marks the last
+  `create_webrender_instance(gl, notifier, options, shaders)`
+  signature; servo-wgpu can pin against it until its compositor
+  hands its `wgpu::Device` / `Queue` through to webrender. Tracked
+  outside this repo.
 
-- [ ] New `WgpuHandles` struct in `device::wgpu::core` carrying
-  `Arc<wgpu::Instance>`, `Arc<wgpu::Adapter>`, `Arc<wgpu::Device>`,
-  `Arc<wgpu::Queue>` (or equivalent — exact ownership shape decided
-  at slice entry: `Arc` is the natural form for "shared with
-  embedder," but if servo-wgpu hands by-value we adopt that).
-- [ ] `WgpuDevice::with_external(handles: WgpuHandles) -> Self`
-  replaces internal-boot for production. `core::boot()` survives
-  gated behind `cfg(test)` (or moved to a `core::test_boot` helper).
-- [ ] `core::REQUIRED_FEATURES` check runs against the embedder's
-  adapter at `with_external(...)`; `BootError::MissingFeatures`
-  surfaces as `RendererError::WgpuFeaturesMissing`.
-- [ ] `create_webrender_instance(gl, wgpu, notifier, options,
-  shaders)` — new `wgpu: WgpuHandles` parameter. GL parameter
-  remains during transition.
-- [ ] Servo-wgpu's call site updated to pass its
-  `wgpu::Device` / `Queue` — already created for compositor /
-  surface use. Coordinate via a pre-P0 tag on
-  `idiomatic-wgpu-pipeline` so servo-wgpu can pin until both sides
-  land.
+Receipt: `cargo check -p webrender` green (7 warnings, all
+unused-helper warnings on adapter machinery awaiting P1 callers);
+seven device-side wgpu tests pass via `WgpuDevice::boot()` (the
+`#[cfg(test)]` shortcut) in 1.93s. Tests now exercise the
+`with_external` path implicitly via the renamed `WgpuHandles` /
+`WgpuDevice::boot()` (which constructs a `WgpuDevice` from `boot()`'s
+`WgpuHandles` — same shape as the production handoff).
 
-Receipt: `cargo check -p webrender` green; the seven existing wgpu
-device-side tests pass via `core::test_boot`; servo-wgpu compiles
-against the new signature.
+**Sequenced finding during P0**:
+
+- The `use super::core::{self, ...}` import in `adapter.rs` had to
+  split into two: `use super::core::{REQUIRED_FEATURES, WgpuHandles};`
+  unconditionally, plus `#[cfg(test)] use super::core;` for the
+  test-only `boot()` method's references to `core::BootError` /
+  `core::boot()`. Without the split, the unconditional `self` was
+  unused in non-test compilation.
+- `Renderer.wgpu_device` is `pub` (matches the GL `pub device:
+  Device` next to it) so embedder code that already reaches into
+  `renderer.device.*` can reach `renderer.wgpu_device.*` symmetrically
+  during the transition. P slices may tighten visibility once
+  callsites stabilise.
 
 ### P1 — `brush_solid` end-to-end pilot
 

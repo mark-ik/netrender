@@ -11,7 +11,7 @@ use super::{core, frame};
 /// this helper hides that staging detail and returns width * height * 4
 /// bytes to callers.
 pub fn read_rgba8_texture(
-    dev: &core::Device,
+    dev: &core::WgpuHandles,
     target: &wgpu::Texture,
     width: u32,
     height: u32,

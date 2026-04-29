@@ -309,6 +309,7 @@ impl Default for WebRenderOptions {
 /// [WebRenderOptions]: struct.WebRenderOptions.html
 pub fn create_webrender_instance(
     gl: Rc<dyn gl::Gl>,
+    wgpu: crate::device::wgpu::core::WgpuHandles,
     notifier: Box<dyn RenderNotifier>,
     mut options: WebRenderOptions,
     shaders: Option<&SharedShaders>,
@@ -752,10 +753,17 @@ pub fn create_webrender_instance(
     #[cfg(feature = "capture")]
     let read_fbo = device.create_fbo();
 
+    // Pipeline-first migration plan §6 P0: adopt embedder-supplied wgpu
+    // primitives. The embedder has already created instance / adapter /
+    // device / queue for its compositor; webrender shares them.
+    let wgpu_device = crate::device::wgpu::adapter::WgpuDevice::with_external(wgpu)
+        .map_err(RendererError::WgpuFeaturesMissing)?;
+
     let mut renderer = Renderer {
         result_rx,
         api_tx: api_tx.clone(),
         device,
+        wgpu_device,
         active_documents: FastHashMap::default(),
         pending_texture_updates: Vec::new(),
         pending_texture_cache_updates: false,

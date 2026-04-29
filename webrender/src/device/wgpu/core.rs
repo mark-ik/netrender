@@ -2,11 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-//! Adapter / Device / Queue boot, surface lifecycle, `REQUIRED_FEATURES`
-//! check, debug-label population. See plan §6 S1.
+//! wgpu primitives owned by the renderer: instance, adapter, device,
+//! queue. These come from the embedder via `WgpuHandles` (production)
+//! or from `boot()` (tests only — see pipeline-first migration plan
+//! §6 P0). `REQUIRED_FEATURES` lives here.
 
-/// wgpu features the device requires. Adapters without these are rejected
-/// at boot. See plan §4.10.
+/// wgpu features the renderer requires. The embedder's adapter is checked
+/// against this at `WgpuDevice::with_external` (production) or at `boot()`
+/// (tests). See parent plan §4.10.
 ///
 /// `IMMEDIATES` is wgpu 29's rename of push constants (per WebGPU spec
 /// evolution); same underlying GPU primitive — carries the smallest tier
@@ -15,9 +18,18 @@
 pub const REQUIRED_FEATURES: wgpu::Features =
     wgpu::Features::IMMEDIATES.union(wgpu::Features::DUAL_SOURCE_BLENDING);
 
-/// Owned wgpu device handles. Constructed once per process; passed by
-/// reference to every other `wgpu/*` module.
-pub struct Device {
+/// Bundle of wgpu primitives owned by the embedder and passed through
+/// `create_webrender_instance` to the renderer (P0). All four wgpu 29
+/// handle types are `Clone` (Arc-wrapped internally), so passing by
+/// value is cheap.
+///
+/// The embedder is expected to have already created instance, adapter,
+/// device, and queue for its own surface / compositor work; these
+/// handles are *the same ones* the embedder uses, so `ExternalTexture`
+/// integration is natural — embedder textures are created on the same
+/// device and can be sampled here without copy.
+#[derive(Clone)]
+pub struct WgpuHandles {
     pub instance: wgpu::Instance,
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
@@ -57,10 +69,13 @@ impl From<wgpu::RequestDeviceError> for BootError {
     }
 }
 
-/// Boot wgpu: create the instance, pick an adapter, verify required
-/// features are present, request a device + queue. Synchronous via
-/// `pollster::block_on`.
-pub fn boot() -> Result<Device, BootError> {
+/// Boot wgpu standalone: create the instance, pick an adapter, verify
+/// required features, request a device + queue. **Test-only**:
+/// production goes through `WgpuDevice::with_external(handles)` where
+/// the embedder supplies the primitives. Standalone boot exists so
+/// device-side tests don't need an embedder fixture.
+#[cfg(test)]
+pub fn boot() -> Result<WgpuHandles, BootError> {
     let instance = wgpu::Instance::default();
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -88,7 +103,7 @@ pub fn boot() -> Result<Device, BootError> {
         ..Default::default()
     }))?;
 
-    Ok(Device {
+    Ok(WgpuHandles {
         instance,
         adapter,
         device,
