@@ -212,17 +212,28 @@ renderer/.
   test `wgpu_device_a21_dither_create_upload_smoke` exercises an
   8×8 R8 dither-shaped texture create + upload + flush, mirroring
   what `init.rs:484` does today via the GL device.
-- [ ] **A2.X — foundational pass encoding (was A2.4).** Promoted
-  to first per-callsite migration because every other lifecycle
-  migration depends on it. Builds out `WgpuDevice::encode_pass(...)`
-  / `flush_pass(...)` (extending `pass.rs::flush_pass`) for the
-  renderer's per-pass code paths: `bind_draw_target`,
-  `clear_target`, `invalidate_depth_target`, plus the binding
-  side of `bind_texture`. Once the renderer's pass-encoding goes
-  through this, `bind_texture` callsites become BindGroup setup
-  inside the pass encoder rather than free-floating state
-  mutations. Sites: `mod.rs:1507, 1983, 2332, 2844, 2909, 3182,
-  3222, 3234, 3338, 3674, …`. Biggest sub-slice; foundational.
+- [~] **A2.X — foundational pass encoding (was A2.4).**
+  Foundational for every other texture-lifecycle migration.
+  - [x] **A2.X.0 design seed (2026-04-28).**
+    [`pass.rs`](../webrender/src/device/wgpu/pass.rs) refactored:
+    `DrawIntent` now carries `pipeline` and `bind_group` references
+    by value (wgpu 29 handle types are `Clone`, Arc-wrapped
+    internally — per-draw cloning is cheap, multi-pipeline passes
+    work via per-draw `pipeline` switching). `flush_pass` drops
+    its top-level pipeline / bind-group args; `clear` becomes
+    `Option<wgpu::Color>` so composite-onto-existing passes
+    (`LoadOp::Load`) are first-class rather than needing a sentinel.
+    `render_rect_smoke` updated to the new shape; all 6 wgpu tests
+    green.
+  - [ ] **A2.X.1+ per-callsite migration**: renderer's per-pass
+    code paths shift from "GL state machine" (`bind_draw_target`,
+    `clear_target`, `invalidate_depth_target`, plus per-draw
+    `bind_texture`) to "open `wgpu::RenderPass`, replay
+    `DrawIntent`s, close pass." Sites: `mod.rs:1507, 1983, 2332,
+    2844, 2909, 3182, 3222, 3234, 3338, 3674, …`. Each sub-slice
+    migrates one per-pass code path; the renderer's traversal
+    accumulates `DrawIntent`s into a per-pass bucket and calls
+    `pass::flush_pass` to flip them into wgpu calls. Multi-turn.
 - [ ] **A2.1 — dither texture lifecycle** (full): now gated on
   A2.X. Sites: `init.rs:484` (create + upload),
   `mod.rs:824` (field type), `mod.rs:2178/3501/3528/3555` (bind,

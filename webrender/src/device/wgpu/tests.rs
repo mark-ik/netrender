@@ -161,8 +161,12 @@ fn render_rect_smoke() {
     );
 
     // Record one DrawIntent — palette_index = 0 → red.
+    // Pipeline + bind_group now ride on the intent itself
+    // (multi-pipeline passes work via per-draw `pipeline` switching).
     let palette_index: u32 = 0;
     let draws = vec![pass::DrawIntent {
+        pipeline: pipe.pipeline.clone(),
+        bind_group: bind_group.clone(),
         vertex_range: 0..4,
         instance_range: 0..1,
         uniform_offset: 0,
@@ -177,9 +181,7 @@ fn render_rect_smoke() {
     pass::flush_pass(
         &mut encoder,
         &target_view,
-        &pipe.pipeline,
-        &bind_group,
-        wgpu::Color::TRANSPARENT,
+        Some(wgpu::Color::TRANSPARENT),
         "S2 smoke pass",
         &draws,
     );
