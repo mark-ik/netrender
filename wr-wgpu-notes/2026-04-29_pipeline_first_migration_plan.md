@@ -257,9 +257,17 @@ sub-slice has landed and the oracle-match receipt passes.
   yet wired**: `Transform`, `PictureTask`, `ClipArea`, per-instance
   vertex attributes (`aData`), draw-loop dispatch in renderer body —
   P1.2 onward.
-- [ ] **P1.2 — Transform storage buffer.** `brush_solid` reads
-  `header.transform_id` to fetch a 4×4 matrix; vertex shader applies
-  it. Smoke renders a non-identity-transformed quad to validate.
+- [x] **P1.2 — Transform storage buffer (2026-04-29).** Added
+  `Transform { m: mat4x4, inv_m: mat4x4 }` storage buffer at bind
+  slot 1 (mirrors GL `transform.glsl::Transform`, 128 bytes std430).
+  Vertex shader fetches via `transforms[header.transform_id &
+  TRANSFORM_INDEX_MASK]` (the `0x003fffff` mask matches GL; high bit
+  reserved for is_axis_aligned, used in P1.5's AA path) and applies
+  `transform.m` to the corner. Smoke feeds identity matrices for
+  both `m` and `inv_m`, so the rendered output is unchanged — the
+  matrix-multiply path is exercised end-to-end. `inv_m` is part of
+  the production table shape but unused by brush_solid's vertex
+  path; other families read it for fragment-side untransform.
 - [ ] **P1.3 — Per-instance vertex attributes.** Replace
   `instance_index → header_index` with the GL-shaped `aData ivec4`
   vertex stream, so multiple primitives can ride one draw call.

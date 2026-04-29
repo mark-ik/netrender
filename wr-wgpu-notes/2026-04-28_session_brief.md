@@ -46,7 +46,8 @@ landed. Pre-P0 tag `pre-p0` at `aa1850ed7` for servo-wgpu pinning.
 | Foundational A2.3.0 | ✅ | `WgpuDevice::read_rgba8_texture`; oracle harness uses it |
 | ❌ A2.X.5 | reverted | independent `WgpuDevice::boot()` was a hack — embedder must own the wgpu device. Reverted as `40661cd22`; original `ad655dc09` preserved in branch history. |
 | **P0 — Embedder wgpu handoff** | ✅ webrender side | `WgpuHandles` struct, `WgpuDevice::with_external`, `Renderer.wgpu_device`, new `create_webrender_instance(gl, wgpu, …)` signature, `RendererError::WgpuFeaturesMissing`. `core::boot()` + `WgpuDevice::boot()` gated behind `cfg(test)`. Servo-wgpu side outstanding (pin against `pre-p0` tag until its call-site updates). |
-| **P1.1 — brush_solid storage-buffer shape** | ✅ | brush_solid WGSL now reads from `PrimitiveHeader` + `gpu_buffer_f` storage buffers (mirrors GL `prim_shared.glsl::PrimitiveHeader` collapsed into one std430 struct, plus `fetch_from_gpu_buffer_*`'s `vec4<f32>` table). `ALPHA_PASS` WGSL override replaces `MAX_PALETTE_ENTRIES`. `DrawIntent::uniform_offset` → `dynamic_offsets: Vec<u32>`. `render_rect_smoke` updated. P1.2+ wires Transform, vertex attributes, picture-task, clip, draw-loop dispatch. |
+| **P1.1 — brush_solid storage-buffer shape** | ✅ | brush_solid WGSL now reads from `PrimitiveHeader` + `gpu_buffer_f` storage buffers (mirrors GL `prim_shared.glsl::PrimitiveHeader` collapsed into one std430 struct, plus `fetch_from_gpu_buffer_*`'s `vec4<f32>` table). `ALPHA_PASS` WGSL override replaces `MAX_PALETTE_ENTRIES`. `DrawIntent::uniform_offset` → `dynamic_offsets: Vec<u32>`. |
+| **P1.2 — Transform storage buffer** | ✅ | `Transform { m, inv_m }` storage at bind slot 1 (mirrors GL `transform.glsl::Transform`, 128 bytes std430). Vertex shader applies `transforms[header.transform_id & 0x003fffff].m` to the corner. Smoke feeds identity matrices. |
 
 **Concrete artifacts**:
 

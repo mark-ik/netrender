@@ -1,24 +1,30 @@
 // brush_solid.wgsl — solid-coloured quad. Pipeline-first migration plan
-// §6 P1.1.
+// §6 P1.1, P1.2.
 //
 // Mirrors the GL `brush_solid.glsl` data contract via storage buffers
 // (parent plan §4.6): a PrimitiveHeader table indexed by instance index,
-// plus a GpuBuffer table whose `vec4` slot at `specific_prim_address`
-// holds the brush colour. Production has many more inputs (Transform,
-// PictureTask, ClipArea, per-instance `ivec4 aData`) — those land in
-// subsequent P1 sub-slices. This shader handles the smallest end-to-end
-// shape that exercises the production storage-buffer pattern:
+// a Transform table indexed by `header.transform_id`, plus a GpuBuffer
+// table whose `vec4` slot at `specific_prim_address` holds the brush
+// colour. Production has more inputs (PictureTask, ClipArea, per-instance
+// `ivec4 aData`) — those land in subsequent P1 sub-slices. The shape
+// here exercises the storage-buffer pattern plus the matrix-multiply
+// path:
 //
 //   - PrimitiveHeader is fetched by instance_index. Real production
 //     fetches it by `aData.x = prim_header_address` from a vertex
 //     attribute; we collapse to instance_index here so the smoke can
 //     run without instance vertex buffers (P1.3 lands those).
+//   - Transform is fetched by the low 22 bits of `header.transform_id`
+//     (the high bit encodes is_axis_aligned per GL `fetch_transform`;
+//     not used here until P1.5's AA path).
 //   - GpuBuffer is read at `header.specific_prim_address` to get the
 //     `vec4` color (matches GL `fetch_solid_primitive` →
 //     `fetch_from_gpu_buffer_1f`).
-//   - `local_rect` is interpreted directly in clip space (-1..1).
-//     Production transforms `local_rect` through Transform +
-//     PictureTask to clip space; that wiring is P1.2 / P1.4.
+//   - `local_rect` corner is multiplied by `transform.m` to reach
+//     clip space. Production additionally applies `picture_task`
+//     content-origin offset and `device_pixel_scale` (P1.4 wiring);
+//     for the smoke, an identity transform plus a clip-space
+//     `local_rect` keeps the rendered shape unchanged.
 //
 // Override (§4.9): `ALPHA_PASS` selects between opaque-write and
 // alpha-multiply specialisations of the same shader source, mirroring
@@ -51,13 +57,32 @@ struct PrimitiveHeader {
 @group(0) @binding(0)
 var<storage, read> prim_headers: array<PrimitiveHeader>;
 
+// Transform storage buffer. Mirrors `transform.glsl::Transform`:
+// `m` (4×4 mat) and `inv_m` (4×4 mat) per entry, 128 bytes std430.
+// `inv_m` isn't used by brush_solid's vertex path but is part of the
+// production table shape — fragment paths (and other families) read
+// it for untransform / fragment-side AA.
+struct Transform {
+    m: mat4x4<f32>,
+    inv_m: mat4x4<f32>,
+}
+
+@group(0) @binding(1)
+var<storage, read> transforms: array<Transform>;
+
+// Mask matching GL `TRANSFORM_INDEX_MASK` in `transform.glsl`. The high
+// bit of `header.transform_id` encodes is_axis_aligned (bit 23 set →
+// non-axis-aligned). Production decodes this for AA path selection;
+// brush_solid will use it in P1.5.
+const TRANSFORM_INDEX_MASK: i32 = 0x003fffff;
+
 // GpuBuffer storage buffer. Mirrors GL `fetch_from_gpu_buffer_1f` /
 // `_2f` / `_4f`: a flat `vec4<f32>` array indexed by an integer
 // "address." Brush-specific data lives at `header.specific_prim_address`
 // for one to several `vec4` slots per primitive type. brush_solid reads
 // one `vec4` (the colour) — `VECS_PER_SPECIFIC_BRUSH = 1` in
 // `brush_solid.glsl`.
-@group(0) @binding(1)
+@group(0) @binding(2)
 var<storage, read> gpu_buffer_f: array<vec4<f32>>;
 
 struct VsOut {
@@ -71,24 +96,27 @@ fn vs_main(
     @builtin(instance_index) instance_index: u32,
 ) -> VsOut {
     let header = prim_headers[instance_index];
+    let transform = transforms[header.transform_id & TRANSFORM_INDEX_MASK];
     let color = gpu_buffer_f[header.specific_prim_address];
 
     // Triangle strip: vertex_index 0..3 sweeps the four corners of the
-    // local_rect. Production transforms through the picture-task and
-    // device-pixel scale (see GL `write_vertex` in `prim_shared.glsl`);
-    // the smoke treats `local_rect` as already in clip space so the
-    // storage-buffer fetch path is what's exercised, not the transform
-    // pipeline (P1.2 / P1.4).
+    // local_rect, then `transform.m` maps local → clip space.
+    // Production additionally applies `picture_task.device_pixel_scale`
+    // and `picture_task.content_origin` (see GL `write_vertex`); the
+    // smoke uses an identity transform plus a clip-space-shaped
+    // `local_rect`, so the matrix multiply preserves the rendered
+    // shape (P1.4 lands the picture-task offset).
     let corner = vec2<f32>(
         f32(vertex_index & 1u),
         f32((vertex_index >> 1u) & 1u),
     );
     let p0 = header.local_rect.xy;
     let p1 = header.local_rect.zw;
-    let xy = mix(p0, p1, corner);
+    let local_pos = mix(p0, p1, corner);
+    let clip_pos = transform.m * vec4<f32>(local_pos, 0.0, 1.0);
 
     var out: VsOut;
-    out.position = vec4<f32>(xy, 0.0, 1.0);
+    out.position = clip_pos;
     out.color = color;
     return out;
 }

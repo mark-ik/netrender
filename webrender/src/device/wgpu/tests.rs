@@ -103,23 +103,45 @@ fn render_rect_smoke() {
     for f in [-1.0_f32, -1.0, 1.0, 1.0] {
         header_bytes.extend_from_slice(&f.to_ne_bytes());
     }
-    for i in [0_i32, /* specific_prim_address */ 0, 0, 0] {
+    // z, specific_prim_address, transform_id, picture_task_address
+    for i in [0_i32, 0, 0, 0] {
         header_bytes.extend_from_slice(&i.to_ne_bytes());
     }
     for i in [0_i32; 4] {
         header_bytes.extend_from_slice(&i.to_ne_bytes());
     }
     let prim_headers =
-        buffer::create_storage_buffer(&dev.device, &dev.queue, "P1.1 prim_headers", &header_bytes);
+        buffer::create_storage_buffer(&dev.device, &dev.queue, "P1 prim_headers", &header_bytes);
+
+    // Transform storage: identity matrix for both `m` and `inv_m`.
+    // 128 bytes std430 — see WGSL `Transform { m, inv_m }`.
+    let identity: [f32; 16] = [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ];
+    let transform_bytes: Vec<u8> = identity
+        .iter()
+        .chain(identity.iter())
+        .flat_map(|f| f.to_ne_bytes())
+        .collect();
+    let transforms =
+        buffer::create_storage_buffer(&dev.device, &dev.queue, "P1 transforms", &transform_bytes);
 
     // GpuBuffer storage: slot 0 holds opaque red as a vec4<f32>.
     let color: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
     let gpu_buffer_bytes: Vec<u8> = color.iter().flat_map(|f| f.to_ne_bytes()).collect();
     let gpu_buffer_f =
-        buffer::create_storage_buffer(&dev.device, &dev.queue, "P1.1 gpu_buffer_f", &gpu_buffer_bytes);
+        buffer::create_storage_buffer(&dev.device, &dev.queue, "P1 gpu_buffer_f", &gpu_buffer_bytes);
 
-    let bind_group =
-        binding::brush_solid_bind_group(&dev.device, &pipe.layout, &prim_headers, &gpu_buffer_f);
+    let bind_group = binding::brush_solid_bind_group(
+        &dev.device,
+        &pipe.layout,
+        &prim_headers,
+        &transforms,
+        &gpu_buffer_f,
+    );
 
     // One DrawIntent: instance_index 0 reads PrimitiveHeader[0],
     // which addresses gpu_buffer_f[0] for the colour. No push constants
