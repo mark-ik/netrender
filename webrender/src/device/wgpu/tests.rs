@@ -13,8 +13,8 @@ fn load_oracle_png(name: &str) -> (u32, u32, Vec<u8>) {
         .join("tests")
         .join("oracle")
         .join(name);
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("opening {}: {}", path.display(), e));
+    let file =
+        std::fs::File::open(&path).unwrap_or_else(|e| panic!("opening {}: {}", path.display(), e));
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().expect("png read_info");
     let info = reader.info();
@@ -33,60 +33,8 @@ fn load_oracle_png(name: &str) -> (u32, u32, Vec<u8>) {
 /// Read an entire wgpu colour target back to CPU as tightly-packed
 /// RGBA8 bytes (no row padding). Internally pads on the GPU side
 /// and unpacks rows on the CPU side.
-fn readback_target(dev: &core::Device, target: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
-    let row_bytes = w * 4;
-    let padded = row_bytes.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let buffer = dev.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("oracle readback"),
-        size: padded as u64 * h as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder = dev
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("oracle readback encoder"),
-        });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: target,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(h),
-            },
-        },
-        wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-    );
-    dev.queue.submit([encoder.finish()]);
-
-    let slice = buffer.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    dev.device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("poll");
-    rx.recv().expect("map sender").expect("map");
-    let mapped = slice.get_mapped_range();
-
-    let mut out = Vec::with_capacity((row_bytes * h) as usize);
-    for row in 0..h as usize {
-        let src = row * padded as usize;
-        out.extend_from_slice(&mapped[src..src + row_bytes as usize]);
-    }
-    out
+fn readback_target(dev: &adapter::WgpuDevice, target: &wgpu::Texture, w: u32, h: u32) -> Vec<u8> {
+    dev.read_rgba8_texture(target, w, h)
 }
 
 /// Count pixels whose any RGBA channel differs by more than `tolerance`.
@@ -112,7 +60,8 @@ fn count_pixel_diffs(actual: &[u8], expected: &[u8], tolerance: u8) -> usize {
 /// `DrawIntent` recording into `pass::flush_pass` (no inline draw).
 #[test]
 fn render_rect_smoke() {
-    let dev = core::boot().expect("wgpu boot");
+    let adapter = adapter::WgpuDevice::boot().expect("wgpu boot");
+    let dev = &adapter.core;
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let dim = 8_u32;
 
@@ -136,8 +85,7 @@ fn render_rect_smoke() {
 
     // Per-draw uniform: full-clip-space rect at slot 0.
     let entry_size: u64 = 16; // vec4<f32>
-    let (uniform_buffer, _stride) =
-        buffer::create_uniform_arena(&dev.device, entry_size, 1);
+    let (uniform_buffer, _stride) = buffer::create_uniform_arena(&dev.device, entry_size, 1);
     let rect: [f32; 4] = [-1.0, -1.0, 2.0, 2.0];
     let rect_bytes: Vec<u8> = rect.iter().flat_map(|f| f.to_ne_bytes()).collect();
     dev.queue.write_buffer(&uniform_buffer, 0, &rect_bytes);
@@ -173,66 +121,24 @@ fn render_rect_smoke() {
         push_constants: palette_index.to_ne_bytes().to_vec(),
     }];
 
-    let mut encoder = dev
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("S2 smoke encoder"),
-        });
-    pass::flush_pass(
+    let mut encoder = adapter.create_encoder("S2 smoke encoder");
+    adapter.encode_pass(
         &mut encoder,
-        &target_view,
-        Some(wgpu::Color::TRANSPARENT),
-        "S2 smoke pass",
+        pass::RenderPassTarget {
+            label: "S2 smoke pass",
+            color: pass::ColorAttachment::clear(&target_view, wgpu::Color::TRANSPARENT),
+            depth: None,
+        },
         &draws,
     );
+    adapter.submit(encoder);
 
-    // Readback.
-    let padded_bytes_per_row = (dim * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let readback = dev.device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("S2 smoke readback"),
-        size: padded_bytes_per_row as u64 * dim as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &target,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(dim),
-            },
-        },
-        wgpu::Extent3d {
-            width: dim,
-            height: dim,
-            depth_or_array_layers: 1,
-        },
-    );
-    dev.queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    dev.device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("poll");
-    rx.recv().expect("map sender").expect("map");
-
-    let mapped = slice.get_mapped_range();
     // The full-NDC quad covers the whole target. Sample the centre row's
     // first pixel to confirm the palette colour reached the framebuffer.
+    let actual_rgba = readback_target(&adapter, &target, dim, dim);
     let mid_row = (dim / 2) as usize;
-    let row_start = mid_row * padded_bytes_per_row as usize;
-    assert_eq!(&mapped[row_start..row_start + 4], &[255, 0, 0, 255]);
+    let row_start = mid_row * dim as usize * 4;
+    assert_eq!(&actual_rgba[row_start..row_start + 4], &[255, 0, 0, 255]);
 }
 
 /// Adapter-plan §A1 receipt: `WgpuDevice::boot()` succeeds, and
@@ -260,8 +166,7 @@ fn wgpu_device_a2_create_texture_smoke() {
         width: 16,
         height: 16,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
     });
     assert_eq!((tex.width, tex.height), (16, 16));
     assert_eq!(tex.format, wgpu::TextureFormat::Rgba8Unorm);
@@ -305,7 +210,8 @@ fn oracle_blank_smoke() {
     let (oracle_w, oracle_h, oracle_rgba) = load_oracle_png("blank.png");
     assert_eq!((oracle_w, oracle_h), (3840, 2160));
 
-    let dev = core::boot().expect("wgpu boot");
+    let adapter = adapter::WgpuDevice::boot().expect("wgpu boot");
+    let dev = &adapter.core;
     let target = dev.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("oracle blank target"),
         size: wgpu::Extent3d {
@@ -322,36 +228,79 @@ fn oracle_blank_smoke() {
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let mut encoder = dev
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("oracle blank encoder"),
-        });
-    {
-        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("oracle blank pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-    }
-    dev.queue.submit([encoder.finish()]);
+    let mut encoder = adapter.create_encoder("oracle blank encoder");
+    adapter.encode_pass(
+        &mut encoder,
+        pass::RenderPassTarget {
+            label: "oracle blank pass",
+            color: pass::ColorAttachment::clear(&view, wgpu::Color::WHITE),
+            depth: None,
+        },
+        &[],
+    );
+    adapter.submit(encoder);
 
-    let actual_rgba = readback_target(&dev, &target, oracle_w, oracle_h);
+    let actual_rgba = readback_target(&adapter, &target, oracle_w, oracle_h);
     let diffs = count_pixel_diffs(&actual_rgba, &oracle_rgba, 0);
     assert_eq!(
         diffs, 0,
         "blank scene must match oracle exactly (got {} pixel mismatches)",
         diffs
     );
+}
+
+/// Adapter-plan §A2.X.2 receipt: pass targets carry depth load/store
+/// policy alongside colour. This is the wgpu-native landing spot for
+/// renderer callsites that currently pair `clear_target(...,
+/// Some(depth), ...)` with `invalidate_depth_target()`.
+#[test]
+fn pass_target_depth_smoke() {
+    let adapter = adapter::WgpuDevice::boot().expect("wgpu boot");
+    let dev = &adapter.core;
+
+    let color = dev.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("A2.X.2 color target"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let depth = dev.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("A2.X.2 depth target"),
+        size: wgpu::Extent3d {
+            width: 4,
+            height: 4,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut encoder = adapter.create_encoder("A2.X.2 depth encoder");
+    adapter.encode_pass(
+        &mut encoder,
+        pass::RenderPassTarget {
+            label: "A2.X.2 depth pass",
+            color: pass::ColorAttachment::clear(&color_view, wgpu::Color::TRANSPARENT),
+            depth: Some(pass::DepthAttachment::clear(&depth_view, 1.0).discard()),
+        },
+        &[],
+    );
+    adapter.submit(encoder);
+
+    let actual_rgba = readback_target(&adapter, &color, 4, 4);
+    assert_eq!(actual_rgba, vec![0; 4 * 4 * 4]);
 }

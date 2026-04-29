@@ -220,12 +220,50 @@ renderer/.
     by value (wgpu 29 handle types are `Clone`, Arc-wrapped
     internally — per-draw cloning is cheap, multi-pipeline passes
     work via per-draw `pipeline` switching). `flush_pass` drops
-    its top-level pipeline / bind-group args; `clear` becomes
-    `Option<wgpu::Color>` so composite-onto-existing passes
-    (`LoadOp::Load`) are first-class rather than needing a sentinel.
-    `render_rect_smoke` updated to the new shape; all 6 wgpu tests
-    green.
-  - [ ] **A2.X.1+ per-callsite migration**: renderer's per-pass
+    its top-level pipeline / bind-group args; colour load policy
+    moved into the pass-target descriptor in A2.X.1 so
+    composite-onto-existing passes (`LoadOp::Load`) are first-class
+    rather than needing a sentinel. `render_rect_smoke` updated to
+    the new shape; all 6 wgpu tests green.
+  - [x] **A2.X.1 pass-target groundwork (2026-04-28).**
+    [`pass.rs`](../webrender/src/device/wgpu/pass.rs) now owns a
+    wgpu-native `RenderPassTarget` / `ColorAttachment` descriptor:
+    colour load policy is declared at pass begin (`LoadOp::Clear` /
+    `LoadOp::Load`) rather than modeled as mutable GL-style device
+    state. `oracle_blank_smoke` moved off its hand-written
+    `begin_render_pass` block and now uses `pass::flush_pass` with
+    an empty draw list, so the blank oracle receipt exercises the
+    same pass abstraction future renderer paths will use. Focused
+    receipt: `cargo test --manifest-path webrender/Cargo.toml
+    device::wgpu` — 6 passed.
+  - [x] **A2.X.2 depth-target groundwork (2026-04-28).**
+    `RenderPassTarget` now carries optional `DepthAttachment`
+    policy alongside colour. This gives the renderer's
+    `clear_target(..., Some(depth), ...)` and
+    `invalidate_depth_target()` call shapes a wgpu-native landing
+    spot: depth load/store behavior is declared on
+    `RenderPassDescriptor` (`LoadOp::{Clear, Load}` plus
+    `StoreOp::{Store, Discard}`), not modeled as mutable GL
+    framebuffer state. Receipt: `pass_target_depth_smoke` clears a
+    colour/depth target through `WgpuDevice::encode_pass` with
+    `DepthAttachment::clear(...).discard()`. Focused receipt:
+    `cargo test --manifest-path webrender/Cargo.toml device::wgpu`
+    — 7 passed.
+  - [x] **A2.X.3 adapter pass-encoding bridge (2026-04-28).**
+    `WgpuDevice::encode_pass(&mut CommandEncoder,
+    RenderPassTarget, &[DrawIntent])` is now the renderer-facing
+    pass replay surface. The smoke/oracle pass tests route through
+    the adapter instead of calling `pass::flush_pass` directly, so
+    future renderer callsites target `WgpuDevice` while `pass.rs`
+    remains the focused implementation module.
+  - [x] **A2.X.4 command encoder lifecycle bridge (2026-04-29).**
+    [`frame.rs`](../webrender/src/device/wgpu/frame.rs) now owns
+    `create_encoder` / `submit`, and `WgpuDevice` exposes them as
+    `create_encoder(label)` / `submit(encoder)`. The pass smoke and
+    oracle receipts acquire and submit encoders through the adapter,
+    so upcoming renderer callsites no longer need to reach through
+    `core.device` / `core.queue` for the frame command lifecycle.
+  - [ ] **A2.X.5+ per-callsite migration**: renderer's per-pass
     code paths shift from "GL state machine" (`bind_draw_target`,
     `clear_target`, `invalidate_depth_target`, plus per-draw
     `bind_texture`) to "open `wgpu::RenderPass`, replay
@@ -233,7 +271,8 @@ renderer/.
     2844, 2909, 3182, 3222, 3234, 3338, 3674, …`. Each sub-slice
     migrates one per-pass code path; the renderer's traversal
     accumulates `DrawIntent`s into a per-pass bucket and calls
-    `pass::flush_pass` to flip them into wgpu calls. Multi-turn.
+    `WgpuDevice::encode_pass` to flip them into wgpu calls.
+    Multi-turn.
 - [ ] **A2.1 — dither texture lifecycle** (full): now gated on
   A2.X. Sites: `init.rs:484` (create + upload),
   `mod.rs:824` (field type), `mod.rs:2178/3501/3528/3555` (bind,
@@ -241,14 +280,21 @@ renderer/.
   `mod.rs:4640` (delete → drop).
 - [ ] **A2.2 — zoom-debug texture lifecycle**: gated on A2.X for
   the same reason as A2.1.
-- [ ] **A2.3 — read-pixels path**:
+- [~] **A2.3 — read-pixels path**:
+  - [x] **A2.3.0 readback adapter prep (2026-04-29).**
+    [`readback.rs`](../webrender/src/device/wgpu/readback.rs) now
+    owns the RGBA8 texture readback staging path, and
+    `WgpuDevice::read_rgba8_texture(&Texture, width, height)`
+    exposes it at the adapter boundary. The pass/oracle receipts use
+    the adapter helper instead of carrying a private test-only
+    `copy_texture_to_buffer` implementation.
+  - [ ] **A2.3.1 renderer read-pixels callsites**:
   `mod.rs:1262/4614/4619`. The `tests::readback_target` helper is
-  the prototype; promote to `WgpuDevice::read_pixels(...)`.
-  *Possibly* unblocked earlier than A2.X — `copy_texture_to_buffer`
-  takes a `TextureView` directly with no FBO state — but the
-  callsites today come after a `bind_read_target_impl` setup that
-  is part of pass encoding. Decide during sub-slice scoping whether
-  read-pixels can ride ahead.
+  now promoted; the remaining work is replacing the GL-shaped
+  `bind_read_target_impl` / `read_pixels*` sequence with a texture
+  handle + adapter readback call. `copy_texture_to_buffer` itself is
+  unblocked, but the renderer callsites still sit behind read-target
+  binding state, so migrate them as a separate sub-slice.
 - [ ] **A2.5 — blit_render_target**: wgpu has no direct blit;
   same-format / same-size cases use
   `CommandEncoder::copy_texture_to_texture`, others need a

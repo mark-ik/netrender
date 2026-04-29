@@ -1,15 +1,19 @@
-# Session Brief — 2026-04-28
+# Session Brief — 2026-04-28 / 2026-04-29
 
-State of the `idiomatic-wgpu-pipeline` branch at the close of the
-2026-04-28 session. Snapshot for orientation; not a plan.
+State of the `idiomatic-wgpu-pipeline` branch after the 2026-04-29
+adapter-groundwork continuation. Snapshot for orientation; the
+actionable sequencing still lives in the adapter plan.
 
 ---
 
-## Where we've come from
+## Where we're at
 
 **Branch shape**: `idiomatic-wgpu-pipeline` off `upstream/upstream`,
-with 11 session commits on top of the user's prior
-`82faa2fb4 the notes are back in town`. HEAD: `6ebd3e638`.
+tracking `origin/idiomatic-wgpu-pipeline`. HEAD:
+`75e125166 session brief`. Current working tree intentionally carries
+the uncommitted A2.X / A2.3 adapter-groundwork stack: 7 files,
+497 insertions, 311 deletions at the last diff stat. No
+`renderer/mod.rs` callsite has been migrated yet.
 
 **Plans landed in session**:
 
@@ -39,17 +43,25 @@ with 11 session commits on top of the user's prior
 | Adapter A1 | ✅ | `WgpuDevice` fulcrum; `ensure_brush_solid` lazy-cache pattern |
 | Adapter A2.0 | ✅ | `WgpuTexture` + `WgpuDevice::create_texture(&TextureDesc)` |
 | Adapter A2.1.0 | ✅ | `WgpuDevice::upload_texture`; `image_format_to_wgpu`; surfaced A2.X dependency |
-| Adapter A2.X.0 | ✅ | `pass.rs` refactored: `DrawIntent` carries pipeline+bind_group, `flush_pass` takes `Option<Color>` |
+| Adapter A2.X.0 | ✅ | `pass.rs` refactored: `DrawIntent` carries pipeline+bind_group, `flush_pass` owns pass replay |
+| Adapter A2.X.1 | ✅ | `RenderPassTarget` / `ColorAttachment` pass descriptor; `oracle_blank_smoke` now goes through `pass::flush_pass` |
+| Adapter A2.X.2 | ✅ | `DepthAttachment` pass policy; `pass_target_depth_smoke` covers depth clear + discard through `WgpuDevice::encode_pass` |
+| Adapter A2.X.3 | ✅ | `WgpuDevice::encode_pass` bridge; smoke/oracle pass tests now target the adapter surface |
+| Adapter A2.X.4 | ✅ | `WgpuDevice::create_encoder` / `submit`; pass receipts use adapter-owned command lifecycle |
+| Adapter A2.3.0 | ✅ | `WgpuDevice::read_rgba8_texture`; readback staging moved from tests into `readback.rs` |
 
 **Concrete artifacts**:
 
 - 11-module `webrender/src/device/wgpu/` scaffold (mod, core,
   format, buffer, texture, shader, binding, pipeline, pass, frame,
   readback, adapter)
-- 7 wgpu tests passing in 1.84s
+- Adapter boundary now owns: device boot, lazy brush pipeline cache,
+   texture create/upload, command encoder create/submit,
+   pass replay (`encode_pass`), and RGBA8 readback staging.
+- 7 wgpu tests passing in 2.03s
 - 5 captured oracle PNG/YAML pairs in `webrender/tests/oracle/`
-- A reusable load-render-diff harness (`load_oracle_png`,
-  `readback_target`, `count_pixel_diffs`)
+- A reusable oracle harness (`load_oracle_png`, `count_pixel_diffs`)
+   plus adapter-backed readback (`WgpuDevice::read_rgba8_texture`)
 - A `webrender-wgpu-oracle` worktree on `upstream/0.68` with a
   local-only wrench patch for clap 3 compatibility (documented in
   the oracle README)
@@ -65,35 +77,44 @@ with 11 session commits on top of the user's prior
 
 **Critical path (the real engineering)**:
 
-1. **Adapter A2.X.1+ — renderer/* per-callsite pass-encoding migration**.
-   The next slice that actually edits `renderer/mod.rs` lines.
-   Foundational because the bind sites for every texture-lifecycle
-   migration depend on wgpu-native pass encoding. Multi-turn.
-2. **Adapter A2.1, A2.2, A2.5 — texture-lifecycle migrations**.
-   Once A2.X is in place, dither / zoom-debug / blit migrations drop
-   in. Each is a per-callsite chunk.
-3. **Adapter A3–A7 — vertex / pipeline / render-target / upload /
-   query path migrations**. Same pattern as A2: design seed first
-   (already partly done in `wgpu/*` modules), per-callsite migration
-   second.
-4. **Adapter A8 — re-export flip**. `device/mod.rs` switches from
-   `pub use self::gl::*;` to `pub use self::wgpu::*;`. Compile errors
-   light up remaining residue. Once green, **closes parent plan §S4**:
-   the remaining four oracle scenes start passing as the renderer
-   body now flows through `WgpuDevice`.
-5. **Main S5 — WebGPU CTS gate**. Independent of S4; can run in
-   parallel.
-6. **Main S6 — full shader corpus** (~50 WGSL shaders). Gated on
-   §S4 closure for visual receipts; corpus authoring can begin
-   anytime after S5.
-7. **Main S7 — servo-wgpu integration smoke**.
-8. **Main S8 — external corpus coverage** (WPT slice or Interop subset).
-9. **Main S9 — delete GL** (gleam, gl.rs, query_gl.rs, glsl-to-cxx,
-   swgl, authored GLSL tree). The receipt that the jump-ship is real.
+1. **Stabilize / commit the current adapter-groundwork stack**.
+   It is green and reviewable as a bounded foundation: pass target
+   policy, depth policy, adapter pass replay, encoder lifecycle, and
+   RGBA8 readback. Good checkpoint before the renderer-body grind.
+2. **Adapter A2.X.5+ — first `renderer/mod.rs` pass callsite**.
+   Pick one path and make it compile end-to-end. Candidate paths are
+   `bind_debug_overlay` (`mod.rs:1507`), texture-cache copy
+   (`mod.rs:1983`), or main render-target setup (`mod.rs:3338`). The
+   first two are narrower; the main path is more representative but
+   touches QCOM tiling, depth-write state, clears, resolves, blits,
+   and draw batching in one knot.
+3. **Adapter A2.3.1 — renderer read-pixels callsites**.
+   The copy-to-buffer machinery is now adapter-owned, but the
+   `mod.rs:1262/4614/4619` callsites still sit behind
+   `bind_read_target_impl` state. This can proceed once each caller
+   can name the source texture/view directly instead of binding a GL
+   read target first.
+4. **Adapter A2.1 / A2.2 / A2.5 — texture lifecycle, zoom-debug,
+   and blit paths**. Dither and zoom-debug remain gated on
+   pass-encoding-shaped bind groups. Same-format blits can use
+   `copy_texture_to_texture`; scaled/filtering blits need a render
+   pass helper.
+5. **Adapter A3–A7 — vertex, pipeline, render-target, upload, and
+   query migrations**. Same rhythm: keep a small wgpu-native adapter
+   surface, route a focused receipt through it, then migrate renderer
+   callsites without preserving GL-shaped state.
+6. **Adapter A8 — re-export flip**. `device/mod.rs` switches from
+   GL to wgpu. Compiler errors light up any remaining residue. Once
+   green, parent S4 can close by bringing the remaining oracle scenes
+   through the actual renderer body.
+7. **Main S5–S9**: CTS gate, full WGSL corpus, servo-wgpu smoke,
+   external corpus coverage, then GL deletion. These remain the
+   strategic finish line after the renderer boundary has moved.
 
-**Honest scope estimate**: A2.X.1+ through A8 is multi-week to
-multi-month engineering work. The branch's design phase (this session)
-is closing; the implementation grind is the next phase.
+**Honest scope estimate**: A2.X.5+ through A8 is multi-week to
+multi-month engineering work. The work has moved out of design and
+into careful renderer-body surgery; expect fewer lines per turn and
+more compile/debug cycles per slice.
 
 ---
 
@@ -102,41 +123,36 @@ is closing; the implementation grind is the next phase.
 Things that aren't on the critical path but unblock, accelerate, or
 de-risk later work. Pickable in any order, mostly independent:
 
-1. **WebGPU CTS gate (Main S5)** — runs alongside renderer-body
-   migration without conflict. Adds an API-correctness gate distinct
-   from the pixel-correctness gate S4 covers. Targeted subset:
-   buffers, render_pass, bind_groups, blend, depth_stencil,
-   vertex_state. Concrete deliverable: `cargo test --test cts_subset`.
-2. **WGSL `override` variant collapse exploration**. Today
-   `WgpuShaderVariant::ALL` enumerates ~50 variants. Many differ only
-   by parameter (alpha vs. opaque, fast-path vs. full,
-   dual-source toggle). Authoring one variant pair as
-   override-specialized in S6 style validates the §4.9 plan early —
-   no renderer body changes.
-3. **Parallel mini-renderer for the remaining four S4 oracle
-   scenes**. Ships visible S4 progress without waiting for the
-   renderer body migration. Costs: violates §5 spirit ("renderer
-   body adapts to wgpu, not parallel paths"); may need an explicit
-   revision of §5 to land. Option (B) from the strategic question
-   I surfaced.
-4. **Async pipeline compilation + `wgpu::PipelineCache`** (§4.11).
-   Wire up disk-backed pipeline cache so second-run boots are fast.
-   Setup work; pays off when S6's corpus expands.
-5. **Servo-wgpu integration verification**. The sibling repo
-   `c:\Users\mark_\Code\repos\servo-wgpu` patches webrender to our
-   local path. With our 0.68 version bumps, the patch should resolve;
-   confirm `cargo check -p servo` (or whatever entry point) still
-   compiles. Defends against silent breakage during renderer-body
-   migration.
-6. **`wgpu::RenderBundle` for picture-cache tile replay** (Main §Q12,
-   adapter §Q4). Investigate as a separate experiment; potential
-   frame-time win once the renderer body's picture cache is reachable.
-7. **Texture-array glyph cache** (Main §Q11). Move the glyph atlas
-   from single-texture to layered texture array. Optimization; not
-   blocking. Ahead-of-time for when text scenes come back online.
-8. **Push to origin**. Haven't pushed any of the 11 session commits.
-   `git push origin idiomatic-wgpu-pipeline`. One-time, low-risk,
-   makes the work visible / shareable / backed up.
+1. **Commit the adapter groundwork stack.** Current diff is focused
+   and green, but still uncommitted. A commit here gives A2.X.5 a
+   clean rollback point before touching `renderer/mod.rs`.
+2. **WebGPU CTS gate (Main S5)**. Runs alongside renderer migration
+   without conflict. Target a small conformance lane first: buffers,
+   render_pass, bind_groups, blend, depth_stencil, vertex_state.
+   Concrete deliverable remains a focused test command rather than a
+   full CTS import.
+3. **Servo-wgpu integration verification.** The sibling
+   `servo-wgpu` repo patches webrender to this local path. A quick
+   check after the adapter stack lands catches path/version drift
+   before renderer-body churn makes failures harder to attribute.
+4. **A2.3.1 read-pixels callsite recon.** The adapter readback helper
+   is ready; a read-only trace of `bind_read_target_impl` and
+   `read_pixels*` could determine whether A2.3.1 can land before the
+   first full pass migration.
+5. **WGSL `override` variant collapse exploration.** Author one
+   duplicate shader-family pair as override-specialized WGSL. Validates
+   the §4.9 plan without touching renderer control flow.
+6. **Pipeline cache / async compilation spike** (§4.11). Small
+   adapter-only work that pays off once S6 expands the shader corpus.
+7. **Oracle harness hardening.** Keep `blank` exact, but design the
+   tolerance/reporting shape for non-blank scenes before the remaining
+   four S4 images come online.
+8. **RenderBundle experiment for tile replay** (Main §Q12, adapter
+   §Q4). Potential frame-time win after picture-cache rendering is
+   reachable; not blocking the boundary migration.
+9. **Texture-array glyph cache** (Main §Q11). Useful future
+   optimization for text-heavy scenes, but do not let it jump the
+   critical path until text rendering has a wgpu path again.
 
 ---
 
@@ -144,74 +160,61 @@ de-risk later work. Pickable in any order, mostly independent:
 
 Things that could invalidate work or stall progress:
 
-1. **Renderer body migration impedance is bigger than the recon
-   measured.** 169 callsites + 57 methods quantifies the
-   *callsites*, not the *interdependence*. Many state-machine assumptions
-   don't have wgpu-native equivalents (e.g., `bind_texture`'s
-   per-call binding model). Each "small" migration may cascade
-   further than scoping suggested.
-2. **§5 "no GL-shape preserved" + "no parallel paths" makes
-   incremental migration mechanically hard.** Forced into atomic
-   per-chunk edits where each commit has a green build. Prevents
-   easy-but-wrong intermediate states. Slow.
-3. **Servo-wgpu integration may break mid-migration.** Servo-wgpu
-   patches webrender to `../webrender-wgpu/webrender`. Renderer-body
-   work in flight may temporarily break Servo's build until the
-   migration is consistent. Coordinate with servo-wgpu side; consider
-   tagging a stable pre-migration commit for them to pin until A8
-   lands.
-4. **Oracle PNGs are platform-dependent.** Captured on NVIDIA
-   RTX 4060 / OpenGL 3.2 / driver 591.86 / Windows 11. Different
-   hardware (different drivers, AMD, Intel, MoltenVK) may produce
-   subtly different output. Tolerance policy is currently 0 (exact
-   match) on `blank`; expect to soften per-scene with documented
-   root causes when running on other hardware (per dual-servo plan
-   §"No hacks").
-5. **wgpu 29 → 30 (and beyond) API churn.** This session found ~10
-   surface renames between wgpu versions
-   (PUSH_CONSTANTS→IMMEDIATES, `var<push_constant>` →
-   `var<immediate>`, `multiview` → `multiview_mask`, etc.). Future
-   wgpu major bumps will likely invalidate code we wrote. The
-   §4.4 dep-currency note is the planned mitigation; recurring audits.
-6. **Parley + glyph atlas ownership** (Main §Q14, recorded
-   2026-04-28: webrender-wgpu owns the atlas on the WebRender path).
-   This is decided but not implemented. When HTML Lane work surfaces
-   in graphshell, the atlas-ownership boundary may need revisiting.
-   Cross-repo coordination required.
-7. **Image / text oracle scenes deferred.** Need asset-dependency
-   handling (Ahem.ttf for text; image fixtures for images). Bringing
-   them online surfaces font-rasterizer + asset-loader concerns we
-   haven't designed yet.
-8. **The clap 3 patches on the oracle worktree are local-only.**
-   If the worktree is re-created, the patch in
-   `wrench/src/yaml_frame_reader.rs::new_from_args` needs
-   re-applying. Documented in `webrender/tests/oracle/README.md`,
-   but easy to forget. Failure mode: wrench panics on `args.value_of("keyframes")`.
-9. **Big-picture scope.** webrender-wgpu's full renderer-body
-   migration is genuinely a multi-month engineering project. If
-   priorities shift (graphshell M2/M3 work, servo-wgpu integration,
-   verse / nostr / matrix mods), this branch may stall partway.
-   No external user is blocked on it; the §S9 GL-deletion receipt
-   is the only "done" milestone. Any pause leaves the branch in a
-   bounded mid-state.
-10. **Auto-mode pacing.** This session ran fast and aggressively.
-    Each commit landed in single turns; the cumulative velocity
-    burned through the whole design phase in one sitting. The next
-    phase (renderer body grinding) is much slower per-turn — many
-    turns per slice, many slices per A2.X. Setting expectations
-    for that velocity drop is part of staying productive.
+1. **The current stack is green but uncommitted.** It is all
+   adapter/test/doc work, but it spans seven files. Commit before
+   starting `renderer/mod.rs` so formatter churn or a bad migration
+   can be unwound cleanly.
+2. **Renderer callsites are interdependent.** 169 `self.device.*`
+   callsites and 57 methods count the surface, not the hidden GL state
+   coupling. A "single" `bind_draw_target` migration may pull in clear
+   policy, depth writes, texture binding, resolves, blits, and profiler
+   queries.
+3. **No GL-shaped compatibility layer.** The plan intentionally
+   rejects a wgpu-backed clone of `gl.rs::Device`. That keeps the
+   architecture honest, but it removes the easy path of shimming old
+   call shapes one method at a time.
+4. **Readback is only half migrated.** `WgpuDevice::read_rgba8_texture`
+   handles RGBA8 texture staging, not the renderer's GL-shaped
+   read-target binding model, other formats, partial rectangles, or
+   caller-owned destination buffers. Do not mark A2.3 closed until
+   `read_pixels` / `read_pixels_into` callsites are actually moved.
+5. **Depth/clear semantics must stay explicit.** wgpu load/store ops
+   are pass-begin decisions. GL-style late clears and
+   `invalidate_depth_target()` calls need to become `RenderPassTarget`
+   policy, or the migration will accidentally preserve mutable
+   framebuffer state in a new disguise.
+6. **`cargo fmt` can create broad inherited-WebRender churn.** Prefer
+   targeted `rustfmt` on edited files and verify `git diff --name-only`
+   afterward. Crate-wide format already produced unrelated churn once.
+7. **Servo-wgpu may break during renderer-body edits.** It patches to
+   this local webrender. If a renderer migration stays half-done, Servo
+   may fail for unrelated-looking reasons. Keep checkpoints green and
+   coordinate pinning if needed.
+8. **Oracle PNGs are platform-dependent.** Current exact match is only
+   proven for `blank` on the capture machine. Non-blank scenes may need
+   documented tolerances, and text/image scenes still need asset/font
+   handling.
+9. **wgpu API churn remains real.** The branch already hit wgpu 29
+   differences (`IMMEDIATES`, `var<immediate>`, `depth_slice`,
+   `multiview_mask`, `immediate_size`). Future major bumps can move
+   the ground under the adapter; keep version notes close to code.
+10. **Scope gravity.** The project has tempting adjacent work
+    (glyph arrays, RenderBundles, pipeline cache, CTS, servo smoke),
+    but GL deletion is the real finish line. Sidequests should either
+    de-risk the migration or stay explicitly optional.
 
 ---
 
 ## Bottom line
 
-The design is committed. The wgpu-native API surface for boot,
-texture, pipeline, binding, buffer, pass-encoding, and oracle
-comparison is in `webrender/src/device/wgpu/` with seven smoke /
-integration tests. Both plans (idiomatic-wgsl + adapter) capture
-sequencing, receipts, and ~10 sequenced wgpu 29 surface-API gotchas.
+The design phase is over; the adapter boundary is real enough to be
+the target for renderer-body work. `webrender/src/device/wgpu/` now
+owns boot, texture create/upload, pipeline/binding/buffer helpers,
+pass target policy, depth policy, command encoder lifecycle, pass
+replay, and RGBA8 readback, with seven focused wgpu tests green.
 
-The implementation grind starts at A2.X.1 — the first commit that
-edits `renderer/mod.rs`. Multi-turn, multi-week. Worth pacing
-deliberately, considering sidequest (S5) parallelism, and pushing
-the existing commits to `origin` first.
+The next real milestone is A2.X.5: the first `renderer/mod.rs`
+pass-encoding callsite migration. Treat it as slower, careful
+surgery, not another quick scaffolding slice. Commit the current
+adapter stack first, then choose one narrow renderer path and keep it
+green before widening.

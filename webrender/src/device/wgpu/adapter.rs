@@ -18,7 +18,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::core;
+use super::frame;
+use super::pass::{self, DrawIntent, RenderPassTarget};
 use super::pipeline::{BrushSolidPipeline, build_brush_solid};
+use super::readback;
 use super::texture::{TextureDesc, WgpuTexture};
 
 /// Wgpu-native device adapter. Owned by the renderer body once
@@ -93,8 +96,7 @@ impl WgpuDevice {
     /// is async-by-default; the upload is in flight after this
     /// returns and is observable on the next submit.
     pub fn upload_texture(&self, tex: &WgpuTexture, data: &[u8]) {
-        let bytes_per_row = tex.width
-            * super::format::format_bytes_per_pixel_wgpu(tex.format);
+        let bytes_per_row = tex.width * super::format::format_bytes_per_pixel_wgpu(tex.format);
         self.core.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &tex.texture,
@@ -114,5 +116,40 @@ impl WgpuDevice {
                 depth_or_array_layers: 1,
             },
         );
+    }
+
+    /// Encode a single render pass from recorded draw intents. This
+    /// is the renderer-facing adapter method for A2.X: renderer
+    /// callsites construct a wgpu-native `RenderPassTarget`, collect
+    /// `DrawIntent`s, then ask the device adapter to replay them into
+    /// the active command encoder.
+    pub fn encode_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: RenderPassTarget<'_>,
+        draws: &[DrawIntent],
+    ) {
+        pass::flush_pass(encoder, target, draws);
+    }
+
+    /// Create the command encoder for one frame or offscreen pass
+    /// sequence. Renderer-body callsites should acquire encoders here
+    /// instead of reaching through to `core.device`.
+    pub fn create_encoder(&self, label: &str) -> wgpu::CommandEncoder {
+        frame::create_encoder(&self.core.device, label)
+    }
+
+    /// Finish and submit a command encoder. Keeps queue submission on
+    /// the adapter boundary, matching the future renderer-owned frame
+    /// lifecycle.
+    pub fn submit(&self, encoder: wgpu::CommandEncoder) {
+        frame::submit(&self.core.queue, encoder);
+    }
+
+    /// Read an RGBA8 texture into tightly-packed CPU bytes. Renderer
+    /// read-pixels paths should use this adapter method instead of
+    /// hand-building staging buffers at callsites.
+    pub fn read_rgba8_texture(&self, target: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
+        readback::read_rgba8_texture(&self.core, target, width, height)
     }
 }

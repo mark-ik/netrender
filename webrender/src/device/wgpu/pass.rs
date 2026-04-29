@@ -8,6 +8,76 @@
 
 use std::ops::Range;
 
+/// Colour attachment policy for one wgpu render pass. This is the
+/// wgpu-native replacement for the renderer body's current
+/// "bind draw target, then maybe clear" flow: the load operation is
+/// declared when the pass begins, not as mutable device state.
+pub struct ColorAttachment<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub load: wgpu::LoadOp<wgpu::Color>,
+    pub store: wgpu::StoreOp,
+}
+
+impl<'a> ColorAttachment<'a> {
+    pub fn clear(view: &'a wgpu::TextureView, color: wgpu::Color) -> Self {
+        Self {
+            view,
+            load: wgpu::LoadOp::Clear(color),
+            store: wgpu::StoreOp::Store,
+        }
+    }
+
+    pub fn load(view: &'a wgpu::TextureView) -> Self {
+        Self {
+            view,
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+        }
+    }
+}
+
+/// Depth attachment policy for one wgpu render pass. This carries the
+/// native replacement for `clear_target(..., Some(depth), ...)` and
+/// `invalidate_depth_target()`: load and store behavior are declared
+/// with the pass, not patched as mutable device state afterward.
+pub struct DepthAttachment<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub load: wgpu::LoadOp<f32>,
+    pub store: wgpu::StoreOp,
+}
+
+impl<'a> DepthAttachment<'a> {
+    pub fn clear(view: &'a wgpu::TextureView, depth: f32) -> Self {
+        Self {
+            view,
+            load: wgpu::LoadOp::Clear(depth),
+            store: wgpu::StoreOp::Store,
+        }
+    }
+
+    pub fn load(view: &'a wgpu::TextureView) -> Self {
+        Self {
+            view,
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+        }
+    }
+
+    pub fn discard(mut self) -> Self {
+        self.store = wgpu::StoreOp::Discard;
+        self
+    }
+}
+
+/// Target description for a single wgpu render pass. A2.X migrates
+/// renderer callsites toward constructing this value from render-task
+/// targets instead of binding GL FBO state on the device.
+pub struct RenderPassTarget<'a> {
+    pub label: &'a str,
+    pub color: ColorAttachment<'a>,
+    pub depth: Option<DepthAttachment<'a>>,
+}
+
 /// Recorded but not-yet-executed draw. Display-list traversal records
 /// these into per-pass buckets; `flush_pass` flips them into wgpu calls
 /// inside a single render-pass scope (per §4.8 — record, never execute
@@ -33,32 +103,35 @@ pub struct DrawIntent {
 
 /// Flush a list of draw intents into a single render pass.
 /// One `BeginRenderPass` per call; pipeline switches inside the pass
-/// happen per-draw (a draw's `pipeline` field). When `clear` is
-/// `Some`, the colour attachment loads with that clear; when `None`,
-/// it loads with existing contents (composite-onto-existing pattern).
+/// happen per-draw (a draw's `pipeline` field). Colour and depth load
+/// / store policy lives on `RenderPassTarget`, matching wgpu's pass
+/// model instead of GL's mutable framebuffer state.
 pub fn flush_pass(
     encoder: &mut wgpu::CommandEncoder,
-    target: &wgpu::TextureView,
-    clear: Option<wgpu::Color>,
-    label: &str,
+    target: RenderPassTarget<'_>,
     draws: &[DrawIntent],
 ) {
-    let load = match clear {
-        Some(c) => wgpu::LoadOp::Clear(c),
-        None => wgpu::LoadOp::Load,
-    };
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
+        label: Some(target.label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: target,
+            view: target.color.view,
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations {
-                load,
-                store: wgpu::StoreOp::Store,
+                load: target.color.load,
+                store: target.color.store,
             },
         })],
-        depth_stencil_attachment: None,
+        depth_stencil_attachment: target.depth.as_ref().map(|depth| {
+            wgpu::RenderPassDepthStencilAttachment {
+                view: depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: depth.load,
+                    store: depth.store,
+                }),
+                stencil_ops: None,
+            }
+        }),
         timestamp_writes: None,
         occlusion_query_set: None,
         multiview_mask: None,
