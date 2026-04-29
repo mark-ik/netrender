@@ -48,6 +48,7 @@ landed. Pre-P0 tag `pre-p0` at `aa1850ed7` for servo-wgpu pinning.
 | **P0 — Embedder wgpu handoff** | ✅ webrender side | `WgpuHandles` struct, `WgpuDevice::with_external`, `Renderer.wgpu_device`, new `create_webrender_instance(gl, wgpu, …)` signature, `RendererError::WgpuFeaturesMissing`. `core::boot()` + `WgpuDevice::boot()` gated behind `cfg(test)`. Servo-wgpu side outstanding (pin against `pre-p0` tag until its call-site updates). |
 | **P1.1 — brush_solid storage-buffer shape** | ✅ | brush_solid WGSL now reads from `PrimitiveHeader` + `gpu_buffer_f` storage buffers (mirrors GL `prim_shared.glsl::PrimitiveHeader` collapsed into one std430 struct, plus `fetch_from_gpu_buffer_*`'s `vec4<f32>` table). `ALPHA_PASS` WGSL override replaces `MAX_PALETTE_ENTRIES`. `DrawIntent::uniform_offset` → `dynamic_offsets: Vec<u32>`. |
 | **P1.2 — Transform storage buffer** | ✅ | `Transform { m, inv_m }` storage at bind slot 1 (mirrors GL `transform.glsl::Transform`, 128 bytes std430). Vertex shader applies `transforms[header.transform_id & 0x003fffff].m` to the corner. Smoke feeds identity matrices. |
+| **P1.3 — Per-instance `a_data` vertex attribute** | ✅ | brush_solid reads `@location(0) a_data: vec4<i32>` (Sint32x4, instance step) — matches GL `PER_INSTANCE in ivec4 aData`. `prim_header_address = a_data.x` drives the header lookup; other fields reserved for P1.4 / P1.5 consumers. `DrawIntent.vertex_buffers: Vec<Buffer>`; `flush_pass` loops `set_vertex_buffer`. |
 
 **Concrete artifacts**:
 

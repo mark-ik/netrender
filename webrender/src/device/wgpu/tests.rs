@@ -143,12 +143,25 @@ fn render_rect_smoke() {
         &gpu_buffer_f,
     );
 
-    // One DrawIntent: instance_index 0 reads PrimitiveHeader[0],
-    // which addresses gpu_buffer_f[0] for the colour. No push constants
-    // (production routes everything through indexed storage reads).
+    // Per-instance `a_data` vertex buffer. One ivec4 per primitive
+    // (16 bytes). Field decoding matches GL `decode_instance_attributes`:
+    //   x = prim_header_address (we point at PrimitiveHeader[0])
+    //   y = clip_address (unused until P1.5)
+    //   z = (flags << 16) | segment_index (unused until P1.5)
+    //   w = (brush_kind << 24) | resource_address (unused — brush_solid
+    //       has no resource address)
+    let a_data: [i32; 4] = [0, 0, 0, 0];
+    let a_data_bytes: Vec<u8> = a_data.iter().flat_map(|i| i.to_ne_bytes()).collect();
+    let a_data_buffer =
+        buffer::create_vertex_buffer(&dev.device, &dev.queue, "P1 a_data", &a_data_bytes);
+
+    // One DrawIntent: instance 0 picks PrimitiveHeader[a_data.x = 0].
+    // No push constants (production routes everything through indexed
+    // storage reads).
     let draws = vec![pass::DrawIntent {
         pipeline: pipe.pipeline.clone(),
         bind_group: bind_group.clone(),
+        vertex_buffers: vec![a_data_buffer],
         vertex_range: 0..4,
         instance_range: 0..1,
         dynamic_offsets: Vec::new(),

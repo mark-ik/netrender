@@ -58,13 +58,27 @@ pub fn build_brush_solid_specialized(
         ("ALPHA_PASS", if alpha_pass { 1.0 } else { 0.0 }),
     ];
 
+    // Per-instance `a_data: vec4<i32>` matches GL
+    // `PER_INSTANCE in ivec4 aData`. Step rate Instance — one
+    // `aData` per primitive, four vertices per primitive (the
+    // triangle strip's corners).
+    const A_DATA_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout {
+        array_stride: 16, // 4 × i32
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &[wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Sint32x4,
+            offset: 0,
+            shader_location: 0,
+        }],
+    };
+
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(if alpha_pass { "brush_solid alpha" } else { "brush_solid opaque" }),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
-            buffers: &[],
+            buffers: &[A_DATA_LAYOUT],
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants,
                 zero_initialize_workgroup_memory: false,

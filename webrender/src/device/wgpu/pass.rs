@@ -83,15 +83,19 @@ pub struct RenderPassTarget<'a> {
 /// inside a single render-pass scope (per §4.8 — record, never execute
 /// inline).
 ///
-/// Carries pipeline + bind-group references by value: wgpu 29 handle
-/// types are `Clone` (Arc-wrapped internally), so per-draw cloning is
-/// cheap. Multi-pipeline passes work by recording draws with different
-/// `pipeline` values; `flush_pass` calls `set_pipeline` per draw and
-/// lets wgpu de-dup redundant binds at the encoder level.
+/// Carries pipeline + bind-group + buffer references by value: wgpu 29
+/// handle types are `Clone` (Arc-wrapped internally), so per-draw
+/// cloning is cheap. Multi-pipeline passes work by recording draws
+/// with different `pipeline` values; `flush_pass` calls `set_pipeline`
+/// per draw and lets wgpu de-dup redundant binds at the encoder level.
 #[derive(Clone)]
 pub struct DrawIntent {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group: wgpu::BindGroup,
+    /// Vertex buffers bound at slots `0..N` before the draw (full-range).
+    /// Empty if the pipeline reads only built-in inputs (e.g. derives
+    /// corners from `vertex_index`).
+    pub vertex_buffers: Vec<wgpu::Buffer>,
     pub vertex_range: Range<u32>,
     pub instance_range: Range<u32>,
     /// Dynamic offsets into bind-group entries that have
@@ -142,6 +146,9 @@ pub fn flush_pass(
     for draw in draws {
         pass.set_pipeline(&draw.pipeline);
         pass.set_bind_group(0, &draw.bind_group, &draw.dynamic_offsets);
+        for (slot, vb) in draw.vertex_buffers.iter().enumerate() {
+            pass.set_vertex_buffer(slot as u32, vb.slice(..));
+        }
         if !draw.push_constants.is_empty() {
             // wgpu 29: `set_immediates(offset, data)` — stage is fixed
             // by the pipeline's `immediate_size` declaration; no stage

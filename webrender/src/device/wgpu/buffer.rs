@@ -43,3 +43,21 @@ pub fn create_storage_buffer(
     queue.write_buffer(&buffer, 0, contents);
     buffer
 }
+
+/// Create a vertex buffer initialized with `contents`. The renderer's
+/// per-instance attribute streams (e.g. `aData ivec4`) live here.
+pub fn create_vertex_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    contents: &[u8],
+) -> wgpu::Buffer {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: contents.len() as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&buffer, 0, contents);
+    buffer
+}

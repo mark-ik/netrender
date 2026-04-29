@@ -268,9 +268,17 @@ sub-slice has landed and the oracle-match receipt passes.
   matrix-multiply path is exercised end-to-end. `inv_m` is part of
   the production table shape but unused by brush_solid's vertex
   path; other families read it for fragment-side untransform.
-- [ ] **P1.3 — Per-instance vertex attributes.** Replace
-  `instance_index → header_index` with the GL-shaped `aData ivec4`
-  vertex stream, so multiple primitives can ride one draw call.
+- [x] **P1.3 — Per-instance `a_data` vertex attribute (2026-04-29).**
+  brush_solid vertex shader now reads `@location(0) a_data: vec4<i32>`
+  with `VertexStepMode::Instance`. Field decoding matches GL
+  `decode_instance_attributes`: `a_data.x` is `prim_header_address`,
+  used for the header lookup. The other fields (clip_address,
+  segment_index|flags, resource_address|brush_kind) are reserved for
+  P1.4 / P1.5 consumers. `DrawIntent` extended with
+  `vertex_buffers: Vec<wgpu::Buffer>`; `flush_pass` loops
+  `set_vertex_buffer` over them at slots `0..N`. New
+  `buffer::create_vertex_buffer` helper. Pipeline gains
+  `A_DATA_LAYOUT` (`Sint32x4` at location 0, stride 16, instance step).
 - [ ] **P1.4 — PictureTask + render-target attachment.** Read
   `header.picture_task_address` for content_origin / device pixel
   scale; first wgpu-native render target lifecycle in the renderer.

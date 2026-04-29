@@ -1,24 +1,27 @@
 // brush_solid.wgsl — solid-coloured quad. Pipeline-first migration plan
-// §6 P1.1, P1.2.
+// §6 P1.1, P1.2, P1.3.
 //
 // Mirrors the GL `brush_solid.glsl` data contract via storage buffers
-// (parent plan §4.6): a PrimitiveHeader table indexed by instance index,
-// a Transform table indexed by `header.transform_id`, plus a GpuBuffer
-// table whose `vec4` slot at `specific_prim_address` holds the brush
-// colour. Production has more inputs (PictureTask, ClipArea, per-instance
-// `ivec4 aData`) — those land in subsequent P1 sub-slices. The shape
-// here exercises the storage-buffer pattern plus the matrix-multiply
-// path:
+// (parent plan §4.6): a PrimitiveHeader table indexed by the instance's
+// `a_data.x` attribute, a Transform table indexed by
+// `header.transform_id`, plus a GpuBuffer table whose `vec4` slot at
+// `specific_prim_address` holds the brush colour. Production has more
+// inputs (PictureTask, ClipArea) — those land in subsequent P1
+// sub-slices. The shape here exercises:
 //
-//   - PrimitiveHeader is fetched by instance_index. Real production
-//     fetches it by `aData.x = prim_header_address` from a vertex
-//     attribute; we collapse to instance_index here so the smoke can
-//     run without instance vertex buffers (P1.3 lands those).
-//   - Transform is fetched by the low 22 bits of `header.transform_id`
+//   - Per-instance `a_data: vec4<i32>` vertex attribute (matches GL
+//     `PER_INSTANCE in ivec4 aData` from `prim_shared.glsl`); decoded
+//     fields: `prim_header_address` (`a_data.x`),
+//     `clip_address` (`a_data.y`), `segment_index | flags` (`a_data.z`),
+//     `resource_address | brush_kind` (`a_data.w`).
+//     Only `prim_header_address` is consumed yet; the others land
+//     with their consumers (P1.4 picture-task, P1.5 clip).
+//   - PrimitiveHeader fetched by `a_data.x`.
+//   - Transform fetched by the low 22 bits of `header.transform_id`
 //     (the high bit encodes is_axis_aligned per GL `fetch_transform`;
 //     not used here until P1.5's AA path).
 //   - GpuBuffer is read at `header.specific_prim_address` to get the
-//     `vec4` color (matches GL `fetch_solid_primitive` →
+//     `vec4` colour (matches GL `fetch_solid_primitive` →
 //     `fetch_from_gpu_buffer_1f`).
 //   - `local_rect` corner is multiplied by `transform.m` to reach
 //     clip space. Production additionally applies `picture_task`
@@ -93,9 +96,14 @@ struct VsOut {
 @vertex
 fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
-    @builtin(instance_index) instance_index: u32,
+    @location(0) a_data: vec4<i32>,
 ) -> VsOut {
-    let header = prim_headers[instance_index];
+    // Decode the GL-shaped instance attributes from `a_data`. Only
+    // `prim_header_address` is consumed in this sub-slice; the other
+    // fields land with their consumers in P1.4 / P1.5.
+    let prim_header_address = a_data.x;
+
+    let header = prim_headers[prim_header_address];
     let transform = transforms[header.transform_id & TRANSFORM_INDEX_MASK];
     let color = gpu_buffer_f[header.specific_prim_address];
 
