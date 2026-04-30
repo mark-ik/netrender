@@ -22,7 +22,7 @@ use super::core::{REQUIRED_FEATURES, WgpuHandles};
 use super::core;
 use super::frame;
 use super::pass::{self, DrawIntent, RenderPassTarget};
-use super::pipeline::{BrushSolidPipeline, build_brush_solid};
+use super::pipeline::{BrushSolidPipeline, build_brush_solid_specialized};
 use super::readback;
 use super::texture::{TextureDesc, WgpuTexture};
 
@@ -35,11 +35,13 @@ use super::texture::{TextureDesc, WgpuTexture};
 /// embedder fixture.
 pub struct WgpuDevice {
     pub core: WgpuHandles,
-    /// Pipeline cache keyed by family + render-target format. The
+    /// Pipeline cache keyed by family + render-target format +
+    /// override-specialisation flags. For `brush_solid` the only
+    /// override is `ALPHA_PASS` (parent §4.9). The
     /// `Mutex<HashMap<Key, Pipeline>>::entry().or_insert_with()`
     /// pattern is the model later P slices replicate for other caches
     /// (bind-group layouts, samplers, vertex layouts, etc.).
-    brush_solid: Mutex<HashMap<wgpu::TextureFormat, BrushSolidPipeline>>,
+    brush_solid: Mutex<HashMap<(wgpu::TextureFormat, bool), BrushSolidPipeline>>,
 }
 
 impl WgpuDevice {
@@ -74,16 +76,22 @@ impl WgpuDevice {
         })
     }
 
-    /// Return the `brush_solid` pipeline for `format`, building on
-    /// first request and caching subsequent ones. wgpu 29 pipeline /
-    /// bind-group-layout handles are `Clone` (Arc-wrapped internally),
-    /// so returning a clone is cheap — no borrow of the cache lock
-    /// escapes the call.
-    pub fn ensure_brush_solid(&self, format: wgpu::TextureFormat) -> BrushSolidPipeline {
+    /// Return the `brush_solid` pipeline for `(format, alpha_pass)`,
+    /// building on first request and caching subsequent ones. wgpu
+    /// 29 pipeline / bind-group-layout handles are `Clone`
+    /// (Arc-wrapped internally), so returning a clone is cheap — no
+    /// borrow of the cache lock escapes the call. `alpha_pass` selects
+    /// the WGSL `override` specialisation (parent §4.9): opaque vs.
+    /// alpha-clipped fragment.
+    pub fn ensure_brush_solid(
+        &self,
+        format: wgpu::TextureFormat,
+        alpha_pass: bool,
+    ) -> BrushSolidPipeline {
         let mut cache = self.brush_solid.lock().expect("brush_solid lock");
         cache
-            .entry(format)
-            .or_insert_with(|| build_brush_solid(&self.core.device, format))
+            .entry((format, alpha_pass))
+            .or_insert_with(|| build_brush_solid_specialized(&self.core.device, format, alpha_pass))
             .clone()
     }
 

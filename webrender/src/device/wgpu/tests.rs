@@ -82,7 +82,7 @@ fn render_rect_smoke() {
     });
     let target_view = target.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let pipe = pipeline::build_brush_solid(&dev.device, format);
+    let pipe = pipeline::build_brush_solid_specialized(&dev.device, format, /* alpha_pass */ false);
 
     // PrimitiveHeader storage: one entry. `local_rect` covers full clip
     // space (-1..1); `specific_prim_address` points at gpu_buffer slot 0
@@ -426,9 +426,10 @@ fn render_rect_alpha_smoke() {
 #[test]
 fn wgpu_device_a1_smoke() {
     let dev = adapter::WgpuDevice::boot().expect("WgpuDevice boot");
-    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm);
-    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm);
-    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Bgra8Unorm);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm, false);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm, false);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Bgra8Unorm, false);
+    let _ = dev.ensure_brush_solid(wgpu::TextureFormat::Rgba8Unorm, true);
 }
 
 /// Adapter-plan §A2 design seed: `WgpuDevice::create_texture` works

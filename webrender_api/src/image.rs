@@ -131,36 +131,16 @@ pub trait ExternalImageHandler {
     fn unlock(&mut self, key: ExternalImageId, channel_index: u8);
 }
 
-/// Specifies the type of texture target in driver terms.
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum ImageBufferKind {
-    /// Standard texture. This maps to GL_TEXTURE_2D in OpenGL.
-    Texture2D = 0,
-    /// Rectangle texture. This maps to GL_TEXTURE_RECTANGLE in OpenGL. This
-    /// is similar to a standard texture, with a few subtle differences
-    /// (no mipmaps, non-power-of-two dimensions, different coordinate space)
-    /// that make it useful for representing the kinds of textures we use
-    /// in WebRender. See https://www.khronos.org/opengl/wiki/Rectangle_Texture
-    /// for background on Rectangle textures.
-    TextureRect = 1,
-    /// External texture. This maps to GL_TEXTURE_EXTERNAL_OES in OpenGL, which
-    /// is an extension. This is used for image formats that OpenGL doesn't
-    /// understand, particularly YUV. See
-    /// https://www.khronos.org/registry/OpenGL/extensions/OES/OES_EGL_image_external.txt
-    TextureExternal = 2,
-    /// External texture which is forced to be converted from YUV to RGB using BT709 colorspace.
-    /// This maps to GL_TEXTURE_EXTERNAL_OES in OpenGL, using the EXT_YUV_TARGET extension.
-    /// https://registry.khronos.org/OpenGL/extensions/EXT/EXT_YUV_target.txt
-    TextureExternalBT709 = 3,
-}
-
 /// Storage format identifier for externally-managed images.
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub enum ExternalImageType {
-    /// The image is texture-backed.
-    TextureHandle(ImageBufferKind),
+    /// The image is texture-backed (an embedder-supplied wgpu texture
+    /// view). Phase D dropped the `ImageBufferKind` parameter — under
+    /// wgpu there's a single 2D-texture concept; the GL-only variants
+    /// (`TextureRect` / `TextureExternal` / `TextureExternalBT709`)
+    /// have no equivalent.
+    TextureHandle,
     /// The image is heap-allocated by the embedding.
     Buffer,
 }

@@ -321,7 +321,8 @@ sub-slice has landed and the oracle-match receipt passes.
   and samples `1.0` — output remains red, validating the textureLoad
   path end-to-end. Existing `render_rect_smoke` (opaque) gains a
   dummy 1×1 mask binding to satisfy the layout.
-- [~] **P1.6 — Per-family draw-loop dispatch** (split into 6a / 6b+):
+- [~] **P1.6 — Per-family draw-loop dispatch** (split further during
+  6b recon — see "Sequenced finding" below):
   - [x] **P1.6a — Dispatch hook landed (2026-04-29).** First
     renderer-body edit. `draw_alpha_batch_container` (mod.rs:3022)
     now calls `self.try_dispatch_wgpu(batch)` before the GL
@@ -332,22 +333,138 @@ sub-slice has landed and the oracle-match receipt passes.
     the dispatch contract; subsequent sub-slices populate
     families. `PrimitiveBatch` added to the renderer's batch
     imports.
-  - [ ] **P1.6b — `BrushBatchKind::Solid` body.** Bridge the
-    renderer-side per-batch source data (`gpu_buffer_texture_f`,
-    `transforms_texture`, `prim_header_texture`,
-    `batch.instances`) into wgpu storage / vertex buffers, build a
-    wgpu render-target view, and call
-    `self.wgpu_device.encode_pass(...)` with the `brush_solid`
-    pipeline. First sub-slice where the GL fallthrough actually
-    skips for a real family.
-  - [ ] **P1.6c — Render-target lifecycle on Renderer.**
-    `WgpuRenderTargets` cache (sized to match GL `DrawTarget`
-    extents); reused across frames. Dispatched through
-    `encode_pass`'s `RenderPassTarget`.
-  - [ ] **P1.6d — Alpha-batch loop dispatch.** Same hook in the
-    `alpha_batch_container.alpha_batches` loop (mod.rs:3045).
-    Lands once 6b's bridge handles the alpha-pass override
-    pipeline.
+  - [x] **P1.6b.1 — Per-frame wgpu storage-buffer producer
+    (2026-04-29).** New `renderer::wgpu_frame_data` module +
+    `Renderer.wgpu_frame_data: Option<WgpuFrameData>` field.
+    Populated in `draw_frame` immediately after
+    `update_gpu_buffer_texture`, from the same `Frame` source GL
+    consumes: `gpu_buffer_f.data` → `array<vec4<f32>>` storage,
+    `transform_palette` → `array<Transform>` storage,
+    `render_tasks.task_data` → `array<RenderTaskData>` storage,
+    and `prim_headers.headers_float[i]` ++ `headers_int[i]`
+    collapsed into 64 B std430 `array<PrimitiveHeader>` per WGSL.
+    Buffers recreated per-frame (mirrors GL "re-upload every
+    frame" pattern in `VertexDataTexture`); reuse / streaming
+    later if profiling demands. **No consumer yet** — receipt is
+    `cargo check -p webrender` clean (the 4 "field never read"
+    warnings on `WgpuFrameData` are the receipt) and 8/8 wgpu
+    device-side tests still pass. P1.6b.2's
+    `BrushBatchKind::Solid` arm body will read.
+  - [x] **P1.6b.2 — `BrushBatchKind::Solid` arm body
+    (2026-04-29).** Grew `try_dispatch_wgpu` to take `draw_target:
+    DrawTarget` and `projection: &Transform3D<f32>`. New arm
+    `BatchKind::Brush(BrushBatchKind::Solid)` calls
+    `dispatch_brush_solid_temp` and returns `false` (GL still
+    draws). The dispatch reads from `wgpu_frame_data`, copies
+    `batch.instances` straight into a per-batch vertex buffer (no
+    transform — `PrimitiveInstanceData` is already byte-equal to
+    `a_data: vec4<i32>`), builds a `PerFrame` uniform from
+    `projection.to_array()` (column-major matches WGSL
+    `mat4x4<f32>`), creates a throwaway `Rgba8Unorm` target sized
+    to `draw_target.dimensions()`, assembles a `DrawIntent`, and
+    submits via `wgpu_device.encode_pass`. Per-call resource churn
+    (texture + encoder + submit) is intentional — the temp shape
+    proves the bridge end-to-end without committing to render-
+    target replacement. **Hardened** `WgpuFrameData::build` to pad
+    empty source slices to one element of zeros (wgpu rejects
+    `size: 0` buffers; lightly-loaded frames legitimately have
+    empty `gpu_buffer_f`). Receipt: `cargo check -p webrender`
+    clean (5 warnings, all pre-existing or unrelated); 8/8 wgpu
+    device-side tests still pass in 2.11s. **Outstanding for
+    P1.6b.3**: the temp target is hardcoded `Rgba8Unorm`, which
+    is fine for P1.6b.2 (output discarded) but needs to query the
+    actual `DrawTarget` format once we render into the real
+    surface; pipeline cache already keys on format so the
+    promotion is mechanical.
+  - [x] **P1.6c — Render-target cache on Renderer (2026-04-29).**
+    New `Renderer.wgpu_render_targets: FastHashMap<(u32, u32,
+    wgpu::TextureFormat), wgpu::Texture>` field plus
+    `ensure_wgpu_render_target(width, height, format)` method
+    (split-borrow: borrows `&self.wgpu_device.core.device` outside
+    the `entry().or_insert_with(...)` closure). The dispatch in
+    `dispatch_brush_solid_temp` no longer creates a per-call
+    throwaway texture — it asks the cache. Distinct GL `DrawTarget`s
+    with equal `(w, h, format)` share a single wgpu mirror, which
+    is incorrect for production semantics but harmless in the
+    debug-discard era (every dispatch clears the cached texture
+    and never reads it). No eviction yet; cache grows monotonically
+    with distinct surface sizes (small in practice — main
+    framebuffer + a handful of picture-cache tile sizes). LRU /
+    GL-deletion-tied eviction lands later if needed. Receipt:
+    `cargo check -p webrender` clean (5 warnings, all pre-existing
+    or unrelated); 8/8 wgpu device-side tests still pass in 1.68s.
+  - [x] **P1.6b.3a — Hook returns true for Solid (2026-04-29).**
+    `BrushBatchKind::Solid` arm flipped from `false` to `true`:
+    GL fallthrough is now skipped for solid batches, both opaque
+    and alpha-pass. The wgpu render-target cache (P1.6c) is the
+    canonical surface — the embedder presents from these
+    textures, so dropping the GL solid draw doesn't lose visible
+    output (the wgpu draw produced it). Unmigrated families
+    still fall through to GL, and their output goes to the GL
+    framebuffer that nobody presents — a known dev-time gap that
+    closes family-by-family across P2..P8. Renamed
+    `dispatch_brush_solid_temp` → `dispatch_brush_solid` and
+    tightened: `wgpu_frame_data` access uses `expect` (the
+    guard's only failure mode is being called outside
+    `draw_frame`, a programming error). Cached render-target
+    texture usage extended with `COPY_SRC` (for P1.9-style
+    readback) and `TEXTURE_BINDING` (for the embedder's eventual
+    sample-on-present). Receipt: `cargo check -p webrender`
+    clean (5 warnings, all pre-existing or unrelated); 8/8 wgpu
+    device-side tests still pass in 2.34s.
+
+    **Why no blit / GL preservation**: WebRender's GL framebuffer
+    is internal scratch — nothing outside webrender presents
+    from it. Per P0, the embedder owns the wgpu device and
+    presents from wgpu textures. A migrated family's GL draw
+    therefore goes to a framebuffer no consumer reads, so
+    skipping it loses nothing observable; the wgpu draw to the
+    cached render target *is* the visible output (once the
+    embedder side of P0 lands and starts presenting). Phase D
+    deletes the GL device entirely; until then GL stays alive
+    only to render unmigrated families' (invisible) output, and
+    the GL/wgpu interop / cross-API blit story I had drafted as
+    a possible P1.6b.3 design was unnecessary.
+  - [x] **P1.6b.3b — Readback accessor on Renderer (2026-04-29).**
+    New `Renderer::read_wgpu_render_target_rgba8(width, height,
+    format) -> Option<Vec<u8>>` returns the tightly-packed
+    pixels of a cached wgpu render-target via
+    `wgpu_device.read_rgba8_texture`. Returns `None` if no
+    target is cached for that triple (or the format isn't an
+    RGBA8 equivalent). For oracle / pixel-comparison tests
+    (P1.9 et al.); production presents directly from the wgpu
+    texture without a CPU round-trip. Receipt: same as 6b.3a.
+  - [x] **P1.6d — Alpha-batch loop dispatch (2026-04-29).** Same
+    `try_dispatch_wgpu` hook now fires inside the
+    `alpha_batch_container.alpha_batches` loop alongside the
+    opaque-batch hook from P1.6a. Hook signature grew with
+    `is_alpha_pass: bool`; opaque call site passes `false`, alpha
+    call site passes `true`. WgpuDevice's pipeline cache rekeyed
+    from `format → BrushSolidPipeline` to `(format, alpha_pass) →
+    BrushSolidPipeline`; `ensure_brush_solid` now takes both
+    arguments and goes straight to
+    `build_brush_solid_specialized`. The convenience wrapper
+    `build_brush_solid` is removed (its only caller, the
+    `render_rect_smoke` test, calls `_specialized` directly). The
+    `wgpu_device_a1_smoke` test gained an `alpha_pass=true`
+    cache-miss to exercise the alpha pipeline build path.
+    Behaviour unchanged: hook still returns `false`, GL still
+    draws everything; alpha-pass solid batches now also pump
+    through the wgpu bridge each frame. Receipt: `cargo check
+    -p webrender` clean (5 warnings, all pre-existing or
+    unrelated); 8/8 wgpu device-side tests pass in 1.99s.
+
+**Sequenced finding during P1.6b.1 recon (2026-04-29)**: the
+original P1.6b as written ("first sub-slice where GL fallthrough
+actually skips") tries to land four things at once — storage-buffer
+producer, hook signature growth, DrawIntent assembly, *and* a wgpu
+render-target view that doesn't exist until 6c's cache. Splitting
+into 6b.1 (producer, this slice) → 6b.2 (DrawIntent assembly to a
+temp target, GL still draws) → 6c (render-target cache) → 6b.3 (flip
+hook to `true`) keeps each commit independently reviewable and
+pushes the "GL output replaced" boundary to a single small step
+after the bridge is proven.
+
 - [ ] **P1.7 — Pipeline cache (§4.11).** `wgpu::PipelineCache` with
   on-disk path; async compile.
 - [ ] **P1.8 — Authored brush_solid-only oracle scene + capture.**

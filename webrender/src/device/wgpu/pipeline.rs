@@ -14,25 +14,12 @@ pub struct BrushSolidPipeline {
     pub layout: wgpu::BindGroupLayout,
 }
 
-/// Build the brush_solid pipeline. The `ALPHA_PASS` WGSL `override`
-/// is supplied at pipeline-compile time per parent §4.9, so the same
-/// shader source specialises into opaque and alpha-pass pipelines
-/// without authoring a second WGSL file.
-///
-/// `target_format` keys the cache: alpha vs. opaque pass and different
-/// render-target formats (e.g. `Rgba8Unorm` for the main framebuffer
-/// versus `R8Unorm` for an alpha mask) each get their own compiled
-/// pipeline.
-pub fn build_brush_solid(
-    device: &wgpu::Device,
-    target_format: wgpu::TextureFormat,
-) -> BrushSolidPipeline {
-    build_brush_solid_specialized(device, target_format, false)
-}
-
-/// Build a brush_solid pipeline with an explicit `ALPHA_PASS` override
-/// value. P1.5 will use this from a second cache entry to land the
-/// alpha-pass shader; for now `false` (opaque) is the only call site.
+/// Build a brush_solid pipeline. `alpha_pass` selects the WGSL
+/// `override` specialisation per parent §4.9: the same shader source
+/// specialises into opaque and alpha-clipped pipelines without
+/// authoring a second WGSL file. `target_format` is the second cache
+/// key dimension — `Rgba8Unorm` for the main framebuffer vs.
+/// `R8Unorm` for alpha masks each get their own compiled pipeline.
 pub fn build_brush_solid_specialized(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
