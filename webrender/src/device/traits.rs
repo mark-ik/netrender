@@ -288,14 +288,34 @@ pub trait GpuShaders: GpuFrame {
         S: Into<TextureSlot> + Copy;
 }
 
+/// Backend-neutral blend mode selector. Collapses the 16 individual
+/// `set_blend_mode_*` methods on `GpuPass` into a single enum-keyed method.
+/// `Advanced` carries a CSS `MixBlendMode` for the parameterized blend
+/// equations.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BlendMode {
+    Alpha,
+    PremultipliedAlpha,
+    PremultipliedDestOut,
+    Multiply,
+    SubpixelPass0,
+    SubpixelPass1,
+    SubpixelDualSource,
+    MultiplyDualSource,
+    Screen,
+    PlusLighter,
+    Exclusion,
+    ShowOverdraw,
+    Max,
+    Min,
+    Advanced(MixBlendMode),
+}
+
 /// Per-pass binding, state, draw commands, blits, readback.
 ///
 /// Supertrait of `GpuShaders + GpuResources` so the bind methods can name
 /// `Self::Program`, `Self::Texture`, `Self::Vao` etc. without re-declaring
 /// the associated types.
-///
-/// The 16 `set_blend_mode_*` methods land here individually for P0a; P0b
-/// collapses them into one `set_blend_mode(BlendMode)` enum-keyed method.
 pub trait GpuPass: GpuShaders + GpuResources {
     // --- Render target binding ---
 
@@ -349,9 +369,16 @@ pub trait GpuPass: GpuShaders + GpuResources {
     fn enable_color_write(&self);
     fn disable_color_write(&self);
 
-    // --- Blend state (16 set_blend_mode_* collapse into set_blend_mode in P0b) ---
+    // --- Blend state ---
 
     fn set_blend(&mut self, enable: bool);
+
+    /// Selects the blend equation/factors for subsequent draws. Replaces the
+    /// individual `set_blend_mode_*` methods (which remain on the trait
+    /// during the P0b migration but will be removed in P0b-3 once renderer
+    /// call sites are converted).
+    fn set_blend_mode(&mut self, mode: BlendMode);
+
     fn set_blend_mode_alpha(&mut self);
     fn set_blend_mode_premultiplied_alpha(&mut self);
     fn set_blend_mode_premultiplied_dest_out(&mut self);

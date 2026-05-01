@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use super::traits::{GpuFrame, GpuPass, GpuResources, GpuShaders};
+use super::traits::{BlendMode, GpuFrame, GpuPass, GpuResources, GpuShaders};
 use super::super::shader_source::{OPTIMIZED_SHADERS, UNOPTIMIZED_SHADERS};
 use api::{ImageDescriptor, ImageFormat, Parameter, BoolParameter, IntParameter, ImageRendering};
 use api::{MixBlendMode, ImageBufferKind, VoidPtrToSizeFn};
@@ -4140,6 +4140,31 @@ impl Device {
         }
     }
 
+    /// Unified blend-mode setter introduced by P0b. Dispatches to the
+    /// existing `set_blend_mode_*` inherent methods. Renderer call sites
+    /// migrate from `device.set_blend_mode_X()` to
+    /// `device.set_blend_mode(BlendMode::X)`; the per-mode inherent methods
+    /// stay as internal dispatchers.
+    pub fn set_blend_mode(&mut self, mode: BlendMode) {
+        match mode {
+            BlendMode::Alpha => self.set_blend_mode_alpha(),
+            BlendMode::PremultipliedAlpha => self.set_blend_mode_premultiplied_alpha(),
+            BlendMode::PremultipliedDestOut => self.set_blend_mode_premultiplied_dest_out(),
+            BlendMode::Multiply => self.set_blend_mode_multiply(),
+            BlendMode::SubpixelPass0 => self.set_blend_mode_subpixel_pass0(),
+            BlendMode::SubpixelPass1 => self.set_blend_mode_subpixel_pass1(),
+            BlendMode::SubpixelDualSource => self.set_blend_mode_subpixel_dual_source(),
+            BlendMode::MultiplyDualSource => self.set_blend_mode_multiply_dual_source(),
+            BlendMode::Screen => self.set_blend_mode_screen(),
+            BlendMode::PlusLighter => self.set_blend_mode_plus_lighter(),
+            BlendMode::Exclusion => self.set_blend_mode_exclusion(),
+            BlendMode::ShowOverdraw => self.set_blend_mode_show_overdraw(),
+            BlendMode::Max => self.set_blend_mode_max(),
+            BlendMode::Min => self.set_blend_mode_min(),
+            BlendMode::Advanced(m) => self.set_blend_mode_advanced(m),
+        }
+    }
+
     pub fn supports_extension(&self, extension: &str) -> bool {
         supports_extension(&self.extensions, extension)
     }
@@ -5330,6 +5355,9 @@ impl GpuPass for Device {
 
     fn set_blend(&mut self, enable: bool) {
         Device::set_blend(self, enable)
+    }
+    fn set_blend_mode(&mut self, mode: BlendMode) {
+        Device::set_blend_mode(self, mode)
     }
     fn set_blend_mode_alpha(&mut self) {
         Device::set_blend_mode_alpha(self)

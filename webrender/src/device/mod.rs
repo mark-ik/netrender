@@ -8,4 +8,4 @@ pub mod traits;
 
 pub use self::gl::*;
 pub use self::query_gl as query;
-pub use self::traits::{GpuFrame, GpuPass, GpuResources, GpuShaders};
+pub use self::traits::{BlendMode, GpuFrame, GpuPass, GpuResources, GpuShaders};
