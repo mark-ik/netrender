@@ -900,6 +900,77 @@ alpha-pass fragment.
 
 **Receipt**: rounded-rect clip + box-shadow clip golden scenes.
 
+**Implementation plan (2026-05-01)**: think through up front because
+clip masks are the first phase that combines render-graph
+intermediates with per-primitive sampling — and the first phase that
+realistically motivates a transient texture pool.
+
+*Sub-phase ladder.*
+
+- **9A — Rounded-rect clip mask.** Single `cs_clip_rectangle.wgsl`
+  fragment shader that writes a coverage value (R8) for one rounded
+  rect with per-corner radii. Driven by a render-graph task that
+  outputs an R8 texture sized to the clip's device-pixel bounds.
+  Existing primitives (`brush_rect_solid`, `brush_image`,
+  `brush_gradient`) get an optional `clip_mask` binding (texture +
+  sampler) and a per-instance `clip_mask_uv: vec4<f32>` so each can
+  multiply the sampled coverage into its output alpha.
+- **9B — Box-shadow clip mask.** Adds `cs_clip_box_shadow.wgsl`
+  (Gaussian-blurred rounded-rect coverage). Two-pass: rasterize the
+  rounded rect into an intermediate R8 target, then run
+  `brush_blur` H + V over it. Render graph composes the chain.
+- **9C — Fast-path rectangular clip.** `cs_clip_rectangle_fast_path.wgsl`
+  for axis-aligned non-rounded rects (no per-corner radii); cheaper
+  shader, smaller output. Picked at scene-build time when corner
+  radii are all zero.
+
+*Primitive-side wiring.* Each existing primitive shader grows a
+binding for the clip-mask texture + sampler and a per-instance UV
+slot; when the slot is empty (no clip mask), the fragment shader
+skips the multiply via an `override HAS_CLIP_MASK: bool` (or a
+sentinel UV like `[NaN, NaN, NaN, NaN]`). The override path keeps
+the no-clip case bit-exact with Phase 8D's fragments.
+
+*Transient texture pool — comes online here.* Phase 6 deferred this
+because per-task `device.create_texture` was sufficient for blur
+intermediates that turned over once per drop-shadow scene. Phase 9
+multiplies the count by every clipped primitive in a scene: a UI
+with N rounded-rect cards generates N R8 mask textures per frame
+unless we pool. The pool sits next to the render graph: keyed by
+`(extent, format, usage)`, returns `Arc<wgpu::Texture>`; on Arc drop
+the texture re-enters the free list (intercepted via a
+`PooledTexture` newtype that wraps `Arc<wgpu::Texture>` and on its
+`Drop` returns the Arc to a back-channel). This is the API delta
+worth getting right at 9A — the rest of 9B / 9C reuse it.
+
+The pool is platform-handle-import-aware (axiom 14): keep the
+allocation path optional flags so tile-cache-bound formats can later
+opt in to import flags without touching the pool's hot path.
+
+*Render-task graph extension.* `Task::encode` already takes an
+output `&wgpu::TextureView`; the graph allocates the texture before
+the encode callback (Phase 6 §5). 9A adds: the graph pulls those
+allocations from the transient pool when present, falling back to
+`device.create_texture` when no pool is configured (so existing
+Phase 6 callers — e.g., `RenderGraph::execute(externals)` — keep
+working unchanged).
+
+*Bind-group layout changes.* `brush_rect_solid`, `brush_image`, and
+`brush_gradient` layouts each grow two bindings: one R8 texture
+(filterable: false), one NonFiltering sampler. The instance struct
+adds `clip_mask_uv: vec4<f32>` (16 bytes; total stride changes:
+rect 64 → 80, image 80 → 96, gradient 64 → 80). Existing tests'
+2-stop / no-clip paths set the UV to a sentinel and the override
+constant skips the sample.
+
+*Receipt — what the goldens look like.* `p9_01` rounded-rect clip
+on a solid rect (golden, ±2/255). `p9_02` box-shadow clip
+(rasterize + 2-pass blur via render graph, ±2/255). `p9_03`
+rectangular fast-path on a transformed rect (verifies the shader
+specialization picks correctly). `p9_04` clip mask + tile cache
+interaction (clip-affected tile pixel-equivalent through the tile
+path, since 7C composites over the same masks).
+
 ### Phase 10a — Text (renderer-side: atlas + glyph quads)
 
 Glyph atlas (Phase 5 pattern). Two text shaders:

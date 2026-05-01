@@ -264,28 +264,15 @@ fn emit_image_draws(
         let mut bytes: Vec<u8> = Vec::with_capacity(group_items.len() * 80);
         for &(j, z) in group_items {
             let img = &scene.images[j];
-            // rect (16 bytes)
-            for f in [img.x0, img.y0, img.x1, img.y1] {
-                bytes.extend_from_slice(&f.to_ne_bytes());
-            }
-            // uv_rect (16 bytes)
-            for f in img.uv {
-                bytes.extend_from_slice(&f.to_ne_bytes());
-            }
-            // color (16 bytes)
-            for f in img.color {
-                bytes.extend_from_slice(&f.to_ne_bytes());
-            }
-            // clip (16 bytes)
-            for f in img.clip_rect {
-                bytes.extend_from_slice(&f.to_ne_bytes());
-            }
-            // transform_id (4 bytes)
-            bytes.extend_from_slice(&img.transform_id.to_ne_bytes());
-            // z_depth (4 bytes)
-            bytes.extend_from_slice(&z.to_ne_bytes());
-            // padding (8 bytes) → stride 80
-            bytes.extend_from_slice(&[0u8; 8]);
+            write_image_instance(
+                &mut bytes,
+                [img.x0, img.y0, img.x1, img.y1],
+                img.uv,
+                img.color,
+                img.clip_rect,
+                img.transform_id,
+                z,
+            );
         }
 
         let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -500,6 +487,41 @@ pub(crate) fn build_gradient_batch(
     }
 
     draws
+}
+
+// ── Shared instance writers ───────────────────────────────────────────
+
+/// Append one `ImageInstance` (80-byte stride, std430) to `bytes`.
+/// The single struct definition lives here so the layout is shared
+/// between `emit_image_draws` (user image batch) and the tile cache's
+/// `build_tile_composite_draw` (Phase 7C composite).
+///
+/// Layout: rect (16) + uv (16) + color (16) + clip (16) + transform_id
+/// (4) + z_depth (4) + 8 bytes padding. Matches `brush_image.wgsl`.
+pub(crate) fn write_image_instance(
+    bytes: &mut Vec<u8>,
+    rect: [f32; 4],
+    uv: [f32; 4],
+    color: [f32; 4],
+    clip: [f32; 4],
+    transform_id: u32,
+    z_depth: f32,
+) {
+    for f in rect {
+        bytes.extend_from_slice(&f.to_ne_bytes());
+    }
+    for f in uv {
+        bytes.extend_from_slice(&f.to_ne_bytes());
+    }
+    for f in color {
+        bytes.extend_from_slice(&f.to_ne_bytes());
+    }
+    for f in clip {
+        bytes.extend_from_slice(&f.to_ne_bytes());
+    }
+    bytes.extend_from_slice(&transform_id.to_ne_bytes());
+    bytes.extend_from_slice(&z_depth.to_ne_bytes());
+    bytes.extend_from_slice(&[0u8; 8]);
 }
 
 // ── Shared buffer helpers ─────────────────────────────────────────────

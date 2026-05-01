@@ -24,7 +24,7 @@ use netrender_device::{
 
 use crate::batch::{
     FrameResources, GradientPipelines, build_gradient_batch, build_image_batch, build_rect_batch,
-    make_per_frame_buf_for_rect, make_transforms_buf,
+    make_per_frame_buf_for_rect, make_transforms_buf, write_image_instance,
 };
 use crate::scene::GradientKind;
 use crate::tile_cache::{aabb_intersects, world_aabb};
@@ -283,26 +283,22 @@ impl Renderer {
     ) -> Option<DrawIntent> {
         let texture = tile.texture.as_ref()?;
 
-        // Build one ImageInstance (matches the 80-byte stride in batch.rs).
-        // rect (16) + uv_rect (16) + color (16) + clip (16) + transform_id
-        // (4) + z_depth (4) + padding (8) = 80 bytes.
+        // One ImageInstance per tile. Composite-specific values:
+        // full UV (sample whole tile), no tint, no clip (NO_CLIP-style
+        // infinities), identity transform, z = 0.5 (tiles don't overlap
+        // each other so any consistent z works against the depth-cleared
+        // framebuffer). Layout shared with `emit_image_draws` via the
+        // `write_image_instance` helper.
         let mut bytes = Vec::with_capacity(80);
-        let [x0, y0, x1, y1] = tile.world_rect;
-        for f in [x0, y0, x1, y1] {
-            bytes.extend_from_slice(&f.to_ne_bytes());
-        }
-        for f in [0.0_f32, 0.0, 1.0, 1.0] {
-            bytes.extend_from_slice(&f.to_ne_bytes());
-        }
-        for f in [1.0_f32, 1.0, 1.0, 1.0] {
-            bytes.extend_from_slice(&f.to_ne_bytes());
-        }
-        for f in [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY] {
-            bytes.extend_from_slice(&f.to_ne_bytes());
-        }
-        bytes.extend_from_slice(&0_u32.to_ne_bytes()); // transform_id = identity
-        bytes.extend_from_slice(&0.5_f32.to_ne_bytes()); // z_depth — tiles don't overlap
-        bytes.extend_from_slice(&[0_u8; 8]); // padding
+        write_image_instance(
+            &mut bytes,
+            tile.world_rect,
+            [0.0, 0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0, 1.0],
+            [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY],
+            0,
+            0.5,
+        );
         debug_assert_eq!(bytes.len(), 80);
 
         let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
