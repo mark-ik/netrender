@@ -17,5 +17,8 @@ extern crate serde;
 pub mod shader;
 pub mod shader_features;
 
+#[cfg(feature = "shader-reflect")]
+pub mod spirv_reflect;
+
 /// This must be known at build-time as the shaders depend on it.
 pub const MAX_VERTEX_TEXTURE_WIDTH: usize = 1024;

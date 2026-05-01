@@ -22,3 +22,11 @@ shaderc = { version = "0.8", optional = true }
 serde = { optional = true, version = "1.0", features = ["serde_derive"] }
 serde_json = { version = "1", optional = true }
 naga = { version = "26.0", optional = true, features = ["spv-in"] }
+
+[[bin]]
+name = "gen_spirv"
+required-features = ["shader-gen"]
+
+[[bin]]
+name = "reflect_spirv"
+required-features = ["shader-reflect"]
