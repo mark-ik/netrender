@@ -49,10 +49,8 @@ use super::gl::{
     DrawTarget,
     ExternalTexture,
     FBOId,
-    Program,
     ReadTarget,
     Stream,
-    UniformLocation,
     UploadPBOPool,
 };
 
