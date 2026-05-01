@@ -5359,51 +5359,6 @@ impl GpuPass for Device {
     fn set_blend_mode(&mut self, mode: BlendMode) {
         Device::set_blend_mode(self, mode)
     }
-    fn set_blend_mode_alpha(&mut self) {
-        Device::set_blend_mode_alpha(self)
-    }
-    fn set_blend_mode_premultiplied_alpha(&mut self) {
-        Device::set_blend_mode_premultiplied_alpha(self)
-    }
-    fn set_blend_mode_premultiplied_dest_out(&mut self) {
-        Device::set_blend_mode_premultiplied_dest_out(self)
-    }
-    fn set_blend_mode_multiply(&mut self) {
-        Device::set_blend_mode_multiply(self)
-    }
-    fn set_blend_mode_subpixel_pass0(&mut self) {
-        Device::set_blend_mode_subpixel_pass0(self)
-    }
-    fn set_blend_mode_subpixel_pass1(&mut self) {
-        Device::set_blend_mode_subpixel_pass1(self)
-    }
-    fn set_blend_mode_subpixel_dual_source(&mut self) {
-        Device::set_blend_mode_subpixel_dual_source(self)
-    }
-    fn set_blend_mode_multiply_dual_source(&mut self) {
-        Device::set_blend_mode_multiply_dual_source(self)
-    }
-    fn set_blend_mode_screen(&mut self) {
-        Device::set_blend_mode_screen(self)
-    }
-    fn set_blend_mode_plus_lighter(&mut self) {
-        Device::set_blend_mode_plus_lighter(self)
-    }
-    fn set_blend_mode_exclusion(&mut self) {
-        Device::set_blend_mode_exclusion(self)
-    }
-    fn set_blend_mode_show_overdraw(&mut self) {
-        Device::set_blend_mode_show_overdraw(self)
-    }
-    fn set_blend_mode_max(&mut self) {
-        Device::set_blend_mode_max(self)
-    }
-    fn set_blend_mode_min(&mut self) {
-        Device::set_blend_mode_min(self)
-    }
-    fn set_blend_mode_advanced(&mut self, mode: MixBlendMode) {
-        Device::set_blend_mode_advanced(self, mode)
-    }
 
     fn draw_triangles_u16(&mut self, first_vertex: i32, index_count: i32) {
         Device::draw_triangles_u16(self, first_vertex, index_count)

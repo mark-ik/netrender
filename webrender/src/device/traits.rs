@@ -373,27 +373,10 @@ pub trait GpuPass: GpuShaders + GpuResources {
 
     fn set_blend(&mut self, enable: bool);
 
-    /// Selects the blend equation/factors for subsequent draws. Replaces the
-    /// individual `set_blend_mode_*` methods (which remain on the trait
-    /// during the P0b migration but will be removed in P0b-3 once renderer
-    /// call sites are converted).
+    /// Selects the blend equation/factors for subsequent draws. The 16
+    /// per-mode `set_blend_mode_*` methods on `Device` remain as internal
+    /// dispatchers but are no longer part of the trait surface.
     fn set_blend_mode(&mut self, mode: BlendMode);
-
-    fn set_blend_mode_alpha(&mut self);
-    fn set_blend_mode_premultiplied_alpha(&mut self);
-    fn set_blend_mode_premultiplied_dest_out(&mut self);
-    fn set_blend_mode_multiply(&mut self);
-    fn set_blend_mode_subpixel_pass0(&mut self);
-    fn set_blend_mode_subpixel_pass1(&mut self);
-    fn set_blend_mode_subpixel_dual_source(&mut self);
-    fn set_blend_mode_multiply_dual_source(&mut self);
-    fn set_blend_mode_screen(&mut self);
-    fn set_blend_mode_plus_lighter(&mut self);
-    fn set_blend_mode_exclusion(&mut self);
-    fn set_blend_mode_show_overdraw(&mut self);
-    fn set_blend_mode_max(&mut self);
-    fn set_blend_mode_min(&mut self);
-    fn set_blend_mode_advanced(&mut self, mode: MixBlendMode);
 
     // --- Draw commands ---
 
