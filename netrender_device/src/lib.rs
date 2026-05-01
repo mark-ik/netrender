@@ -56,7 +56,8 @@ pub use crate::core::{BootError, REQUIRED_FEATURES, WgpuHandles, boot};
 pub use crate::pass::{ColorAttachment, DepthAttachment, DrawIntent, RenderPassTarget};
 pub use crate::pipeline::{
     BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, GradientKind, build_brush_blur, build_brush_gradient, build_brush_image,
-    build_brush_rect_solid, build_brush_solid_specialized,
+    BrushSolidPipeline, ClipRectanglePipeline, GradientKind, build_brush_blur,
+    build_brush_gradient, build_brush_image, build_brush_rect_solid,
+    build_brush_solid_specialized, build_clip_rectangle,
 };
 pub use crate::texture::{TextureDesc, WgpuTexture};

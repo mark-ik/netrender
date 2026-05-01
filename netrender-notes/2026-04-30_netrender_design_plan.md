@@ -971,6 +971,65 @@ specialization picks correctly). `p9_04` clip mask + tile cache
 interaction (clip-affected tile pixel-equivalent through the tile
 path, since 7C composites over the same masks).
 
+**Status (2026-05-01, 9A/9B/9C delivered)**: scope deviated from the
+original implementation plan in two ways, both for pragmatic reasons.
+
+*Deviation 1: no primitive-shader integration in 9A.* The plan called
+for `brush_rect_solid`, `brush_image`, and `brush_gradient` to grow a
+clip-mask binding + per-instance UV slot, gated by `override
+HAS_CLIP_MASK`. The receipt instead leans on the existing
+render-graph + image-cache + `brush_image` chain (Phase 6's blur
+pattern): the mask renders to an `Rgba8Unorm` coverage texture, gets
+inserted into the image cache via `insert_image_gpu`, and is drawn
+as a tinted `brush_image`. This sidesteps the bind-group / instance-
+struct churn across three primitive families. Per-primitive clip
+masks (the proper integration) remain as a Phase 11+ item gated on
+the picture-grouping work.
+
+*Deviation 2: transient texture pool deferred again.* The plan
+flagged 9A as the pool's natural landing spot. With the mask
+generation path going through the image cache (which already
+owns mask-shaped textures across frames via `Arc<wgpu::Texture>`),
+the per-frame allocation pressure is smaller than the plan
+anticipated. The render graph still uses per-task
+`device.create_texture`. The pool stays deferred until either a
+benchmark shows churn or a per-primitive mask flow lands.
+
+*Delivered surface.*
+
+- `cs_clip_rectangle.wgsl` (fullscreen-quad VS, rounded-rect SDF FS,
+  `override HAS_ROUNDED_CORNERS` gates the 9C fast path),
+  `ClipRectanglePipeline` + `build_clip_rectangle(format,
+  has_rounded_corners)`, `WgpuDevice::ensure_clip_rectangle(format,
+  has_rounded_corners)` cached on `(format, has_rounded_corners)`.
+- 9A receipt `p9a_clip_rectangle.rs` (2 tests): SDF math at
+  representative pixels, end-to-end mask-as-tinted-image composite.
+- 9B receipt `p9b_box_shadow.rs` (2 tests): chain `cs_clip_rectangle
+  → brush_blur (H) → brush_blur (V)` via `RenderGraph`, verify
+  edge-softening + drop-shadow halo. No new shader — the chain is
+  pure render-graph composition.
+- 9C receipt `p9c_clip_fast_path.rs` (2 tests): hard-edged step
+  output; pixel-match against the rounded variant at `radius = 0`
+  (the fast path is purely an optimization).
+
+*Phase 5 ordering limitation surfaced.* The drop-shadow composite
+(p9b_02) wants the foreground rect on top of the shadow image, but
+Phase 5's family ordering (rects → images) puts images in front of
+rects regardless of push order. The test composites just the shadow
+and asserts on its falloff — true rect-on-top-of-image ordering
+needs Phase 11 picture grouping.
+
+*Phase 5 image-routing limitation surfaced.* Image instance
+classification routes by tint alpha alone (`tint.a >= 1.0` →
+opaque/no-blend pipeline, otherwise alpha pipeline). A
+fully-opaque tint applied to a *texture* with variable alpha (a
+mask) gets routed through the no-blend pipeline and overwrites the
+framebuffer — including its alpha channel — wherever the texture
+sample is `(0,0,0,0)`. The 9A/9B receipts work around this by using
+tint alpha `0.999` to force alpha-blend routing. A "force-alpha"
+hint on `SceneImage`, or a peek at the bound texture's content
+hash, are both reasonable Phase 11+ fixes.
+
 ### Phase 10a — Text (renderer-side: atlas + glyph quads)
 
 Glyph atlas (Phase 5 pattern). Two text shaders:

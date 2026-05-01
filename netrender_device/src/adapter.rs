@@ -19,8 +19,9 @@ use crate::frame;
 use crate::pass::{self, DrawIntent, RenderPassTarget};
 use crate::pipeline::{
     BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, GradientKind, build_brush_blur, build_brush_gradient, build_brush_image,
-    build_brush_rect_solid, build_brush_solid_specialized,
+    BrushSolidPipeline, ClipRectanglePipeline, GradientKind, build_brush_blur,
+    build_brush_gradient, build_brush_image, build_brush_rect_solid,
+    build_brush_solid_specialized, build_clip_rectangle,
 };
 use crate::readback;
 use crate::texture::{TextureDesc, WgpuTexture};
@@ -48,6 +49,8 @@ pub struct WgpuDevice {
     brush_blur: Mutex<HashMap<wgpu::TextureFormat, BrushBlurPipeline>>,
     // Cache key: (color_format, depth_format, alpha_blend, kind) — Phase 8D
     brush_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool, GradientKind), BrushGradientPipeline>>,
+    // Cache key: (target_format, has_rounded_corners) — Phase 9A/9C
+    clip_rectangle: Mutex<HashMap<(wgpu::TextureFormat, bool), ClipRectanglePipeline>>,
 }
 
 impl WgpuDevice {
@@ -75,6 +78,7 @@ impl WgpuDevice {
             brush_image: Mutex::new(HashMap::new()),
             brush_blur: Mutex::new(HashMap::new()),
             brush_gradient: Mutex::new(HashMap::new()),
+            clip_rectangle: Mutex::new(HashMap::new()),
         })
     }
 
@@ -89,6 +93,7 @@ impl WgpuDevice {
             brush_image: Mutex::new(HashMap::new()),
             brush_blur: Mutex::new(HashMap::new()),
             brush_gradient: Mutex::new(HashMap::new()),
+            clip_rectangle: Mutex::new(HashMap::new()),
         })
     }
 
@@ -185,6 +190,21 @@ impl WgpuDevice {
             .or_insert_with(|| {
                 build_brush_gradient(&self.core.device, color_format, depth_format, alpha_blend, kind)
             })
+            .clone()
+    }
+
+    /// Phase 9A/9C `cs_clip_rectangle` pipeline for `target_format`.
+    /// `has_rounded_corners = true` is the default rounded-rect SDF;
+    /// `false` selects the Phase 9C fast path (axis-aligned step).
+    pub fn ensure_clip_rectangle(
+        &self,
+        target_format: wgpu::TextureFormat,
+        has_rounded_corners: bool,
+    ) -> ClipRectanglePipeline {
+        let mut cache = self.clip_rectangle.lock().expect("clip_rectangle lock");
+        cache
+            .entry((target_format, has_rounded_corners))
+            .or_insert_with(|| build_clip_rectangle(&self.core.device, target_format, has_rounded_corners))
             .clone()
     }
 

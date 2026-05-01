@@ -220,6 +220,28 @@ pub(crate) fn brush_gradient_layout(device: &wgpu::Device) -> wgpu::BindGroupLay
     })
 }
 
+/// cs_clip_rectangle bind group layout (Phase 9A).
+///
+/// One binding: a uniform `ClipParams` carrying the rect bounds and
+/// corner radii in target-pixel space. The shader reads
+/// `position.xy` directly for per-pixel coords; no storage buffers
+/// needed.
+pub(crate) fn cs_clip_rectangle_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("cs_clip_rectangle bind group layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
+}
+
 /// brush_blur bind group layout (Phase 6).
 ///
 /// - Slot 0: input_texture — texture_2d<f32>, filterable (FRAGMENT)

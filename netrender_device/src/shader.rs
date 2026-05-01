@@ -26,3 +26,10 @@ pub(crate) const BRUSH_BLUR_WGSL: &str = include_str!("shaders/brush_blur.wgsl")
 /// linear / radial / conic via the `GRADIENT_KIND` override constant;
 /// N-stop ramps live in a per-frame stops storage buffer.
 pub(crate) const BRUSH_GRADIENT_WGSL: &str = include_str!("shaders/brush_gradient.wgsl");
+
+/// Phase 9A rounded-rect clip-mask shader. Outputs an Rgba8Unorm
+/// coverage texture (all channels = coverage). `HAS_ROUNDED_CORNERS`
+/// override toggles the SDF (Phase 9A) vs. the axis-aligned fast
+/// path (Phase 9C).
+pub(crate) const CS_CLIP_RECTANGLE_WGSL: &str =
+    include_str!("shaders/cs_clip_rectangle.wgsl");

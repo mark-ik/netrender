@@ -50,7 +50,8 @@ pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
 // build `DrawIntent`s for `PreparedFrame`.
 pub use netrender_device::{
     BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, ColorAttachment, DepthAttachment, DrawIntent, REQUIRED_FEATURES,
-    RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur, build_brush_gradient,
-    build_brush_image, build_brush_rect_solid, build_brush_solid_specialized,
+    BrushSolidPipeline, ClipRectanglePipeline, ColorAttachment, DepthAttachment, DrawIntent,
+    REQUIRED_FEATURES, RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur,
+    build_brush_gradient, build_brush_image, build_brush_rect_solid,
+    build_brush_solid_specialized, build_clip_rectangle,
 };
