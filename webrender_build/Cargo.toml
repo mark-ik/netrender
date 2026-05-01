@@ -8,11 +8,17 @@ description = "Code shared between precompilation (build.rs) and the rest of Web
 edition = "2018"
 
 [features]
-serialize_program = ["serde"]
-shader-gen = ["shaderc"]
+serialize_program = ["dep:serde"]
+shader-gen = ["dep:shaderc"]
+# Enables the reflect_spirv binary which walks webrender/res/spirv/*.spv,
+# runs naga reflection, and emits a bindings table. See P2 in the wgpu
+# device plan and assignment-doc A1 for the verification-oracle role.
+shader-reflect = ["dep:naga", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 bitflags = "2"
 lazy_static = "1"
 shaderc = { version = "0.8", optional = true }
 serde = { optional = true, version = "1.0", features = ["serde_derive"] }
+serde_json = { version = "1", optional = true }
+naga = { version = "26.0", optional = true, features = ["spv-in"] }

@@ -1,0 +1,699 @@
+{
+  "shaders": {
+    "brush_blend_DEBUG_OVERDRAW": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_image_ANTIALIASING_DEBUG_OVERDRAW_REPETITION_TEXTURE_2D": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_image_DEBUG_OVERDRAW_TEXTURE_2D": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_mix_blend_DEBUG_OVERDRAW": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_opacity_ANTIALIASING_DEBUG_OVERDRAW": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_opacity_DEBUG_OVERDRAW": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_solid": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_solid_DEBUG_OVERDRAW": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "brush_yuv_image_DEBUG_OVERDRAW_TEXTURE_2D_YUV": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sClipMask",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "cs_border_segment": {
+      "vert": {
+        "bindings": [
+          {
+            "name": "",
+            "group": 0,
+            "binding": 0,
+            "kind": "uniform_buffer"
+          }
+        ],
+        "vertex_inputs": [
+          {
+            "name": "aPosition",
+            "location": 0,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aTaskOrigin",
+            "location": 1,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aRect",
+            "location": 2,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aColor0",
+            "location": 3,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aColor1",
+            "location": 4,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aFlags",
+            "location": 5,
+            "ty": "i32"
+          },
+          {
+            "name": "aWidths",
+            "location": 6,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aRadii",
+            "location": 7,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aClipParams1",
+            "location": 8,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aClipParams2",
+            "location": 9,
+            "ty": "vec4<f32>"
+          }
+        ]
+      },
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "cs_border_solid": {
+      "vert": {
+        "bindings": [
+          {
+            "name": "",
+            "group": 0,
+            "binding": 0,
+            "kind": "uniform_buffer"
+          }
+        ],
+        "vertex_inputs": [
+          {
+            "name": "aPosition",
+            "location": 0,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aTaskOrigin",
+            "location": 1,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aRect",
+            "location": 2,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aColor0",
+            "location": 3,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aColor1",
+            "location": 4,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aFlags",
+            "location": 5,
+            "ty": "i32"
+          },
+          {
+            "name": "aWidths",
+            "location": 6,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aRadii",
+            "location": 7,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aClipParams1",
+            "location": 8,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aClipParams2",
+            "location": 9,
+            "ty": "vec4<f32>"
+          }
+        ]
+      },
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "cs_clip_rectangle": {
+      "vert": null,
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "cs_clip_rectangle_FAST_PATH": {
+      "vert": null,
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "cs_line_decoration": {
+      "vert": {
+        "bindings": [
+          {
+            "name": "",
+            "group": 0,
+            "binding": 0,
+            "kind": "uniform_buffer"
+          }
+        ],
+        "vertex_inputs": [
+          {
+            "name": "aPosition",
+            "location": 0,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aTaskRect",
+            "location": 1,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aLocalSize",
+            "location": 2,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aStyle",
+            "location": 3,
+            "ty": "i32"
+          },
+          {
+            "name": "aAxisSelect",
+            "location": 4,
+            "ty": "f32"
+          },
+          {
+            "name": "aWavyLineThickness",
+            "location": 5,
+            "ty": "f32"
+          }
+        ]
+      },
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "ps_clear": {
+      "vert": {
+        "bindings": [
+          {
+            "name": "",
+            "group": 0,
+            "binding": 0,
+            "kind": "uniform_buffer"
+          }
+        ],
+        "vertex_inputs": [
+          {
+            "name": "aPosition",
+            "location": 0,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "aRect",
+            "location": 1,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "aColor",
+            "location": 2,
+            "ty": "vec4<f32>"
+          }
+        ]
+      },
+      "frag": {
+        "bindings": [],
+        "vertex_inputs": []
+      }
+    },
+    "ps_copy": {
+      "vert": {
+        "bindings": [],
+        "vertex_inputs": [
+          {
+            "name": "aPosition",
+            "location": 0,
+            "ty": "vec2<f32>"
+          },
+          {
+            "name": "a_src_rect",
+            "location": 1,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "a_dst_rect",
+            "location": 2,
+            "ty": "vec4<f32>"
+          },
+          {
+            "name": "a_dst_texture_size",
+            "location": 3,
+            "ty": "vec2<f32>"
+          }
+        ]
+      },
+      "frag": null
+    },
+    "ps_quad_mask": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    },
+    "ps_quad_mask_FAST_PATH": {
+      "vert": null,
+      "frag": {
+        "bindings": [
+          {
+            "name": "sColor0",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor1",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sColor2",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferF",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          },
+          {
+            "name": "sGpuBufferI",
+            "group": 0,
+            "binding": 0,
+            "kind": "sampled_texture"
+          }
+        ],
+        "vertex_inputs": []
+      }
+    }
+  }
+}

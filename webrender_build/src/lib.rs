@@ -10,7 +10,7 @@ extern crate bitflags;
 #[macro_use]
 extern crate lazy_static;
 
-#[cfg(feature = "serde")]
+#[cfg(any(feature = "serialize_program", feature = "shader-reflect"))]
 #[macro_use]
 extern crate serde;
 
