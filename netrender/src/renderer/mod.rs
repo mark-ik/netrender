@@ -202,21 +202,26 @@ impl Renderer {
     /// Tile-cache prepare path: invalidate + render dirty tiles, then
     /// build one `brush_image_alpha` composite draw per cached tile.
     fn prepare_tiled(&self, scene: &Scene, tc: &mut TileCache) -> PreparedFrame {
+        let device = &self.wgpu_device.core.device;
+        let queue = &self.wgpu_device.core.queue;
+
+        // Build the shared transforms buffer once and reuse it across
+        // both the tile rendering pass and the composite pass.
+        // wgpu::Buffer is Arc-internal so the clone into each
+        // FrameResources is cheap.
+        let transforms_buf = make_transforms_buf(scene, device, queue);
+
         // Step 1: dirty tiles re-render into their cached textures.
-        let _dirty = self.render_dirty_tiles(scene, tc);
+        let _dirty = self.render_dirty_tiles_with_transforms(scene, tc, &transforms_buf);
 
         // Step 2: build composite draws — one brush_image_alpha per tile.
         let composite_pipe = self
             .wgpu_device
             .ensure_brush_image_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
 
-        let device = &self.wgpu_device.core.device;
-        let queue = &self.wgpu_device.core.queue;
-
         // Composite uses the FULL framebuffer projection (not tile-local) —
         // each tile's rect is given in world coords, mapped through the
         // viewport projection to the framebuffer.
-        let transforms_buf = make_transforms_buf(scene, device, queue);
         let per_frame_buf = make_per_frame_buf_for_rect(
             [0.0, 0.0, scene.viewport_width as f32, scene.viewport_height as f32],
             device,
@@ -399,6 +404,22 @@ impl Renderer {
         scene: &Scene,
         tile_cache: &mut TileCache,
     ) -> Vec<TileCoord> {
+        let device = &self.wgpu_device.core.device;
+        let queue = &self.wgpu_device.core.queue;
+        let transforms_buf = make_transforms_buf(scene, device, queue);
+        self.render_dirty_tiles_with_transforms(scene, tile_cache, &transforms_buf)
+    }
+
+    /// Phase 7B implementation that takes a pre-built `transforms_buf`
+    /// so `prepare_tiled` can share one buffer between tile rendering
+    /// and the subsequent composite pass. Public callers go through
+    /// `render_dirty_tiles` (which builds its own).
+    fn render_dirty_tiles_with_transforms(
+        &self,
+        scene: &Scene,
+        tile_cache: &mut TileCache,
+        transforms_buf: &wgpu::Buffer,
+    ) -> Vec<TileCoord> {
         let dirty = tile_cache.invalidate(scene);
         if dirty.is_empty() {
             return dirty;
@@ -449,9 +470,10 @@ impl Renderer {
         });
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // One transforms buffer shared across all tiles (cloned into each
-        // tile's FrameResources — wgpu::Buffer is Arc-internal, cheap to clone).
-        let transforms_buf = make_transforms_buf(scene, device, queue);
+        // `transforms_buf` is supplied by the caller — `prepare_tiled`
+        // shares one buffer between tile rendering and the composite
+        // pass. wgpu::Buffer is Arc-internal so cloning into each
+        // tile's FrameResources is cheap.
 
         let mut encoder = self.wgpu_device.create_encoder("tile cache pass");
 
