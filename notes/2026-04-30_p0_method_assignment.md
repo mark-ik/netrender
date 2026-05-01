@@ -392,17 +392,116 @@ Recommendation: **Option A**. Simplest, most direct, lowest cognitive
 overhead. The grouping in Option B doesn't earn its complexity given the
 small subpixel cohort. Option C splits work that should naturally unify.
 
-## Method counts at a glance
+## P0a trait surface — skim summary
 
-| Trait | Count |
-|---|---|
-| `GpuFrame` | ~22 |
-| `GpuShaders` | ~7 (excluding 3 moved to `GpuPass`) |
-| `GpuResources` | ~32 |
-| `GpuPass` | ~25 (after blend-mode collapse: 16 → 1) |
-| Concrete-only | ~4 |
-| **Total in traits** | **~86** |
+Snapshot of what landed in P0a (commits `e08462a08` → `e69fffc48`). Use this
+as a quick reference instead of reading the full per-trait method tables
+above.
 
-Matches the "~80 methods across 4 traits" estimate in the plan. GL-internal
-helpers (`gl()`, `rc_gl()`, `gl_describe_format`) and the constructor stay
-on the concrete type; the blend-mode collapse trims the rest.
+### Hierarchy
+
+```text
+GpuFrame                                          ← lifecycle, capabilities, queries
+  ├── GpuResources: GpuFrame                      ← texture/buffer/sampler/FBO/PBO/VAO ownership
+  ├── GpuShaders:   GpuFrame                      ← program/uniform-location lifecycle
+  └── GpuPass:      GpuShaders + GpuResources     ← per-pass binding, state, draw
+```
+
+`Device` (in `gl.rs`) implements all four; renderer code untouched and
+continues to call inherent methods (Rust prefers inherent over trait in
+method resolution).
+
+### `GpuFrame` — 23 methods, 0 assoc types
+
+Lifecycle (`begin_frame` → `GpuFrameId`, `end_frame`, `reset_state`),
+parameters (`set_parameter`), 16 capability/config queries (`get_capabilities`,
+`max_texture_size`, `swizzle_settings`, `supports_extension`, depth/ortho,
+upload config, etc.), 3 diagnostics (`echo_driver_messages`, `report_memory`,
+`depth_targets_memory`).
+
+### `GpuShaders` — 6 methods, 2 assoc types
+
+Assoc: `type Program;`, `type UniformLocation;`.
+
+Methods: `create_program`, `create_program_linked`, `link_program`,
+`delete_program`, `get_uniform_location`, `bind_shader_samplers<S>`. Three
+program-state methods (`bind_program`, `set_uniforms`,
+`set_shader_texture_size`) live on `GpuPass` instead — per-draw, not
+lifecycle.
+
+### `GpuResources` — 30 methods, 7 assoc types (3 GATs)
+
+Assoc: `type Texture;`, `type Vao;`, `type CustomVao;`, `type Pbo;`, plus
+GATs `type Vbo<T>;`, `type BoundPbo<'a> where Self: 'a;`,
+`type TextureUploader<'a>;` (no `where Self: 'a` — borrows from `pbo_pool`).
+
+Texture (7): `create_texture`, `delete_texture`, `copy_entire_texture`,
+`copy_texture_sub_region`, `invalidate_render_target`,
+`invalidate_depth_target`, `reuse_render_target<T: Texel>`.
+FBO (3): `create_fbo`, `create_fbo_for_external_texture`, `delete_fbo`.
+PBO (3): `create_pbo`, `create_pbo_with_size`, `delete_pbo`.
+VAO (5): `create_vao`, `create_vao_with_new_instances`, `delete_vao`,
+`create_custom_vao`, `delete_custom_vao`.
+VBO (4, generic): `create_vbo<T>`, `delete_vbo<T>`, `allocate_vbo<V>`,
+`fill_vbo<V>`.
+VAO updates (3): `update_vao_main_vertices<V>`,
+`update_vao_instances<V: Clone>`, `update_vao_indices<I>`.
+Upload (3): `upload_texture<'a>`, `upload_texture_immediate<T: Texel>`,
+`map_pbo_for_readback<'a>`.
+Misc (2): `attach_read_texture`, `required_upload_size_and_stride`.
+
+### `GpuPass` — 47 methods, no new assoc types
+
+Render targets (5): `bind_read_target`, `reset_read_target`,
+`bind_draw_target`, `reset_draw_target`, `bind_external_draw_target`.
+Programs (3, per-pass): `bind_program`, `set_uniforms`,
+`set_shader_texture_size`.
+Bindings (4): `bind_vao`, `bind_custom_vao`, `bind_texture<S>`,
+`bind_external_texture<S>`.
+Clears (1): `clear_target`.
+Depth/stencil (5): `enable_depth(DepthFunction)`, `disable_depth`,
+`enable_depth_write`, `disable_depth_write`, `disable_stencil`.
+Scissor/colour-write (5): `set_scissor_rect`, `enable_scissor`,
+`disable_scissor`, `enable_color_write`, `disable_color_write`.
+Blend (17, P0b collapses 16 → 1): `set_blend(bool)` plus 16
+`set_blend_mode_*` methods.
+Draw (6): `draw_triangles_u16/u32`, `draw_indexed_triangles`,
+`draw_indexed_triangles_instanced_u16`, `draw_nonindexed_points/lines`.
+Blits (2): `blit_render_target`, `blit_render_target_invert_y`.
+Readback (4): `read_pixels`, `read_pixels_into`, `read_pixels_into_pbo`,
+`get_tex_image_into`.
+
+### Concrete-only on `Device`
+
+- `new` — constructor, signature differs per backend
+- `gl()`, `rc_gl()` — GL context access
+- `gl_describe_format` — returns GL-specific `FormatDesc` (cross-backend
+  usage not yet checked)
+- `attach_read_texture_external` — raw `gl::GLuint` argument; called from
+  `renderer/mod.rs:4904`
+- `delete_external_texture` — `cfg(feature = "replay")`; called from
+  `renderer/mod.rs:4533`
+
+### Non-obvious decisions (cross-reference)
+
+| # | Decision | See |
+| --- | --- | --- |
+| 1 | Delegation pattern (inherent + trait both exist) | R1 |
+| 2 | 8 GL-typed values in trait signatures (4 lift, 4 → assoc types) | R2 |
+| 3 | 2 inherent-only methods called from cross-backend renderer code | R3 |
+| 4 | GAT lifetime asymmetry verified | R4 |
+| 5 | 16 raw blend-mode methods kept on trait for P0a; collapse in P0b | R5 |
+
+### Counts
+
+| Trait | Methods | Assoc types |
+| --- | --- | --- |
+| `GpuFrame` | 23 | 0 |
+| `GpuShaders` | 6 | 2 |
+| `GpuResources` | 30 | 7 (3 GATs) |
+| `GpuPass` | 47 | 0 (inherited) |
+| **Trait surface total** | **106** | **9** |
+| Concrete-only on `Device` | 5 | — |
+
+P0b's blend-mode collapse drops `GpuPass` from 47 → 32 methods (15 fewer
+trait entries; the inherent methods stay as internal dispatchers).
