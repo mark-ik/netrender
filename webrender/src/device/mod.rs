@@ -6,12 +6,16 @@
 mod gl;
 #[cfg(feature = "gl_backend")]
 pub mod query_gl;
+#[cfg(feature = "wgpu_backend")]
+pub mod wgpu;
 pub mod traits;
 
 #[cfg(feature = "gl_backend")]
 pub use self::gl::*;
 #[cfg(feature = "gl_backend")]
 pub use self::query_gl as query;
+#[cfg(feature = "wgpu_backend")]
+pub use self::wgpu::WgpuDevice;
 pub use self::traits::{BlendMode, GpuFrame, GpuPass, GpuResources, GpuShaders};
 
 /// Alias retained so renderer code that still names `Device` resolves to
