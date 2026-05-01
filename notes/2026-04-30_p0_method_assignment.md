@@ -260,6 +260,138 @@ If `gl_describe_format` turns out to be used cross-backend, lift it to
 
 ---
 
+## P0a receipts (post-implementation findings)
+
+Captured after the four impl commits landed on `Device`. Use these to plan
+P0b/c/d and the wgpu-side work.
+
+### R1. Delegation pattern is not permanent
+
+Every trait method body is `Device::method(self, ...)` — i.e. the trait impl
+calls the inherent method. Inherent and trait methods coexist, both defined.
+Justified for P0a (zero risk to existing renderer call sites) but doubles
+the surface. Folds away later when (a) renderer code migrates to trait
+bounds and (b) the wgpu impl lands. At that point each method body either
+moves into the trait impl with the inherent removed, or stays as
+delegation if the inherent has GL-specific signature gaps not on the trait.
+Reversible. Noted as not-permanent so future readers don't enshrine it.
+
+### R2. GL-typed values in trait signatures: lift vs. generalize
+
+Eight types currently leak from `gl.rs` into trait signatures. Two
+strategies for backend-neutralizing them:
+
+| Type | Strategy | Notes |
+|---|---|---|
+| `DepthFunction` | **Lift** to backend-neutral module | Pure enum; maps directly to `wgpu::CompareFunction` |
+| `TextureFilter` | **Lift** | Pure enum; maps to `wgpu::FilterMode` |
+| `TextureSlot` | **Lift** | Wraps `usize`; pure data |
+| `Texel` | **Lift** | Trait for raw-byte conversion; implementation-agnostic |
+| `FBOId` | **Associated type** (`type RenderTargetHandle;`) | Wraps `gl::GLuint`; wgpu has no FBO concept (just textures) |
+| `ReadTarget` | **Associated type** | Variants reference `FBOId`; cascades from above |
+| `DrawTarget` | **Associated type** | Same — variants reference `FBOId` |
+| `Stream<'a>` | **Associated type (GAT)** | Contains `VBOId` (GL handle); wgpu equivalent is buffer + layout pair |
+| `ExternalTexture` | **Associated type** | Currently used in `bind_external_texture` on trait + `delete_external_texture` inherent-only — split is inconsistent; lift via `type ExternalTexture;` when wgpu impl lands |
+
+So 4 lift cleanly (move to a new `device/types.rs` or similar), 4 need
+associated types with cascading effects on dependent enums. Defer until P1
+(wgpu skeleton) when both impls are visible — easier to design the
+associated-type shape with two consumers than one.
+
+### R3. `attach_read_texture_external` and `delete_external_texture` callers confirmed
+
+Grep for callers (excluding the trait doc comment):
+
+- `attach_read_texture_external` → [`webrender/src/renderer/mod.rs:4904`](../webrender/src/renderer/mod.rs#L4904) (`self.device.attach_read_texture_external(gl_id, target)`)
+- `delete_external_texture` → [`webrender/src/renderer/mod.rs:4533`](../webrender/src/renderer/mod.rs#L4533) (`self.device.delete_external_texture(ext)`)
+
+Both are called from cross-backend renderer code (`renderer/mod.rs`), not
+GL-specific paths. Implications:
+
+- For P0 (GL-only) they work as inherent methods; renderer call sites
+  resolve against the concrete `Device`.
+- When wgpu impl lands, these call sites either need (a) associated-type
+  generalization on the trait (per R2 — `type ExternalTexture` solves
+  `delete_external_texture`; `type ExternalTextureId` solves
+  `attach_read_texture_external`), or (b) cfg-gating to backend-specific
+  branches in `renderer/mod.rs`.
+- (a) is cleaner if external-texture interop has a coherent wgpu equivalent
+  (it does: `wgpu::Texture` for owned, `wgpu::TextureView` for views).
+
+### R4. GAT lifetime asymmetry verified
+
+Confirmed by reading struct definitions:
+
+- `BoundPBO<'a>` (gl.rs:717) borrows from `&'a mut self` *and* `&'a PBO` —
+  the pbo's pointer is GL-bind-state-dependent. Trait GAT correctly
+  declared as `type BoundPbo<'a> where Self: 'a;`.
+- `TextureUploader<'a>` (gl.rs:4632) contains only `pbo_pool: &'a mut UploadPBOPool`
+  and a `Vec<PixelBuffer<'a>>`. It does not borrow `self`. Trait GAT
+  correctly declared without `where Self: 'a`.
+
+Trait signatures preserve the inherent semantics exactly; no GAT bug
+hiding here.
+
+### R5. BlendMode enum shape recommendation (for P0b)
+
+Three candidate shapes for the collapse:
+
+**Option A — Flat enum (recommended).** One variant per existing method,
+mechanical 1:1 mapping for renderer call sites:
+
+```rust
+// illustrative
+pub enum BlendMode {
+    Alpha,
+    PremultipliedAlpha,
+    PremultipliedDestOut,
+    Multiply,
+    SubpixelPass0,
+    SubpixelPass1,
+    SubpixelDualSource,
+    MultiplyDualSource,
+    Screen,
+    PlusLighter,
+    Exclusion,
+    ShowOverdraw,
+    Max,
+    Min,
+    Advanced(MixBlendMode),
+}
+fn set_blend_mode(&mut self, mode: BlendMode);
+```
+
+15 variants (one is parameterized). Renderer edit pattern: replace
+`device.set_blend_mode_premultiplied_alpha()` with
+`device.set_blend_mode(BlendMode::PremultipliedAlpha)`. Diff is large
+but mechanical.
+
+**Option B — Hierarchical enum** (groups subpixel modes):
+
+```rust
+// illustrative
+pub enum BlendMode {
+    Alpha, PremultipliedAlpha, PremultipliedDestOut, Multiply,
+    Screen, PlusLighter, Exclusion, Max, Min, ShowOverdraw,
+    Subpixel(SubpixelMode),
+    Advanced(MixBlendMode),
+}
+pub enum SubpixelMode { Pass0, Pass1, DualSource, Multiply }
+```
+
+Pro: groups related modes; clearer intent. Con: nested call sites
+(`BlendMode::Subpixel(SubpixelMode::Pass0)`); only 4 subpixel modes,
+grouping doesn't pay much.
+
+**Option C — Two-method split** — keep `set_blend_mode_advanced(MixBlendMode)`
+separate, fold the other 15 into one `set_blend_mode(SimpleBlendMode)`.
+Pro: discriminates simple vs. parameterized at the type level. Con:
+partially undoes the collapse benefit.
+
+Recommendation: **Option A**. Simplest, most direct, lowest cognitive
+overhead. The grouping in Option B doesn't earn its complexity given the
+small subpixel cohort. Option C splits work that should naturally unify.
+
 ## Method counts at a glance
 
 | Trait | Count |
