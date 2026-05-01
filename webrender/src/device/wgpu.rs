@@ -67,6 +67,38 @@ impl WgpuDevice {
             surface_format,
         }
     }
+
+    /// Loads a SPIR-V blob (committed in `webrender/res/spirv/*.spv`) and
+    /// creates a `wgpu::ShaderModule`. wgpu runs naga reflection internally
+    /// to validate the module and (later) auto-derive its bind-group layout
+    /// when used in a pipeline.
+    ///
+    /// Errors propagate as `wgpu::Error` via the device's error-scope
+    /// machinery; the caller is expected to push/pop a scope around the
+    /// call if it wants to capture them, otherwise wgpu surfaces them via
+    /// the configured error callback.
+    pub fn create_shader_module_from_spv(
+        &self,
+        label: Option<&str>,
+        spirv_bytes: &[u8],
+    ) -> wgpu::ShaderModule {
+        // SPIR-V is little-endian u32 words.
+        assert!(
+            spirv_bytes.len() % 4 == 0,
+            "spirv length not a multiple of 4: {}",
+            spirv_bytes.len()
+        );
+        let words: Vec<u32> = spirv_bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+
+        self.device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label,
+                source: wgpu::ShaderSource::SpirV(std::borrow::Cow::Owned(words)),
+            })
+    }
 }
 
 // ============================================================================
