@@ -274,6 +274,27 @@ Done when:
    reflection oracle output. A1's oracle is the bridge: the same JSON could
    build a `Vec<BindGroupLayout>` programmatically.
 
+4. **`Capabilities` struct is GL-flavored.** Lifted to
+   `device/types.rs` in P1d as pure data (24 fields: mostly `bool`, one
+   `Option<bool>`, one `String`), but the field names reflect GL extensions
+   (`supports_advanced_blend_equation`, `supports_qcom_tiled_rendering`,
+   `requires_vao_rebind_after_orphaning`, etc.). The wgpu impl will set
+   most fields to `false` and never use them. Could be refactored into a
+   smaller backend-neutral struct (e.g. just the flags both backends
+   actually consult), but doing so churns the renderer's
+   capability-checking call sites. Defer until parity push (P8) reveals
+   the actual minimum set the renderer cares about.
+
+5. **wgpu-only build mode (`--no-default-features --features
+   wgpu_backend`) is not a P1 goal.** The plan's compile target for P1 is
+   `--features "gl_backend wgpu_backend"` (both backends together). The
+   wgpu-only path requires either pervasive cfg-gating of every gleam
+   usage in renderer files (`renderer/mod.rs`, `renderer/shade.rs`,
+   `screen_capture.rs`, `compositor/sw_compositor.rs`) or making `gleam`
+   a non-optional dep that's ignored when gl_backend is off. Neither is
+   meaningfully cleaner; defer the decision until the wgpu impl actually
+   demonstrates value standalone (likely P6+).
+
 ## Verification posture
 
 - Reflection oracle JSON committed; CI re-derives and diffs.
