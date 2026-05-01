@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use super::traits::{GpuFrame, GpuShaders};
+use super::traits::{GpuFrame, GpuResources, GpuShaders};
 use super::super::shader_source::{OPTIMIZED_SHADERS, UNOPTIMIZED_SHADERS};
 use api::{ImageDescriptor, ImageFormat, Parameter, BoolParameter, IntParameter, ImageRendering};
 use api::{MixBlendMode, ImageBufferKind, VoidPtrToSizeFn};
@@ -5069,5 +5069,174 @@ impl GpuShaders for Device {
         S: Into<TextureSlot> + Copy,
     {
         Device::bind_shader_samplers(self, program, bindings)
+    }
+}
+
+impl GpuResources for Device {
+    type Texture = Texture;
+    type Vao = VAO;
+    type CustomVao = CustomVAO;
+    type Pbo = PBO;
+    type Vbo<T> = VBO<T>;
+    type BoundPbo<'a> = BoundPBO<'a>;
+    type TextureUploader<'a> = TextureUploader<'a>;
+
+    fn create_texture(
+        &mut self,
+        target: ImageBufferKind,
+        format: ImageFormat,
+        width: i32,
+        height: i32,
+        filter: TextureFilter,
+        render_target: Option<RenderTargetInfo>,
+    ) -> Texture {
+        Device::create_texture(self, target, format, width, height, filter, render_target)
+    }
+
+    fn delete_texture(&mut self, texture: Texture) {
+        Device::delete_texture(self, texture)
+    }
+
+    fn copy_entire_texture(&mut self, dst: &mut Texture, src: &Texture) {
+        Device::copy_entire_texture(self, dst, src)
+    }
+
+    fn copy_texture_sub_region(
+        &mut self,
+        src_texture: &Texture,
+        src_x: usize,
+        src_y: usize,
+        dest_texture: &Texture,
+        dest_x: usize,
+        dest_y: usize,
+        width: usize,
+        height: usize,
+    ) {
+        Device::copy_texture_sub_region(
+            self, src_texture, src_x, src_y, dest_texture, dest_x, dest_y, width, height,
+        )
+    }
+
+    fn invalidate_render_target(&mut self, texture: &Texture) {
+        Device::invalidate_render_target(self, texture)
+    }
+
+    fn invalidate_depth_target(&mut self) {
+        Device::invalidate_depth_target(self)
+    }
+
+    fn reuse_render_target<T: Texel>(&mut self, texture: &mut Texture, rt_info: RenderTargetInfo) {
+        Device::reuse_render_target::<T>(self, texture, rt_info)
+    }
+
+    fn create_fbo(&mut self) -> FBOId {
+        Device::create_fbo(self)
+    }
+
+    fn create_fbo_for_external_texture(&mut self, texture_id: u32) -> FBOId {
+        Device::create_fbo_for_external_texture(self, texture_id)
+    }
+
+    fn delete_fbo(&mut self, fbo: FBOId) {
+        Device::delete_fbo(self, fbo)
+    }
+
+    fn create_pbo(&mut self) -> PBO {
+        Device::create_pbo(self)
+    }
+
+    fn create_pbo_with_size(&mut self, size: usize) -> PBO {
+        Device::create_pbo_with_size(self, size)
+    }
+
+    fn delete_pbo(&mut self, pbo: PBO) {
+        Device::delete_pbo(self, pbo)
+    }
+
+    fn create_vao(&mut self, descriptor: &VertexDescriptor, instance_divisor: u32) -> VAO {
+        Device::create_vao(self, descriptor, instance_divisor)
+    }
+
+    fn create_vao_with_new_instances(
+        &mut self,
+        descriptor: &VertexDescriptor,
+        base_vao: &VAO,
+    ) -> VAO {
+        Device::create_vao_with_new_instances(self, descriptor, base_vao)
+    }
+
+    fn delete_vao(&mut self, vao: VAO) {
+        Device::delete_vao(self, vao)
+    }
+
+    fn create_custom_vao(&mut self, streams: &[Stream<'_>]) -> CustomVAO {
+        Device::create_custom_vao(self, streams)
+    }
+
+    fn delete_custom_vao(&mut self, vao: CustomVAO) {
+        Device::delete_custom_vao(self, vao)
+    }
+
+    fn create_vbo<T>(&mut self) -> VBO<T> {
+        Device::create_vbo::<T>(self)
+    }
+
+    fn delete_vbo<T>(&mut self, vbo: VBO<T>) {
+        Device::delete_vbo::<T>(self, vbo)
+    }
+
+    fn allocate_vbo<V>(&mut self, vbo: &mut VBO<V>, count: usize, usage_hint: VertexUsageHint) {
+        Device::allocate_vbo::<V>(self, vbo, count, usage_hint)
+    }
+
+    fn fill_vbo<V>(&mut self, vbo: &VBO<V>, data: &[V], offset: usize) {
+        Device::fill_vbo::<V>(self, vbo, data, offset)
+    }
+
+    fn update_vao_main_vertices<V>(
+        &mut self,
+        vao: &VAO,
+        vertices: &[V],
+        usage_hint: VertexUsageHint,
+    ) {
+        Device::update_vao_main_vertices::<V>(self, vao, vertices, usage_hint)
+    }
+
+    fn update_vao_instances<V: Clone>(
+        &mut self,
+        vao: &VAO,
+        instances: &[V],
+        usage_hint: VertexUsageHint,
+        repeat: Option<NonZeroUsize>,
+    ) {
+        Device::update_vao_instances::<V>(self, vao, instances, usage_hint, repeat)
+    }
+
+    fn update_vao_indices<I>(&mut self, vao: &VAO, indices: &[I], usage_hint: VertexUsageHint) {
+        Device::update_vao_indices::<I>(self, vao, indices, usage_hint)
+    }
+
+    fn upload_texture<'a>(&mut self, pbo_pool: &'a mut UploadPBOPool) -> TextureUploader<'a> {
+        Device::upload_texture(self, pbo_pool)
+    }
+
+    fn upload_texture_immediate<T: Texel>(&mut self, texture: &Texture, pixels: &[T]) {
+        Device::upload_texture_immediate::<T>(self, texture, pixels)
+    }
+
+    fn map_pbo_for_readback<'a>(&'a mut self, pbo: &'a PBO) -> Option<BoundPBO<'a>> {
+        Device::map_pbo_for_readback(self, pbo)
+    }
+
+    fn attach_read_texture(&mut self, texture: &Texture) {
+        Device::attach_read_texture(self, texture)
+    }
+
+    fn required_upload_size_and_stride(
+        &self,
+        size: DeviceIntSize,
+        format: ImageFormat,
+    ) -> (usize, usize) {
+        Device::required_upload_size_and_stride(self, size, format)
     }
 }

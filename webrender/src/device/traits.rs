@@ -25,10 +25,12 @@
 //! See `notes/2026-04-30_p0_method_assignment.md` for the full method-to-trait
 //! assignment. This file is the authoritative trait declaration.
 
-use api::{ImageFormat, Parameter};
-use crate::internal_types::SwizzleSettings;
+use api::{ImageBufferKind, ImageFormat, Parameter};
+use api::units::DeviceIntSize;
+use crate::internal_types::{RenderTargetInfo, SwizzleSettings};
 use malloc_size_of::MallocSizeOfOps;
 use crate::render_api::MemoryReport;
+use std::num::NonZeroUsize;
 use std::os::raw::c_void;
 
 // Types currently defined in the GL device module that the trait signatures
@@ -39,15 +41,21 @@ use std::os::raw::c_void;
 // them through this import.
 use super::gl::{
     Capabilities,
+    FBOId,
     GpuFrameId,
     Program,
     ShaderError,
+    Stream,
     StrideAlignment,
+    Texel,
+    TextureFilter,
     TextureFormatPair,
     TextureSlot,
     UniformLocation,
     UploadMethod,
+    UploadPBOPool,
     VertexDescriptor,
+    VertexUsageHint,
 };
 
 /// Frame lifecycle, capabilities, parameters, and global queries.
@@ -100,26 +108,139 @@ pub trait GpuFrame {
 
 /// Resource ownership and upload: textures, buffers, samplers, FBOs, PBOs, VAOs.
 ///
-/// Method signatures and associated types are added in subsequent P0 commits as
-/// methods are moved out of `impl Device` in `gl.rs`. See the assignment table
-/// for the full list.
+/// `attach_read_texture_external` (takes a raw `gl::GLuint`) and
+/// `delete_external_texture` (cfg-gated to `feature = "replay"`) stay as
+/// inherent methods on the concrete `Device` for now — both leak GL-typed
+/// values that don't generalize cleanly.
 pub trait GpuResources: GpuFrame {
-    // Associated types (filled in as methods are moved):
-    //   type Texture;
-    //   type ExternalTexture;
-    //   type Vao;
-    //   type CustomVao;
-    //   type Pbo;
-    //   type BoundPbo<'a>;          (GAT, lifetime tied to &mut self)
-    //   type TextureUploader<'a>;   (GAT)
-    //   type Vbo<T>;                (GAT, generic over element type)
-    //
-    // Methods to follow: create_texture, delete_texture, copy_*_texture*,
-    //   invalidate_*_target, reuse_render_target, create_fbo*, delete_fbo,
-    //   create_pbo*, delete_pbo, create_vao*, delete_vao, create_custom_vao,
-    //   delete_custom_vao, create_vbo, delete_vbo, allocate_vbo, fill_vbo,
-    //   update_vao_*, upload_texture*, map_pbo_for_readback,
-    //   attach_read_texture*, required_upload_size_and_stride.
+    type Texture;
+    type Vao;
+    type CustomVao;
+    type Pbo;
+    /// Generic-element vertex buffer (GAT).
+    type Vbo<T>;
+    /// RAII handle for a CPU-mapped PBO; lifetime ties it to the bound state.
+    type BoundPbo<'a>
+    where
+        Self: 'a;
+    /// Per-frame texture upload session; lifetime tied to the borrowed PBO pool.
+    type TextureUploader<'a>;
+
+    // --- Texture lifecycle ---
+
+    fn create_texture(
+        &mut self,
+        target: ImageBufferKind,
+        format: ImageFormat,
+        width: i32,
+        height: i32,
+        filter: TextureFilter,
+        render_target: Option<RenderTargetInfo>,
+    ) -> Self::Texture;
+
+    fn delete_texture(&mut self, texture: Self::Texture);
+
+    fn copy_entire_texture(&mut self, dst: &mut Self::Texture, src: &Self::Texture);
+
+    fn copy_texture_sub_region(
+        &mut self,
+        src_texture: &Self::Texture,
+        src_x: usize,
+        src_y: usize,
+        dest_texture: &Self::Texture,
+        dest_x: usize,
+        dest_y: usize,
+        width: usize,
+        height: usize,
+    );
+
+    fn invalidate_render_target(&mut self, texture: &Self::Texture);
+    fn invalidate_depth_target(&mut self);
+
+    fn reuse_render_target<T: Texel>(
+        &mut self,
+        texture: &mut Self::Texture,
+        rt_info: RenderTargetInfo,
+    );
+
+    // --- FBO lifecycle ---
+
+    fn create_fbo(&mut self) -> FBOId;
+    fn create_fbo_for_external_texture(&mut self, texture_id: u32) -> FBOId;
+    fn delete_fbo(&mut self, fbo: FBOId);
+
+    // --- PBO lifecycle ---
+
+    fn create_pbo(&mut self) -> Self::Pbo;
+    fn create_pbo_with_size(&mut self, size: usize) -> Self::Pbo;
+    fn delete_pbo(&mut self, pbo: Self::Pbo);
+
+    // --- VAO lifecycle ---
+
+    fn create_vao(&mut self, descriptor: &VertexDescriptor, instance_divisor: u32) -> Self::Vao;
+    fn create_vao_with_new_instances(
+        &mut self,
+        descriptor: &VertexDescriptor,
+        base_vao: &Self::Vao,
+    ) -> Self::Vao;
+    fn delete_vao(&mut self, vao: Self::Vao);
+
+    fn create_custom_vao(&mut self, streams: &[Stream<'_>]) -> Self::CustomVao;
+    fn delete_custom_vao(&mut self, vao: Self::CustomVao);
+
+    // --- VBO lifecycle (generic over element type) ---
+
+    fn create_vbo<T>(&mut self) -> Self::Vbo<T>;
+    fn delete_vbo<T>(&mut self, vbo: Self::Vbo<T>);
+    fn allocate_vbo<V>(
+        &mut self,
+        vbo: &mut Self::Vbo<V>,
+        count: usize,
+        usage_hint: VertexUsageHint,
+    );
+    fn fill_vbo<V>(&mut self, vbo: &Self::Vbo<V>, data: &[V], offset: usize);
+
+    // --- VAO buffer updates ---
+
+    fn update_vao_main_vertices<V>(
+        &mut self,
+        vao: &Self::Vao,
+        vertices: &[V],
+        usage_hint: VertexUsageHint,
+    );
+    fn update_vao_instances<V: Clone>(
+        &mut self,
+        vao: &Self::Vao,
+        instances: &[V],
+        usage_hint: VertexUsageHint,
+        repeat: Option<NonZeroUsize>,
+    );
+    fn update_vao_indices<I>(
+        &mut self,
+        vao: &Self::Vao,
+        indices: &[I],
+        usage_hint: VertexUsageHint,
+    );
+
+    // --- Upload paths ---
+
+    fn upload_texture<'a>(&mut self, pbo_pool: &'a mut UploadPBOPool) -> Self::TextureUploader<'a>;
+
+    fn upload_texture_immediate<T: Texel>(&mut self, texture: &Self::Texture, pixels: &[T]);
+
+    fn map_pbo_for_readback<'a>(&'a mut self, pbo: &'a Self::Pbo) -> Option<Self::BoundPbo<'a>>;
+
+    // --- Read-target attachment ---
+
+    fn attach_read_texture(&mut self, texture: &Self::Texture);
+
+    // --- Upload sizing query ---
+
+    fn required_upload_size_and_stride(
+        &self,
+        size: DeviceIntSize,
+        format: ImageFormat,
+    ) -> (usize, usize);
 }
 
 /// Program / pipeline / uniform-location lifecycle.
