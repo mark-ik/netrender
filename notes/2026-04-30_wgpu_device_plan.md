@@ -168,14 +168,26 @@ the trait coverage beyond their 3-method minimum.
 
 ### P1 — Skeleton wgpu device
 
-Done when:
-- `webrender/src/device/wgpu.rs` exists with `WgpuDevice` struct implementing
+Done when (closed 2026-05-01):
+
+- ✅ `webrender/src/device/wgpu.rs` exists with `WgpuDevice` struct implementing
   all four traits — methods may be `unimplemented!()` but signatures match
-- `wgpu` dep added to `webrender/Cargo.toml` under `[features] wgpu_backend`
-- `cargo build -p webrender --features wgpu_backend` clean
-- Construction wires an `Adapter`, `Device`, `Queue`, surface format
-- `cargo build -p webrender --features "gl_backend wgpu_backend"` clean
+- ✅ `wgpu` dep added to `webrender/Cargo.toml` under `[features] wgpu_backend`
+- ⚠️ `cargo build -p webrender --features wgpu_backend` clean — **deferred**
+- ✅ Construction wires an `Adapter`, `Device`, `Queue`, surface format
+- ✅ `cargo build -p webrender --features "gl_backend wgpu_backend"` clean
   (both backends compile together; one selected at link time later)
+
+The `--features wgpu_backend` (alone) target is deferred until renderer code
+becomes generic over the trait bounds. As of P1 close, renderer code uses
+the concrete `Device` (= `GlDevice`) type pervasively across ~9000 lines in
+`renderer/`, `screen_capture.rs`, `compositor/sw_compositor.rs`. Cfg-gating
+those out would compile but produce a library with `WgpuDevice` and no
+renderer — not useful. Revisit when renderer-genericization happens (P5+).
+
+Side achievements of the P1 lift work: `device/types.rs` now holds 14
+backend-neutral types (lifted from `gl.rs`); `traits.rs` imports nothing
+from `super::gl`; the trait surface is fully implementation-agnostic.
 
 ### P2 — SPIRV loading + reflection oracle
 
