@@ -800,6 +800,96 @@ linear / radial / conic into a single primitive type with N-stop
 ramps. The 8D-as-bundled-cleanup option is likely the better trade
 since 8D will rewrite the structs anyway.
 
+**8D implementation plan (2026-05-01)**: deliberate the unification
+choices up front since the refactor touches every gradient surface.
+
+*Pipeline specialization via WGSL `override`.* One
+`brush_gradient.wgsl` file replaces the three family WGSLs;
+`override GRADIENT_KIND: u32` selects per-pipeline behavior
+(`0=Linear`, `1=Radial`, `2=Conic`). The pipeline cache key on
+`WgpuDevice` extends to `(color_format, depth_format, alpha_blend,
+GradientKind)`, yielding 6 cached pipelines per format combo. This
+replaces the three separate `BrushLinearGradientPipeline` /
+`BrushRadialGradientPipeline` / `BrushConicGradientPipeline` types
+with a single `BrushGradientPipeline`.
+
+*N-stop storage buffer.* Bind group grows from 3 to 4 slots; binding
+3 is `array<Stop>` where `Stop = { color: vec4<f32>, offset: vec4<f32>
+}` (32-byte stride; the `offset.x` carries the [0,1] position and the
+remaining 12 bytes pad to vec4 alignment). One stops buffer per
+frame, shared across all gradient draw calls; per-instance
+`stops_offset: u32` + `stops_count: u32` index into it. Fragment
+shader does a linear scan for the segment containing `t` and mixes
+between adjacent stops; clamps to first/last for `t` outside the
+valid range. 2-stop instances are one entry of `[(0.0, color0), (1.0,
+color1)]` — bit-exact equivalent to the Phase 8A-C 2-stop math, so
+existing receipts pass without modification.
+
+*Instance struct shrinks 96 → 64 bytes.* Colors move out to the
+stops buffer; the per-instance struct keeps `rect`, `params`, `clip`,
+and a 16-byte tail of `transform_id` (u32), `z_depth` (f32),
+`stops_offset` (u32), and `stops_count` (u32). The gradient batch
+builder serializes this once instead of three times, collapsing the
+post-8A duplication.
+
+*Painter order across kinds preserved.* `Scene.linear_gradients` /
+`radial_gradients` / `conic_gradients` collapse to one
+`Scene.gradients: Vec<SceneGradient>`. The batch builder walks that
+vec in painter order, grouping consecutive entries with the same
+`(kind, alpha_class)` into a single `DrawIntent`. A push sequence of
+linear → radial → linear emits three draws (linear, radial, linear)
+that respect painter order. Phase 8A-C's family-grouped sort
+(linear < radial < conic regardless of push order) is gone.
+
+*Existing 2-stop API preserved.* `Scene::push_linear_gradient`,
+`push_radial_gradient`, `push_conic_gradient` (and their `_full`
+variants) keep their signatures and now build a 2-stop
+`SceneGradient` internally. New `Scene::push_gradient(SceneGradient)`
+exposes the general N-stop API. Existing `p8a` / `p8b` / `p8c` tests
+pass unmodified.
+
+*Receipt: `p8d_n_stop_gradient.rs`.*
+
+- `p8d_01` 3-stop linear (red → green → blue) — pixel sampling
+  along the gradient line matches mix between adjacent stops.
+- `p8d_02` uneven offsets (e.g., `[0.0, 0.2, 0.8, 1.0]`) — sub-segment
+  spans interpolate correctly.
+- `p8d_03` painter order across kinds — radial pushed first, linear
+  pushed second; linear paints in front (opposite of Phase 8A-C
+  ordering).
+- `p8d_04` general API via `push_gradient(SceneGradient { ... })`
+  with a custom stops vec.
+
+**Status (2026-05-01, 8D delivered)**: `brush_gradient.wgsl` (one
+file replacing the three Phase 8A-C WGSLs; `override GRADIENT_KIND`
+selects per-pipeline behavior; `sample_stops` does the N-stop
+linear-scan mix in the fragment shader), `BrushGradientPipeline`
+(replaces three typed pipelines), `GradientKind` enum,
+`build_brush_gradient(...)` parameterized by kind, single
+`brush_gradient` cache on `WgpuDevice` keyed by `(color_format,
+depth_format, alpha_blend, kind)`, 4-binding `brush_gradient_layout`
+adding the FRAGMENT-visible stops storage at binding 3,
+`SceneGradient` + `GradientStop` (replaces three `Scene*Gradient`
+types), `Scene.gradients` (replaces three typed Vecs),
+`Scene::push_gradient` for the general API plus the existing
+`push_linear_gradient` / `push_radial_gradient` /
+`push_conic_gradient` (and `_full` variants) preserved as 2-stop
+convenience methods, single `build_gradient_batch` (replaces three
+batch builders) — walks `scene.gradients` in painter order, groups
+consecutive same-`(kind, alpha)` entries into single draws,
+preserves user push order across kinds. `merge_draw_order` collapses
+back to 3 lists. Receipt: `p8d_n_stop_gradient.rs`, 4 tests —
+3-stop linear at midpoints of two segments, uneven stop offsets
+(0/0.2/0.8/1) sub-segment math, painter order preserved across
+linear+radial push, and the general `push_gradient` API with a
+4-stop radial. All Phase 8A-C receipts (`p8a` / `p8b` / `p8c`) pass
+unmodified — the 2-stop convenience methods route through the unified
+path bit-exactly. Three obsolete WGSL files
+(`brush_linear_gradient.wgsl`, `brush_radial_gradient.wgsl`,
+`brush_conic_gradient.wgsl`) deleted; one new `brush_gradient.wgsl`
+added. The post-8A instance-writer-duplication carry-forward is
+resolved by collapsing three near-identical builders into one.
+
 ### Phase 9 — Clip masks (rounded rects, complex clips) (2–3 weeks)
 
 Render clip masks to off-screen R8 targets (uses Phase 6 graph),

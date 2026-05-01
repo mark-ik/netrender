@@ -20,8 +20,7 @@
 use std::collections::HashMap;
 
 use netrender_device::{
-    BrushConicGradientPipeline, BrushImagePipeline, BrushLinearGradientPipeline,
-    BrushRadialGradientPipeline, BrushRectSolidPipeline, DrawIntent,
+    BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline, DrawIntent, GradientKind,
 };
 
 use crate::image_cache::ImageCache;
@@ -64,12 +63,8 @@ pub(crate) fn build_rect_batch(
         return Vec::new();
     }
 
-    // Unified depth range shared with image + all gradient batches.
-    let n_total = scene.rects.len()
-        + scene.images.len()
-        + scene.linear_gradients.len()
-        + scene.radial_gradients.len()
-        + scene.conic_gradients.len();
+    // Unified depth range shared with image + gradient batches.
+    let n_total = scene.rects.len() + scene.images.len() + scene.gradients.len();
 
     let mut opaque_order: Vec<(usize, f32)> = Vec::new();
     let mut alpha_order: Vec<(usize, f32)> = Vec::new();
@@ -163,11 +158,7 @@ pub(crate) fn build_image_batch(
     }
 
     let n_rects = scene.rects.len();
-    let n_total = n_rects
-        + scene.images.len()
-        + scene.linear_gradients.len()
-        + scene.radial_gradients.len()
-        + scene.conic_gradients.len();
+    let n_total = n_rects + scene.images.len() + scene.gradients.len();
 
     // Classify: (painter_index_j, z, key)
     let mut opaque_items: Vec<(usize, f32, ImageKey)> = Vec::new();
@@ -312,342 +303,153 @@ fn emit_image_draws(
     }
 }
 
-// ── Linear gradient batch (Phase 8A) ──────────────────────────────────
+// ── Gradient batch (Phase 8D unified linear / radial / conic, N-stop) ─
 
-/// Build all [`DrawIntent`]s for 2-stop linear gradients in `scene`.
-/// Opaque (both stops alpha >= 1.0) first, sorted front-to-back; then
-/// alpha (any stop with alpha < 1.0) in painter order.
-///
-/// Z assignment: linear gradients occupy painter indices
-/// `[n_rects + n_images, n_rects + n_images + n_linear)`, smaller z
-/// (= nearer) than rects and images.
-pub(crate) fn build_linear_gradient_batch(
-    scene: &Scene,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    opaque_pipe: &BrushLinearGradientPipeline,
-    alpha_pipe: &BrushLinearGradientPipeline,
-    frame_res: &FrameResources,
-) -> Vec<DrawIntent> {
-    if scene.linear_gradients.is_empty() {
-        return Vec::new();
-    }
-
-    let n_rects = scene.rects.len();
-    let n_images = scene.images.len();
-    let n_linear = scene.linear_gradients.len();
-    let n_total =
-        n_rects + n_images + n_linear + scene.radial_gradients.len() + scene.conic_gradients.len();
-
-    let mut opaque_order: Vec<(usize, f32)> = Vec::new();
-    let mut alpha_order: Vec<(usize, f32)> = Vec::new();
-
-    for (k, g) in scene.linear_gradients.iter().enumerate() {
-        let global_idx = n_rects + n_images + k;
-        let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
-        if g.color0[3] >= 1.0 && g.color1[3] >= 1.0 {
-            opaque_order.push((k, z));
-        } else {
-            alpha_order.push((k, z));
-        }
-    }
-
-    // Opaques: ascending z = front first → early-Z benefit.
-    opaque_order.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-    let build_batch =
-        |order: &[(usize, f32)], pipe: &BrushLinearGradientPipeline| -> DrawIntent {
-            let instance_count = order.len() as u32;
-            let mut bytes: Vec<u8> = Vec::with_capacity(order.len() * 96);
-            for &(idx, z) in order {
-                let g = &scene.linear_gradients[idx];
-                // rect (16)
-                for f in [g.x0, g.y0, g.x1, g.y1] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // line: start.xy, end.xy (16)
-                for f in [g.start_point[0], g.start_point[1], g.end_point[0], g.end_point[1]] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color0 (16)
-                for f in g.color0 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color1 (16)
-                for f in g.color1 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // clip (16)
-                for f in g.clip_rect {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // transform_id (4)
-                bytes.extend_from_slice(&g.transform_id.to_ne_bytes());
-                // z_depth (4)
-                bytes.extend_from_slice(&z.to_ne_bytes());
-                // padding (8) → stride 96
-                bytes.extend_from_slice(&[0u8; 8]);
-            }
-            let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("brush_linear_gradient instances"),
-                size: bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&instances_buf, 0, &bytes);
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("brush_linear_gradient bind group"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: instances_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: frame_res.transforms.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
-                ],
-            });
-
-            DrawIntent {
-                pipeline: pipe.pipeline.clone(),
-                bind_group,
-                vertex_buffers: vec![],
-                vertex_range: 0..4,
-                instance_range: 0..instance_count,
-                dynamic_offsets: Vec::new(),
-                push_constants: Vec::new(),
-            }
-        };
-
-    let mut draws = Vec::new();
-    if !opaque_order.is_empty() {
-        draws.push(build_batch(&opaque_order, opaque_pipe));
-    }
-    if !alpha_order.is_empty() {
-        draws.push(build_batch(&alpha_order, alpha_pipe));
-    }
-    draws
+/// Pipelines for the unified analytic gradient family. The renderer
+/// builds one of these per `prepare()` call (or per
+/// `render_dirty_tiles` call) and hands it to `build_gradient_batch`.
+/// `[GradientKind::Linear as usize]` indexes into each array.
+pub(crate) struct GradientPipelines {
+    pub opaque: [BrushGradientPipeline; 3],
+    pub alpha: [BrushGradientPipeline; 3],
 }
 
-// ── Radial gradient batch (Phase 8B) ──────────────────────────────────
-
-/// Build all [`DrawIntent`]s for 2-stop radial gradients in `scene`.
+/// Build all [`DrawIntent`]s for the analytic gradients in `scene`.
 ///
-/// Same opaque/alpha bucketing and z-sort shape as the linear-gradient
-/// batch. Z range: painter indices
-/// `[n_rects + n_images + n_linear, n_total)` — radial gradients paint
-/// in front of every other primitive family in Phase 8B (this
-/// linear-then-radial ordering is documented as a Phase 8 limitation;
-/// 8D's unified gradient list will preserve user push order).
-pub(crate) fn build_radial_gradient_batch(
+/// Phase 8D consolidates the three Phase 8A-C builders into one. The
+/// stops storage buffer is built once per call from every gradient's
+/// `stops` vec; per-instance `(stops_offset, stops_count)` indexes
+/// into it. Within the gradient list the builder walks scene push
+/// order, grouping consecutive entries with the same `(kind,
+/// alpha_class)` into one `DrawIntent`. A push sequence that
+/// interleaves families (linear → radial → linear) emits three draws
+/// — painter order is preserved across kinds, fixing the Phase 8A-C
+/// family-grouped limitation.
+///
+/// Z assignment: gradients occupy painter indices `[n_rects +
+/// n_images, n_total)`. Front-most primitives (any family) get the
+/// smallest z and win the depth test against earlier-drawn batches.
+pub(crate) fn build_gradient_batch(
     scene: &Scene,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    opaque_pipe: &BrushRadialGradientPipeline,
-    alpha_pipe: &BrushRadialGradientPipeline,
+    pipes: &GradientPipelines,
     frame_res: &FrameResources,
 ) -> Vec<DrawIntent> {
-    if scene.radial_gradients.is_empty() {
+    if scene.gradients.is_empty() {
         return Vec::new();
     }
 
     let n_rects = scene.rects.len();
     let n_images = scene.images.len();
-    let n_linear = scene.linear_gradients.len();
-    let n_radial = scene.radial_gradients.len();
-    let n_total = n_rects + n_images + n_linear + n_radial + scene.conic_gradients.len();
+    let n_total = n_rects + n_images + scene.gradients.len();
 
-    let mut opaque_order: Vec<(usize, f32)> = Vec::new();
-    let mut alpha_order: Vec<(usize, f32)> = Vec::new();
-
-    for (k, g) in scene.radial_gradients.iter().enumerate() {
-        let global_idx = n_rects + n_images + n_linear + k;
-        let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
-        if g.color0[3] >= 1.0 && g.color1[3] >= 1.0 {
-            opaque_order.push((k, z));
-        } else {
-            alpha_order.push((k, z));
+    // Build the per-frame stops storage buffer. Stride 32: vec4 color
+    // (16) + vec4 offset_pad (16, .x = position).
+    let mut stops_bytes: Vec<u8> = Vec::new();
+    let mut stop_ranges: Vec<(u32, u32)> = Vec::with_capacity(scene.gradients.len());
+    for grad in &scene.gradients {
+        let offset = (stops_bytes.len() / 32) as u32;
+        let count = grad.stops.len() as u32;
+        stop_ranges.push((offset, count));
+        for stop in &grad.stops {
+            for f in stop.color {
+                stops_bytes.extend_from_slice(&f.to_ne_bytes());
+            }
+            stops_bytes.extend_from_slice(&stop.offset.to_ne_bytes());
+            stops_bytes.extend_from_slice(&[0u8; 12]); // pad to vec4
         }
     }
-
-    opaque_order.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-    let build_batch =
-        |order: &[(usize, f32)], pipe: &BrushRadialGradientPipeline| -> DrawIntent {
-            let instance_count = order.len() as u32;
-            let mut bytes: Vec<u8> = Vec::with_capacity(order.len() * 96);
-            for &(idx, z) in order {
-                let g = &scene.radial_gradients[idx];
-                // rect (16)
-                for f in [g.x0, g.y0, g.x1, g.y1] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // params: center.xy, radii.xy (16)
-                for f in [g.center[0], g.center[1], g.radii[0], g.radii[1]] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color0 (16)
-                for f in g.color0 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color1 (16)
-                for f in g.color1 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // clip (16)
-                for f in g.clip_rect {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                bytes.extend_from_slice(&g.transform_id.to_ne_bytes());
-                bytes.extend_from_slice(&z.to_ne_bytes());
-                bytes.extend_from_slice(&[0u8; 8]); // pad → stride 96
-            }
-            let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("brush_radial_gradient instances"),
-                size: bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&instances_buf, 0, &bytes);
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("brush_radial_gradient bind group"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: instances_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: frame_res.transforms.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
-                ],
-            });
-
-            DrawIntent {
-                pipeline: pipe.pipeline.clone(),
-                bind_group,
-                vertex_buffers: vec![],
-                vertex_range: 0..4,
-                instance_range: 0..instance_count,
-                dynamic_offsets: Vec::new(),
-                push_constants: Vec::new(),
-            }
-        };
-
-    let mut draws = Vec::new();
-    if !opaque_order.is_empty() {
-        draws.push(build_batch(&opaque_order, opaque_pipe));
-    }
-    if !alpha_order.is_empty() {
-        draws.push(build_batch(&alpha_order, alpha_pipe));
-    }
-    draws
-}
-
-// ── Conic gradient batch (Phase 8C) ───────────────────────────────────
-
-/// Build all [`DrawIntent`]s for 2-stop conic gradients in `scene`.
-///
-/// Same opaque/alpha bucketing as the linear and radial batches.
-/// Z range: painter indices `[n_rects + n_images + n_linear + n_radial,
-/// n_total)` — conic gradients paint in front of every other family
-/// in Phase 8C (this conic-on-top ordering is documented as a Phase 8
-/// limitation; 8D's unified gradient list will preserve user push
-/// order across all gradient kinds).
-pub(crate) fn build_conic_gradient_batch(
-    scene: &Scene,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    opaque_pipe: &BrushConicGradientPipeline,
-    alpha_pipe: &BrushConicGradientPipeline,
-    frame_res: &FrameResources,
-) -> Vec<DrawIntent> {
-    if scene.conic_gradients.is_empty() {
+    if stops_bytes.is_empty() {
         return Vec::new();
     }
+    let stops_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("brush_gradient stops"),
+        size: stops_bytes.len() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&stops_buf, 0, &stops_bytes);
 
-    let n_rects = scene.rects.len();
-    let n_images = scene.images.len();
-    let n_linear = scene.linear_gradients.len();
-    let n_radial = scene.radial_gradients.len();
-    let n_total = n_rects + n_images + n_linear + n_radial + scene.conic_gradients.len();
-
-    let mut opaque_order: Vec<(usize, f32)> = Vec::new();
-    let mut alpha_order: Vec<(usize, f32)> = Vec::new();
-
-    for (k, g) in scene.conic_gradients.iter().enumerate() {
-        let global_idx = n_rects + n_images + n_linear + n_radial + k;
-        let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
-        if g.color0[3] >= 1.0 && g.color1[3] >= 1.0 {
-            opaque_order.push((k, z));
-        } else {
-            alpha_order.push((k, z));
+    // Group consecutive same-(kind, alpha_class) entries to preserve
+    // painter order across kinds while batching adjacent same-shape
+    // primitives into single draws.
+    let mut groups: Vec<(GradientKind, bool, Vec<usize>)> = Vec::new();
+    for (i, grad) in scene.gradients.iter().enumerate() {
+        let is_alpha = grad.stops.iter().any(|s| s.color[3] < 1.0);
+        if let Some(last) = groups.last_mut() {
+            if last.0 == grad.kind && last.1 == is_alpha {
+                last.2.push(i);
+                continue;
+            }
         }
+        groups.push((grad.kind, is_alpha, vec![i]));
     }
 
-    opaque_order.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-
-    let build_batch =
-        |order: &[(usize, f32)], pipe: &BrushConicGradientPipeline| -> DrawIntent {
-            let instance_count = order.len() as u32;
-            let mut bytes: Vec<u8> = Vec::with_capacity(order.len() * 96);
-            for &(idx, z) in order {
-                let g = &scene.conic_gradients[idx];
-                // rect (16)
-                for f in [g.x0, g.y0, g.x1, g.y1] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // params: center.xy, start_angle, _pad (16)
-                for f in [g.center[0], g.center[1], g.start_angle, 0.0_f32] {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color0 (16)
-                for f in g.color0 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // color1 (16)
-                for f in g.color1 {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                // clip (16)
-                for f in g.clip_rect {
-                    bytes.extend_from_slice(&f.to_ne_bytes());
-                }
-                bytes.extend_from_slice(&g.transform_id.to_ne_bytes());
-                bytes.extend_from_slice(&z.to_ne_bytes());
-                bytes.extend_from_slice(&[0u8; 8]); // pad → stride 96
-            }
-            let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("brush_conic_gradient instances"),
-                size: bytes.len() as u64,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            queue.write_buffer(&instances_buf, 0, &bytes);
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("brush_conic_gradient bind group"),
-                layout: &pipe.layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: instances_buf.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: frame_res.transforms.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
-                ],
-            });
-
-            DrawIntent {
-                pipeline: pipe.pipeline.clone(),
-                bind_group,
-                vertex_buffers: vec![],
-                vertex_range: 0..4,
-                instance_range: 0..instance_count,
-                dynamic_offsets: Vec::new(),
-                push_constants: Vec::new(),
-            }
+    let mut draws = Vec::with_capacity(groups.len());
+    for (kind, is_alpha, indices) in &groups {
+        let pipe = if *is_alpha {
+            &pipes.alpha[kind.as_u32() as usize]
+        } else {
+            &pipes.opaque[kind.as_u32() as usize]
         };
 
-    let mut draws = Vec::new();
-    if !opaque_order.is_empty() {
-        draws.push(build_batch(&opaque_order, opaque_pipe));
+        // Instance buffer: 64-byte stride.
+        let instance_count = indices.len() as u32;
+        let mut bytes: Vec<u8> = Vec::with_capacity(indices.len() * 64);
+        for &idx in indices {
+            let g = &scene.gradients[idx];
+            let global_idx = n_rects + n_images + idx;
+            let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
+            let (stops_offset, stops_count) = stop_ranges[idx];
+            // rect (16)
+            for f in [g.x0, g.y0, g.x1, g.y1] {
+                bytes.extend_from_slice(&f.to_ne_bytes());
+            }
+            // params (16)
+            for f in g.params {
+                bytes.extend_from_slice(&f.to_ne_bytes());
+            }
+            // clip (16)
+            for f in g.clip_rect {
+                bytes.extend_from_slice(&f.to_ne_bytes());
+            }
+            // tail: transform_id (4) + z_depth (4) + stops_offset (4) + stops_count (4)
+            bytes.extend_from_slice(&g.transform_id.to_ne_bytes());
+            bytes.extend_from_slice(&z.to_ne_bytes());
+            bytes.extend_from_slice(&stops_offset.to_ne_bytes());
+            bytes.extend_from_slice(&stops_count.to_ne_bytes());
+        }
+        let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("brush_gradient instances"),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&instances_buf, 0, &bytes);
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("brush_gradient bind group"),
+            layout: &pipe.layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: instances_buf.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: frame_res.transforms.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: stops_buf.as_entire_binding() },
+            ],
+        });
+
+        draws.push(DrawIntent {
+            pipeline: pipe.pipeline.clone(),
+            bind_group,
+            vertex_buffers: vec![],
+            vertex_range: 0..4,
+            instance_range: 0..instance_count,
+            dynamic_offsets: Vec::new(),
+            push_constants: Vec::new(),
+        });
     }
-    if !alpha_order.is_empty() {
-        draws.push(build_batch(&alpha_order, alpha_pipe));
-    }
+
     draws
 }
 

@@ -39,8 +39,8 @@ pub use crate::renderer::{
     ColorLoad, FrameTarget, PreparedFrame, Renderer, RendererError, ResourceRefs,
 };
 pub use crate::scene::{
-    ImageData, ImageKey, NO_CLIP, Scene, SceneConicGradient, SceneImage, SceneLinearGradient,
-    SceneRadialGradient, SceneRect, Transform,
+    GradientKind, GradientStop, ImageData, ImageKey, NO_CLIP, Scene, SceneGradient, SceneImage,
+    SceneRect, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
@@ -49,10 +49,8 @@ pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
 // `WgpuHandles`, pass them through `create_netrender_instance`, and
 // build `DrawIntent`s for `PreparedFrame`.
 pub use netrender_device::{
-    BrushBlurPipeline, BrushConicGradientPipeline, BrushImagePipeline,
-    BrushLinearGradientPipeline, BrushRadialGradientPipeline, BrushRectSolidPipeline,
+    BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
     BrushSolidPipeline, ColorAttachment, DepthAttachment, DrawIntent, REQUIRED_FEATURES,
-    RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur,
-    build_brush_conic_gradient, build_brush_image, build_brush_linear_gradient,
-    build_brush_radial_gradient, build_brush_rect_solid, build_brush_solid_specialized,
+    RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur, build_brush_gradient,
+    build_brush_image, build_brush_rect_solid, build_brush_solid_specialized,
 };

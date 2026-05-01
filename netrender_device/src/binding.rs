@@ -173,18 +173,13 @@ pub(crate) fn brush_image_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
     })
 }
 
-/// brush_gradient bind group layout (Phase 8A linear, 8B radial,
-/// 8C conic). The same 3-binding shape applies to every analytic
-/// gradient family: instance state in the storage buffer differs per
-/// kind, but the binding shape (instances + transforms + per_frame,
-/// all VERTEX visibility) is shared. Future N-stop ramps (8D) extend
-/// this with a stops storage buffer at binding 3.
-///
-/// The fragment shader receives all per-instance state it needs via
-/// flat-interpolated varyings (and one linearly-interpolated
-/// `local_pos` for radial/conic), so storage buffers stay vertex-only.
+/// brush_gradient bind group layout (Phase 8D unified analytic
+/// gradient). Four bindings: instances (storage, VERTEX), transforms
+/// (storage, VERTEX), per_frame (uniform, VERTEX), and stops (storage,
+/// FRAGMENT). The N-stop ramp lives in the stops buffer; per-instance
+/// `stops_offset` + `stops_count` index into it.
 pub(crate) fn brush_gradient_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    let storage_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+    let vertex_storage_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::VERTEX,
         ty: wgpu::BindingType::Buffer {
@@ -197,13 +192,25 @@ pub(crate) fn brush_gradient_layout(device: &wgpu::Device) -> wgpu::BindGroupLay
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("brush_gradient bind group layout"),
         entries: &[
-            storage_entry(0), // instances
-            storage_entry(1), // transforms
+            vertex_storage_entry(0), // instances
+            vertex_storage_entry(1), // transforms
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::VERTEX,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 3: stops storage (FRAGMENT — sampled per-pixel for the
+            // N-stop ramp scan).
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },

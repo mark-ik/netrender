@@ -19,6 +19,8 @@
 
 use std::collections::HashMap;
 
+pub use netrender_device::GradientKind;
+
 /// A 4×4 column-major transform matrix.
 ///
 /// Column `i` occupies `m[i*4..i*4+4]`. Identity: columns are
@@ -144,97 +146,56 @@ pub struct ImageData {
     pub bytes: Vec<u8>,
 }
 
-/// One 2-stop linear gradient rectangle (Phase 8A).
+/// One stop in an N-stop gradient ramp.
 ///
-/// Gradient direction and length are defined by `start_point` /
-/// `end_point` in **local space** (same coordinate system as `x0..y1`).
-/// Color at any pixel is `mix(color0, color1, t)` where
-/// `t = clamp(dot(pixel - start, dir) / |dir|^2, 0, 1)`.
-///
-/// Both colors are **premultiplied**. A gradient is opaque iff both
-/// stops have `alpha >= 1.0`; otherwise it goes through the
-/// alpha-blend pipeline.
-#[derive(Debug, Clone)]
-pub struct SceneLinearGradient {
-    /// Local-space rect bounds.
-    pub x0: f32,
-    pub y0: f32,
-    pub x1: f32,
-    pub y1: f32,
-    /// Gradient line start (local space). Color0 is the value here.
-    pub start_point: [f32; 2],
-    /// Gradient line end (local space). Color1 is the value here.
-    pub end_point: [f32; 2],
-    /// Premultiplied RGBA at the start of the gradient line.
-    pub color0: [f32; 4],
-    /// Premultiplied RGBA at the end of the gradient line.
-    pub color1: [f32; 4],
-    /// Index into `Scene::transforms`; `0` = identity.
-    pub transform_id: u32,
-    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
-    pub clip_rect: [f32; 4],
+/// Phase 8D bundles linear, radial, and conic gradients under one
+/// primitive type. Each gradient carries an arbitrary-length stops
+/// vec; consecutive entries with offsets `[a, b]` define a segment
+/// over which the color interpolates linearly.
+#[derive(Debug, Clone, Copy)]
+pub struct GradientStop {
+    /// Position along the gradient parameter `t`, in `[0, 1]`.
+    pub offset: f32,
+    /// Premultiplied RGBA at this position.
+    pub color: [f32; 4],
 }
 
-/// One 2-stop radial gradient rectangle (Phase 8B).
+/// One analytic gradient rectangle (Phase 8D unified).
 ///
-/// Radial parameters: `center` (local space) is where `color0` lives;
-/// `radii = (rx, ry)` define an ellipse — set `rx == ry` for a circular
-/// gradient. Color at any pixel is `mix(color0, color1, t)` where
-/// `t = clamp(length((pixel - center) / radii), 0, 1)`. So `color1`
-/// is the value at the elliptical boundary `t = 1` and remains the
-/// value for any pixel outside it.
+/// `kind` selects linear / radial / conic, which determines how the
+/// fragment shader maps each pixel to a `t` value. `params` carries
+/// kind-specific configuration in a 4-float slot:
 ///
-/// Both colors are **premultiplied**. Opaque iff both stops have
-/// `alpha >= 1.0`.
+/// - Linear: `[start_x, start_y, end_x, end_y]`. `t = projection of
+///   pixel onto the gradient line`.
+/// - Radial: `[cx, cy, rx, ry]`. Set `rx == ry` for circular.
+///   `t = length((pixel - center) / radii)`.
+/// - Conic:  `[cx, cy, start_angle, _pad]`. `start_angle` is the seam
+///   in radians (with y+ down, atan2 increases clockwise). `t =
+///   fract((atan2(dy, dx) - start_angle) / 2π)`.
+///
+/// Once `t` is known, `stops` defines the color: clamps to first/last
+/// stop for `t` outside `[0, 1]` (or outside the stops' offset range);
+/// otherwise interpolates between the two adjacent stops bracketing
+/// `t`. All stop colors are **premultiplied**.
+///
+/// A gradient is rendered through the opaque pipeline iff every stop
+/// color has `alpha >= 1.0`; otherwise the alpha pipeline runs.
 #[derive(Debug, Clone)]
-pub struct SceneRadialGradient {
+pub struct SceneGradient {
     /// Local-space rect bounds.
     pub x0: f32,
     pub y0: f32,
     pub x1: f32,
     pub y1: f32,
-    /// Center of the radial gradient (local space). Color0 lives here.
-    pub center: [f32; 2],
-    /// Radii of the gradient ellipse (local space). `[r, r]` for circular.
-    pub radii: [f32; 2],
-    /// Premultiplied RGBA at the center.
-    pub color0: [f32; 4],
-    /// Premultiplied RGBA at and beyond the elliptical boundary.
-    pub color1: [f32; 4],
-    /// Index into `Scene::transforms`; `0` = identity.
-    pub transform_id: u32,
-    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
-    pub clip_rect: [f32; 4],
-}
-
-/// One 2-stop conic gradient rectangle (Phase 8C).
-///
-/// `t` sweeps around `center`. With y+ pointing downward (screen
-/// convention), `atan2(dy, dx)` increases clockwise: 0 = east,
-/// pi/2 = south, pi = west, -pi/2 = north. The gradient seam (where
-/// `t` wraps from 1 back to 0) sits at `start_angle` radians; setting
-/// `start_angle = -π/2` matches CSS `conic-gradient(from 0deg)`'s
-/// 12-o'clock start.
-///
-/// 2-stop semantics introduce a hard discontinuity at the seam where
-/// `color1` jumps back to `color0`. Setting `color0 == color1`
-/// produces a uniform fill.
-#[derive(Debug, Clone)]
-pub struct SceneConicGradient {
-    /// Local-space rect bounds.
-    pub x0: f32,
-    pub y0: f32,
-    pub x1: f32,
-    pub y1: f32,
-    /// Center of the conic sweep (local space).
-    pub center: [f32; 2],
-    /// Seam angle in radians (counterclockwise math convention; with
-    /// y-down screen coords the angle increases visually clockwise).
-    pub start_angle: f32,
-    /// Premultiplied RGBA at `t = 0` (just after the seam).
-    pub color0: [f32; 4],
-    /// Premultiplied RGBA at `t = 1` (just before the seam).
-    pub color1: [f32; 4],
+    /// Which gradient family this primitive uses.
+    pub kind: GradientKind,
+    /// Kind-dependent parameter slot (see struct docs).
+    pub params: [f32; 4],
+    /// Color stops along the gradient parameter, sorted by `offset`
+    /// ascending. Phase 8D supports arbitrary lengths; 2 is the
+    /// minimum for a meaningful gradient.
+    pub stops: Vec<GradientStop>,
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
@@ -283,21 +244,11 @@ pub struct Scene {
     /// Textured-rect primitives in painter order (back-to-front).
     /// These paint on top of all rects.
     pub images: Vec<SceneImage>,
-    /// 2-stop linear gradients in painter order (back-to-front).
-    /// These paint on top of all rects and images (Phase 8A).
-    pub linear_gradients: Vec<SceneLinearGradient>,
-    /// 2-stop radial gradients in painter order (back-to-front).
-    /// These paint on top of all rects, images, and linear gradients
-    /// (Phase 8B). Within-frame interleaving of linear and radial
-    /// (linear A → radial B → linear C) is not preserved by Phase 8;
-    /// linear gradients always paint behind radial gradients.
-    pub radial_gradients: Vec<SceneRadialGradient>,
-    /// 2-stop conic gradients in painter order (back-to-front).
-    /// These paint on top of every other family in Phase 8C
-    /// (rects → images → linear → radial → conic). Same Phase 8
-    /// limitation as above: family boundaries dominate user push
-    /// interleaving until 8D's unified gradient list lands.
-    pub conic_gradients: Vec<SceneConicGradient>,
+    /// Analytic gradients (linear / radial / conic, N-stop) in
+    /// painter order (back-to-front). Phase 8D unifies the three
+    /// gradient families into one list — push order is preserved
+    /// across kinds, including within-frame interleaving.
+    pub gradients: Vec<SceneGradient>,
     /// Transform palette. Index 0 is always identity.
     pub transforms: Vec<Transform>,
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
@@ -313,9 +264,7 @@ impl Scene {
             viewport_height,
             rects: Vec::new(),
             images: Vec::new(),
-            linear_gradients: Vec::new(),
-            radial_gradients: Vec::new(),
-            conic_gradients: Vec::new(),
+            gradients: Vec::new(),
             transforms: vec![Transform::IDENTITY], // index 0 = identity
             image_sources: HashMap::new(),
         }
@@ -399,9 +348,14 @@ impl Scene {
         });
     }
 
-    /// Append a 2-stop linear gradient at device-pixel coords. UV-style
-    /// `start` / `end` are in the same local-space coordinate system as
-    /// `x0..y1`. No transform, no clip.
+    /// Phase 8D general API: push an arbitrary-kind, arbitrary-stops
+    /// gradient. The 2-stop convenience methods below build a
+    /// `SceneGradient` and forward to this.
+    pub fn push_gradient(&mut self, gradient: SceneGradient) {
+        self.gradients.push(gradient);
+    }
+
+    /// 2-stop linear gradient (Phase 8A convenience; preserved post-8D).
     pub fn push_linear_gradient(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -410,19 +364,16 @@ impl Scene {
         color0: [f32; 4],
         color1: [f32; 4],
     ) {
-        self.linear_gradients.push(SceneLinearGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Linear,
             x0, y0, x1, y1,
-            start_point: start,
-            end_point: end,
-            color0,
-            color1,
-            transform_id: 0,
-            clip_rect: NO_CLIP,
-        });
+            [start[0], start[1], end[0], end[1]],
+            color0, color1,
+            0, NO_CLIP,
+        ));
     }
 
-    /// Append a 2-stop linear gradient with full control over transform
-    /// and device-space clip.
+    /// 2-stop linear gradient with full control over transform and clip.
     pub fn push_linear_gradient_full(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -433,22 +384,18 @@ impl Scene {
         transform_id: u32,
         clip_rect: [f32; 4],
     ) {
-        self.linear_gradients.push(SceneLinearGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Linear,
             x0, y0, x1, y1,
-            start_point: start,
-            end_point: end,
-            color0,
-            color1,
-            transform_id,
-            clip_rect,
-        });
+            [start[0], start[1], end[0], end[1]],
+            color0, color1,
+            transform_id, clip_rect,
+        ));
     }
 
-    /// Append a 2-stop radial gradient (Phase 8B). `center` and
-    /// `radii` are in local space; for a circular gradient, set
-    /// `radii = [r, r]`. Color0 at the center, color1 at the
-    /// elliptical boundary; pixels beyond the boundary are clamped to
-    /// color1.
+    /// 2-stop radial gradient (Phase 8B convenience). For circular,
+    /// pass `radii = [r, r]`. Color0 at center, color1 at the
+    /// elliptical boundary (clamps beyond).
     pub fn push_radial_gradient(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -457,20 +404,18 @@ impl Scene {
         color0: [f32; 4],
         color1: [f32; 4],
     ) {
-        self.radial_gradients.push(SceneRadialGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Radial,
             x0, y0, x1, y1,
-            center,
-            radii,
-            color0,
-            color1,
-            transform_id: 0,
-            clip_rect: NO_CLIP,
-        });
+            [center[0], center[1], radii[0], radii[1]],
+            color0, color1,
+            0, NO_CLIP,
+        ));
     }
 
-    /// Append a 2-stop conic gradient (Phase 8C). `t = 0` lives at
-    /// `start_angle`, sweeping clockwise (in screen coords with y down)
-    /// to `t = 1` just before wrapping back to `start_angle`.
+    /// 2-stop conic gradient (Phase 8C convenience). `t = 0` at
+    /// `start_angle`, sweeping clockwise (with y-down screen coords)
+    /// back to the seam at `t = 1`.
     pub fn push_conic_gradient(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -479,19 +424,16 @@ impl Scene {
         color0: [f32; 4],
         color1: [f32; 4],
     ) {
-        self.conic_gradients.push(SceneConicGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Conic,
             x0, y0, x1, y1,
-            center,
-            start_angle,
-            color0,
-            color1,
-            transform_id: 0,
-            clip_rect: NO_CLIP,
-        });
+            [center[0], center[1], start_angle, 0.0],
+            color0, color1,
+            0, NO_CLIP,
+        ));
     }
 
-    /// Append a 2-stop conic gradient with full control over transform
-    /// and device-space clip.
+    /// 2-stop conic gradient with full control over transform and clip.
     pub fn push_conic_gradient_full(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -502,19 +444,16 @@ impl Scene {
         transform_id: u32,
         clip_rect: [f32; 4],
     ) {
-        self.conic_gradients.push(SceneConicGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Conic,
             x0, y0, x1, y1,
-            center,
-            start_angle,
-            color0,
-            color1,
-            transform_id,
-            clip_rect,
-        });
+            [center[0], center[1], start_angle, 0.0],
+            color0, color1,
+            transform_id, clip_rect,
+        ));
     }
 
-    /// Append a 2-stop radial gradient with full control over transform
-    /// and device-space clip.
+    /// 2-stop radial gradient with full control over transform and clip.
     pub fn push_radial_gradient_full(
         &mut self,
         x0: f32, y0: f32, x1: f32, y1: f32,
@@ -525,15 +464,13 @@ impl Scene {
         transform_id: u32,
         clip_rect: [f32; 4],
     ) {
-        self.radial_gradients.push(SceneRadialGradient {
+        self.gradients.push(two_stop_gradient(
+            GradientKind::Radial,
             x0, y0, x1, y1,
-            center,
-            radii,
-            color0,
-            color1,
-            transform_id,
-            clip_rect,
-        });
+            [center[0], center[1], radii[0], radii[1]],
+            color0, color1,
+            transform_id, clip_rect,
+        ));
     }
 
     /// Append an image rect with full control over UV, tint, transform,
@@ -561,5 +498,33 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self::new(0, 0)
+    }
+}
+
+/// Build a 2-stop `SceneGradient` for the given kind. Internal helper
+/// that powers `push_linear_gradient`, `push_radial_gradient`, and
+/// `push_conic_gradient` (and their `_full` variants).
+fn two_stop_gradient(
+    kind: GradientKind,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    params: [f32; 4],
+    color0: [f32; 4],
+    color1: [f32; 4],
+    transform_id: u32,
+    clip_rect: [f32; 4],
+) -> SceneGradient {
+    SceneGradient {
+        x0, y0, x1, y1,
+        kind,
+        params,
+        stops: vec![
+            GradientStop { offset: 0.0, color: color0 },
+            GradientStop { offset: 1.0, color: color1 },
+        ],
+        transform_id,
+        clip_rect,
     }
 }

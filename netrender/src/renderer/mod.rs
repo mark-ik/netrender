@@ -23,10 +23,10 @@ use netrender_device::{
 };
 
 use crate::batch::{
-    FrameResources, build_conic_gradient_batch, build_image_batch, build_linear_gradient_batch,
-    build_radial_gradient_batch, build_rect_batch, make_per_frame_buf_for_rect,
-    make_transforms_buf,
+    FrameResources, GradientPipelines, build_gradient_batch, build_image_batch, build_rect_batch,
+    make_per_frame_buf_for_rect, make_transforms_buf,
 };
+use crate::scene::GradientKind;
 use crate::image_cache::ImageCache;
 use crate::scene::{ImageKey, Scene};
 use crate::tile_cache::{TileCache, TileCoord};
@@ -127,24 +127,8 @@ impl Renderer {
         let image_alpha_pipe = self
             .wgpu_device
             .ensure_brush_image_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let linear_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_linear_gradient_opaque(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let linear_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_linear_gradient_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let radial_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_radial_gradient_opaque(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let radial_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_radial_gradient_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let conic_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_conic_gradient_opaque(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
-        let conic_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_conic_gradient_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
+        // Phase 8D: one gradient pipeline per (kind, alpha_class) — 6 total.
+        let gradient_pipes = self.ensure_gradient_pipelines(Self::COLOR_FORMAT);
 
         let depth_tex = self.wgpu_device.core.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("netrender depth"),
@@ -194,37 +178,15 @@ impl Renderer {
             )
         };
 
-        // Build linear gradient DrawIntents: [opaque, alpha]
-        let linear_grad_draws = build_linear_gradient_batch(
-            scene, device, queue,
-            &linear_grad_opaque_pipe, &linear_grad_alpha_pipe,
-            &frame_res,
-        );
+        // Phase 8D: one unified gradient batch — push order preserved
+        // across linear / radial / conic kinds.
+        let gradient_draws =
+            build_gradient_batch(scene, device, queue, &gradient_pipes, &frame_res);
 
-        // Build radial gradient DrawIntents: [opaque, alpha]
-        let radial_grad_draws = build_radial_gradient_batch(
-            scene, device, queue,
-            &radial_grad_opaque_pipe, &radial_grad_alpha_pipe,
-            &frame_res,
-        );
-
-        // Build conic gradient DrawIntents: [opaque, alpha]
-        let conic_grad_draws = build_conic_gradient_batch(
-            scene, device, queue,
-            &conic_grad_opaque_pipe, &conic_grad_alpha_pipe,
-            &frame_res,
-        );
-
-        // Concat in painter order: rects → images → linear → radial → conic.
-        // Each batch emits opaques first then alphas; cross-batch
-        // correctness is handled by the unified z_depth assignment.
-        let draws = merge_draw_order(
-            rect_draws,
-            image_draws,
-            linear_grad_draws,
-            radial_grad_draws,
-            conic_grad_draws,
-        );
+        // Concat: rects → images → gradients. Each batch emits opaques
+        // first then alphas; cross-batch correctness comes from the
+        // unified z_depth assignment.
+        let draws = merge_draw_order(rect_draws, image_draws, gradient_draws);
 
         PreparedFrame {
             draws,
@@ -390,6 +352,27 @@ impl Renderer {
         self.tile_cache.as_ref()
     }
 
+    /// Phase 8D: ensure the 6 cached `brush_gradient` pipelines (3
+    /// kinds × 2 alpha classes) for the given color format. Pipelines
+    /// are cached on `WgpuDevice` by `(color, depth, alpha, kind)`,
+    /// so subsequent calls with the same format return the same Arcs.
+    fn ensure_gradient_pipelines(
+        &self,
+        color_format: wgpu::TextureFormat,
+    ) -> GradientPipelines {
+        let kinds = [GradientKind::Linear, GradientKind::Radial, GradientKind::Conic];
+        GradientPipelines {
+            opaque: kinds.map(|k| {
+                self.wgpu_device
+                    .ensure_brush_gradient_opaque(color_format, Self::DEPTH_FORMAT, k)
+            }),
+            alpha: kinds.map(|k| {
+                self.wgpu_device
+                    .ensure_brush_gradient_alpha(color_format, Self::DEPTH_FORMAT, k)
+            }),
+        }
+    }
+
     /// Insert a pre-existing GPU texture into the image cache, making it
     /// available for compositing via [`Scene::push_image_full`] in the next
     /// `prepare()` call. The typical use is injecting render-graph outputs
@@ -435,24 +418,8 @@ impl Renderer {
         let image_alpha_pipe = self
             .wgpu_device
             .ensure_brush_image_alpha(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let linear_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_linear_gradient_opaque(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let linear_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_linear_gradient_alpha(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let radial_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_radial_gradient_opaque(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let radial_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_radial_gradient_alpha(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let conic_grad_opaque_pipe = self
-            .wgpu_device
-            .ensure_brush_conic_gradient_opaque(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
-        let conic_grad_alpha_pipe = self
-            .wgpu_device
-            .ensure_brush_conic_gradient_alpha(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
+        // Phase 8D: 6 cached gradient pipelines for the tile format.
+        let gradient_pipes = self.ensure_gradient_pipelines(Self::TILE_FORMAT);
 
         // Upload any new image sources (matches prepare()'s contract).
         {
@@ -517,35 +484,11 @@ impl Renderer {
                 &self.nearest_sampler,
                 &frame_res,
             );
-            let linear_grad_draws = build_linear_gradient_batch(
-                scene,
-                device,
-                queue,
-                &linear_grad_opaque_pipe,
-                &linear_grad_alpha_pipe,
-                &frame_res,
-            );
-            let radial_grad_draws = build_radial_gradient_batch(
-                scene,
-                device,
-                queue,
-                &radial_grad_opaque_pipe,
-                &radial_grad_alpha_pipe,
-                &frame_res,
-            );
-            let conic_grad_draws = build_conic_gradient_batch(
-                scene,
-                device,
-                queue,
-                &conic_grad_opaque_pipe,
-                &conic_grad_alpha_pipe,
-                &frame_res,
-            );
+            let gradient_draws =
+                build_gradient_batch(scene, device, queue, &gradient_pipes, &frame_res);
             let mut draws = rect_draws;
             draws.extend(image_draws);
-            draws.extend(linear_grad_draws);
-            draws.extend(radial_grad_draws);
-            draws.extend(conic_grad_draws);
+            draws.extend(gradient_draws);
 
             let tile_tex = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("tile color"),
@@ -620,18 +563,15 @@ impl Renderer {
 /// first then alphas; cross-batch correctness comes from the unified
 /// `n_total`-based z_depth so the front-most primitive (any family)
 /// wins the depth test. Family painter order: rects → images →
-/// linear → radial → conic.
+/// gradients (linear / radial / conic interleaved by user push order
+/// inside `gradient_draws`).
 fn merge_draw_order(
     mut rect_draws: Vec<DrawIntent>,
     image_draws: Vec<DrawIntent>,
-    linear_grad_draws: Vec<DrawIntent>,
-    radial_grad_draws: Vec<DrawIntent>,
-    conic_grad_draws: Vec<DrawIntent>,
+    gradient_draws: Vec<DrawIntent>,
 ) -> Vec<DrawIntent> {
     rect_draws.extend(image_draws);
-    rect_draws.extend(linear_grad_draws);
-    rect_draws.extend(radial_grad_draws);
-    rect_draws.extend(conic_grad_draws);
+    rect_draws.extend(gradient_draws);
     rect_draws
 }
 

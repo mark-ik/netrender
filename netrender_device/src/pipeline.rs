@@ -190,31 +190,50 @@ pub fn build_brush_image(
     BrushImagePipeline { pipeline, layout }
 }
 
-/// Phase 8A 2-stop analytic linear-gradient pipeline. Same depth/blend
-/// shape as `BrushRectSolidPipeline`; only the WGSL module + instance
-/// struct differ.
+/// Analytic gradient kind, selected at pipeline-compile time via the
+/// WGSL `override GRADIENT_KIND` constant. The numeric values match
+/// the constants the shader compares against; do not renumber.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GradientKind {
+    Linear = 0,
+    Radial = 1,
+    Conic = 2,
+}
+
+impl GradientKind {
+    pub fn as_u32(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Phase 8D unified analytic-gradient pipeline. Selects per-kind
+/// behavior via the `GRADIENT_KIND` override constant; cache key on
+/// `WgpuDevice` includes `(color_format, depth_format, alpha_blend,
+/// kind)` for 6 specialized pipelines per format combo.
 #[derive(Clone)]
-pub struct BrushLinearGradientPipeline {
+pub struct BrushGradientPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub layout: wgpu::BindGroupLayout,
 }
 
-/// Build the `brush_linear_gradient` pipeline for `(target_format, depth_format, alpha_blend)`.
-pub fn build_brush_linear_gradient(
+/// Build the `brush_gradient` pipeline with the given `kind`
+/// specialization.
+pub fn build_brush_gradient(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
     depth_format: Option<wgpu::TextureFormat>,
     alpha_blend: bool,
-) -> BrushLinearGradientPipeline {
+    kind: GradientKind,
+) -> BrushGradientPipeline {
     let layout = crate::binding::brush_gradient_layout(device);
 
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("brush_linear_gradient"),
-        source: wgpu::ShaderSource::Wgsl(crate::shader::BRUSH_LINEAR_GRADIENT_WGSL.into()),
+        label: Some("brush_gradient"),
+        source: wgpu::ShaderSource::Wgsl(crate::shader::BRUSH_GRADIENT_WGSL.into()),
     });
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("brush_linear_gradient pipeline layout"),
+        label: Some("brush_gradient pipeline layout"),
         bind_group_layouts: &[Some(&layout)],
         immediate_size: 0,
     });
@@ -233,26 +252,36 @@ pub fn build_brush_linear_gradient(
         bias: wgpu::DepthBiasState::default(),
     });
 
-    let label = match (alpha_blend, depth_format.is_some()) {
-        (false, false) => "brush_linear_gradient opaque nodepth",
-        (false, true) => "brush_linear_gradient opaque",
-        (true, false) => "brush_linear_gradient alpha nodepth",
-        (true, true) => "brush_linear_gradient alpha",
+    let kind_label = match kind {
+        GradientKind::Linear => "linear",
+        GradientKind::Radial => "radial",
+        GradientKind::Conic => "conic",
     };
+    let blend_label = if alpha_blend { "alpha" } else { "opaque" };
+    let depth_label = if depth_format.is_some() { "" } else { " nodepth" };
+    let label = format!("brush_gradient {} {}{}", kind_label, blend_label, depth_label);
+
+    let constants: &[(&str, f64)] = &[("GRADIENT_KIND", kind.as_u32() as f64)];
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
+        label: Some(&label),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &module,
             entry_point: Some("vs_main"),
             buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                zero_initialize_workgroup_memory: false,
+            },
         },
         fragment: Some(wgpu::FragmentState {
             module: &module,
             entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants,
+                zero_initialize_workgroup_memory: false,
+            },
             targets: &[Some(wgpu::ColorTargetState {
                 format: target_format,
                 blend,
@@ -269,171 +298,10 @@ pub fn build_brush_linear_gradient(
         cache: None,
     });
 
-    BrushLinearGradientPipeline { pipeline, layout }
+    BrushGradientPipeline { pipeline, layout }
 }
 
-/// Phase 8B 2-stop analytic radial-gradient pipeline. Same depth/blend
-/// shape and bind-group layout as `BrushLinearGradientPipeline`; only
-/// the WGSL module differs.
-#[derive(Clone)]
-pub struct BrushRadialGradientPipeline {
-    pub pipeline: wgpu::RenderPipeline,
-    pub layout: wgpu::BindGroupLayout,
-}
 
-/// Build the `brush_radial_gradient` pipeline.
-pub fn build_brush_radial_gradient(
-    device: &wgpu::Device,
-    target_format: wgpu::TextureFormat,
-    depth_format: Option<wgpu::TextureFormat>,
-    alpha_blend: bool,
-) -> BrushRadialGradientPipeline {
-    let layout = crate::binding::brush_gradient_layout(device);
-
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("brush_radial_gradient"),
-        source: wgpu::ShaderSource::Wgsl(crate::shader::BRUSH_RADIAL_GRADIENT_WGSL.into()),
-    });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("brush_radial_gradient pipeline layout"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-
-    let blend = if alpha_blend {
-        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)
-    } else {
-        None
-    };
-
-    let depth_stencil = depth_format.map(|fmt| wgpu::DepthStencilState {
-        format: fmt,
-        depth_write_enabled: Some(!alpha_blend),
-        depth_compare: Some(wgpu::CompareFunction::Less),
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
-    });
-
-    let label = match (alpha_blend, depth_format.is_some()) {
-        (false, false) => "brush_radial_gradient opaque nodepth",
-        (false, true) => "brush_radial_gradient opaque",
-        (true, false) => "brush_radial_gradient alpha nodepth",
-        (true, true) => "brush_radial_gradient alpha",
-    };
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: target_format,
-                blend,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            ..Default::default()
-        },
-        depth_stencil,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
-
-    BrushRadialGradientPipeline { pipeline, layout }
-}
-
-/// Phase 8C 2-stop analytic conic-gradient pipeline. Same depth/blend
-/// shape and bind-group layout as the linear and radial pipelines.
-#[derive(Clone)]
-pub struct BrushConicGradientPipeline {
-    pub pipeline: wgpu::RenderPipeline,
-    pub layout: wgpu::BindGroupLayout,
-}
-
-/// Build the `brush_conic_gradient` pipeline.
-pub fn build_brush_conic_gradient(
-    device: &wgpu::Device,
-    target_format: wgpu::TextureFormat,
-    depth_format: Option<wgpu::TextureFormat>,
-    alpha_blend: bool,
-) -> BrushConicGradientPipeline {
-    let layout = crate::binding::brush_gradient_layout(device);
-
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("brush_conic_gradient"),
-        source: wgpu::ShaderSource::Wgsl(crate::shader::BRUSH_CONIC_GRADIENT_WGSL.into()),
-    });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("brush_conic_gradient pipeline layout"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-
-    let blend = if alpha_blend {
-        Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)
-    } else {
-        None
-    };
-
-    let depth_stencil = depth_format.map(|fmt| wgpu::DepthStencilState {
-        format: fmt,
-        depth_write_enabled: Some(!alpha_blend),
-        depth_compare: Some(wgpu::CompareFunction::Less),
-        stencil: wgpu::StencilState::default(),
-        bias: wgpu::DepthBiasState::default(),
-    });
-
-    let label = match (alpha_blend, depth_format.is_some()) {
-        (false, false) => "brush_conic_gradient opaque nodepth",
-        (false, true) => "brush_conic_gradient opaque",
-        (true, false) => "brush_conic_gradient alpha nodepth",
-        (true, true) => "brush_conic_gradient alpha",
-    };
-
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some(label),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &module,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &module,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: target_format,
-                blend,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            ..Default::default()
-        },
-        depth_stencil,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
-
-    BrushConicGradientPipeline { pipeline, layout }
-}
 
 /// Phase 6 separable-Gaussian-blur pipeline. No depth stencil — blur
 /// targets are off-screen intermediates that don't participate in the

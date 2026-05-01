@@ -18,11 +18,9 @@ use crate::core::{self, REQUIRED_FEATURES, WgpuHandles};
 use crate::frame;
 use crate::pass::{self, DrawIntent, RenderPassTarget};
 use crate::pipeline::{
-    BrushBlurPipeline, BrushConicGradientPipeline, BrushImagePipeline,
-    BrushLinearGradientPipeline, BrushRadialGradientPipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, build_brush_blur, build_brush_conic_gradient, build_brush_image,
-    build_brush_linear_gradient, build_brush_radial_gradient, build_brush_rect_solid,
-    build_brush_solid_specialized,
+    BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
+    BrushSolidPipeline, GradientKind, build_brush_blur, build_brush_gradient, build_brush_image,
+    build_brush_rect_solid, build_brush_solid_specialized,
 };
 use crate::readback;
 use crate::texture::{TextureDesc, WgpuTexture};
@@ -48,12 +46,8 @@ pub struct WgpuDevice {
     brush_image: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool), BrushImagePipeline>>,
     // Cache key: target_format
     brush_blur: Mutex<HashMap<wgpu::TextureFormat, BrushBlurPipeline>>,
-    // Cache key: (color_format, depth_format, alpha_blend)
-    brush_linear_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool), BrushLinearGradientPipeline>>,
-    // Cache key: (color_format, depth_format, alpha_blend)
-    brush_radial_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool), BrushRadialGradientPipeline>>,
-    // Cache key: (color_format, depth_format, alpha_blend)
-    brush_conic_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool), BrushConicGradientPipeline>>,
+    // Cache key: (color_format, depth_format, alpha_blend, kind) — Phase 8D
+    brush_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool, GradientKind), BrushGradientPipeline>>,
 }
 
 impl WgpuDevice {
@@ -80,9 +74,7 @@ impl WgpuDevice {
             brush_rect_solid: Mutex::new(HashMap::new()),
             brush_image: Mutex::new(HashMap::new()),
             brush_blur: Mutex::new(HashMap::new()),
-            brush_linear_gradient: Mutex::new(HashMap::new()),
-            brush_radial_gradient: Mutex::new(HashMap::new()),
-            brush_conic_gradient: Mutex::new(HashMap::new()),
+            brush_gradient: Mutex::new(HashMap::new()),
         })
     }
 
@@ -96,9 +88,7 @@ impl WgpuDevice {
             brush_rect_solid: Mutex::new(HashMap::new()),
             brush_image: Mutex::new(HashMap::new()),
             brush_blur: Mutex::new(HashMap::new()),
-            brush_linear_gradient: Mutex::new(HashMap::new()),
-            brush_radial_gradient: Mutex::new(HashMap::new()),
-            brush_conic_gradient: Mutex::new(HashMap::new()),
+            brush_gradient: Mutex::new(HashMap::new()),
         })
     }
 
@@ -160,98 +150,41 @@ impl WgpuDevice {
         self.ensure_brush_image_variant(color_format, Some(depth_format), true)
     }
 
-    /// Opaque `brush_linear_gradient` pipeline (Phase 8A): depth write ON,
-    /// compare LESS, no blend.
-    pub fn ensure_brush_linear_gradient_opaque(
+    /// Opaque `brush_gradient` pipeline (Phase 8D) for the given
+    /// gradient kind: depth write ON, compare LESS, no blend.
+    pub fn ensure_brush_gradient_opaque(
         &self,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
-    ) -> BrushLinearGradientPipeline {
-        self.ensure_brush_linear_gradient_variant(color_format, Some(depth_format), false)
+        kind: GradientKind,
+    ) -> BrushGradientPipeline {
+        self.ensure_brush_gradient_variant(color_format, Some(depth_format), false, kind)
     }
 
-    /// Alpha `brush_linear_gradient` pipeline (Phase 8A): depth write OFF,
-    /// compare LESS, premultiplied-alpha blend.
-    pub fn ensure_brush_linear_gradient_alpha(
+    /// Alpha `brush_gradient` pipeline (Phase 8D) for the given gradient
+    /// kind: depth write OFF, compare LESS, premultiplied-alpha blend.
+    pub fn ensure_brush_gradient_alpha(
         &self,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
-    ) -> BrushLinearGradientPipeline {
-        self.ensure_brush_linear_gradient_variant(color_format, Some(depth_format), true)
+        kind: GradientKind,
+    ) -> BrushGradientPipeline {
+        self.ensure_brush_gradient_variant(color_format, Some(depth_format), true, kind)
     }
 
-    fn ensure_brush_linear_gradient_variant(
+    fn ensure_brush_gradient_variant(
         &self,
         color_format: wgpu::TextureFormat,
         depth_format: Option<wgpu::TextureFormat>,
         alpha_blend: bool,
-    ) -> BrushLinearGradientPipeline {
-        let mut cache = self.brush_linear_gradient.lock().expect("brush_linear_gradient lock");
+        kind: GradientKind,
+    ) -> BrushGradientPipeline {
+        let mut cache = self.brush_gradient.lock().expect("brush_gradient lock");
         cache
-            .entry((color_format, depth_format, alpha_blend))
-            .or_insert_with(|| build_brush_linear_gradient(&self.core.device, color_format, depth_format, alpha_blend))
-            .clone()
-    }
-
-    /// Opaque `brush_radial_gradient` pipeline (Phase 8B).
-    pub fn ensure_brush_radial_gradient_opaque(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> BrushRadialGradientPipeline {
-        self.ensure_brush_radial_gradient_variant(color_format, Some(depth_format), false)
-    }
-
-    /// Alpha `brush_radial_gradient` pipeline (Phase 8B).
-    pub fn ensure_brush_radial_gradient_alpha(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> BrushRadialGradientPipeline {
-        self.ensure_brush_radial_gradient_variant(color_format, Some(depth_format), true)
-    }
-
-    fn ensure_brush_radial_gradient_variant(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: Option<wgpu::TextureFormat>,
-        alpha_blend: bool,
-    ) -> BrushRadialGradientPipeline {
-        let mut cache = self.brush_radial_gradient.lock().expect("brush_radial_gradient lock");
-        cache
-            .entry((color_format, depth_format, alpha_blend))
-            .or_insert_with(|| build_brush_radial_gradient(&self.core.device, color_format, depth_format, alpha_blend))
-            .clone()
-    }
-
-    /// Opaque `brush_conic_gradient` pipeline (Phase 8C).
-    pub fn ensure_brush_conic_gradient_opaque(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> BrushConicGradientPipeline {
-        self.ensure_brush_conic_gradient_variant(color_format, Some(depth_format), false)
-    }
-
-    /// Alpha `brush_conic_gradient` pipeline (Phase 8C).
-    pub fn ensure_brush_conic_gradient_alpha(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> BrushConicGradientPipeline {
-        self.ensure_brush_conic_gradient_variant(color_format, Some(depth_format), true)
-    }
-
-    fn ensure_brush_conic_gradient_variant(
-        &self,
-        color_format: wgpu::TextureFormat,
-        depth_format: Option<wgpu::TextureFormat>,
-        alpha_blend: bool,
-    ) -> BrushConicGradientPipeline {
-        let mut cache = self.brush_conic_gradient.lock().expect("brush_conic_gradient lock");
-        cache
-            .entry((color_format, depth_format, alpha_blend))
-            .or_insert_with(|| build_brush_conic_gradient(&self.core.device, color_format, depth_format, alpha_blend))
+            .entry((color_format, depth_format, alpha_blend, kind))
+            .or_insert_with(|| {
+                build_brush_gradient(&self.core.device, color_format, depth_format, alpha_blend, kind)
+            })
             .clone()
     }
 

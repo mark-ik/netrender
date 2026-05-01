@@ -22,23 +22,7 @@ pub(crate) const BRUSH_IMAGE_WGSL: &str = include_str!("shaders/brush_image.wgsl
 /// 5-tap kernel along `params.step`. Call H then V for a full 2-D blur.
 pub(crate) const BRUSH_BLUR_WGSL: &str = include_str!("shaders/brush_blur.wgsl");
 
-/// Phase 8A 2-stop analytic linear gradient. Same bind-group shape as
-/// `brush_rect_solid`; instance struct adds two endpoints and a second
-/// color for a 96-byte stride.
-pub(crate) const BRUSH_LINEAR_GRADIENT_WGSL: &str =
-    include_str!("shaders/brush_linear_gradient.wgsl");
-
-/// Phase 8B 2-stop analytic radial gradient. Identical bind-group shape
-/// and 96-byte instance stride as `brush_linear_gradient`; the
-/// 16-byte `params` slot encodes (center.xy, radii.xy) instead of
-/// linear's (start.xy, end.xy), and the fragment shader computes
-/// `t = length((pixel - center) / radii)` per fragment.
-pub(crate) const BRUSH_RADIAL_GRADIENT_WGSL: &str =
-    include_str!("shaders/brush_radial_gradient.wgsl");
-
-/// Phase 8C 2-stop analytic conic gradient. Same shape as the linear
-/// and radial families; `params` encodes (center.xy, start_angle, _pad)
-/// and the fragment shader computes `t = fract((atan2(dy, dx) -
-/// start_angle) / 2π)`.
-pub(crate) const BRUSH_CONIC_GRADIENT_WGSL: &str =
-    include_str!("shaders/brush_conic_gradient.wgsl");
+/// Phase 8D unified analytic gradient. One shader specializes into
+/// linear / radial / conic via the `GRADIENT_KIND` override constant;
+/// N-stop ramps live in a per-frame stops storage buffer.
+pub(crate) const BRUSH_GRADIENT_WGSL: &str = include_str!("shaders/brush_gradient.wgsl");
