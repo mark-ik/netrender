@@ -325,14 +325,24 @@ Done when:
      correctly excluded from any wgpu use. No action needed; document
      that the wgpu device skips `_TEXTURE_RECT` variants.
    - 75 stages fail on `naga: InvalidId(N)` — naga's SPIR-V parser
-     rejecting constructs in our corpus. Inspecting the partial
-     `bindings.json` shows that some multi-sampler shaders also exhibit
-     all-bindings-at-0, suggesting glslang's `set_auto_bind_uniforms`
-     isn't distinguishing unused samplers in our `gen_spirv` invocation.
-     Investigate: try `set_auto_combined_image_sampler`, explicit
-     binding bases per sampler unit, or upgrading naga. Tracks under P7
-     (shader-by-shader expansion) — fix is needed before pipelines can
-     be built for affected shaders.
+     rejecting constructs in our corpus. Pattern: shaders that *use*
+     samplers (call `texture(...)`) fail; shaders that only *declare*
+     samplers but don't sample them (e.g. `_DEBUG_OVERDRAW` variants,
+     which output a debug color) reflect fine. Suggests the issue is in
+     OpSampledImage / texture-sampling instruction parsing, not in the
+     resource declarations themselves.
+
+   **Negative result tried (2026-05-01)**: setting
+   `opts.set_auto_combined_image_sampler(true)` in `gen_spirv.rs` had
+   zero effect on the SPIR-V output (byte-identical). When the GLSL
+   already uses combined `sampler2D` types, glslang's Vulkan target
+   produces combined-sampler SPIR-V regardless of this option — so the
+   option only matters for HLSL or for GLSL using separate
+   `texture2D`/`sampler` declarations. Real fix is elsewhere: try
+   upgrading naga (26.0 → newer), inspect actual SPIR-V via spirv-dis to
+   identify the missing ID, or use `Features::SPIRV_SHADER_PASSTHROUGH`
+   at runtime to bypass naga validation (loses auto-derive but the
+   oracle still serves as build-time verifier). Tracks under P7.
 
 7. **`set_auto_bind_uniforms` may not be assigning distinct bindings to
    all sampler uniforms.** Suspected by inspection of `bindings.json` —
