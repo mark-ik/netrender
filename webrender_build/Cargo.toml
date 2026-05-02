@@ -21,7 +21,7 @@ lazy_static = "1"
 shaderc = { version = "0.8", optional = true }
 serde = { optional = true, version = "1.0", features = ["serde_derive"] }
 serde_json = { version = "1", optional = true }
-naga = { version = "27.0", optional = true, features = ["spv-in"] }
+naga = { version = "29.0", optional = true, features = ["spv-in"] }
 
 [[bin]]
 name = "gen_spirv"

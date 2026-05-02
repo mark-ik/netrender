@@ -46,7 +46,7 @@ fn ps_clear_spv(stage: &str) -> Vec<u8> {
 /// Constructs a `WgpuDevice` from the default-backend adapter, or returns
 /// `None` if no adapter is available (headless CI without GPU).
 fn try_create_device() -> Option<WgpuDevice> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::default(),
         compatible_surface: None,
@@ -127,7 +127,7 @@ fn ps_clear_creates_render_pipeline() {
             primitive: wgpu::PrimitiveState::default(),
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         },
     );
