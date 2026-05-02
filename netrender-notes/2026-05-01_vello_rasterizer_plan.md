@@ -11,11 +11,18 @@
   to wgpu 29.0.1 (workspace `Cargo.toml` line 137). wgpu downgrade
   not required.
 - **§11.2 alpha + color**: cleared with boundary work. `peniko::Color`
-  is **straight alpha** (vello premultiplies internally). Our scene
-  primitives are premultiplied → unpremultiply at the vello-scene
-  encoder. Gradient interpolation defaults to **sRGB-encoded**;
-  explicit `Gradient::with_interpolation_cs(LinearSrgb)` for linear
-  interp.
+  is **straight alpha** at vello's input boundary; vello premultiplies
+  internally for blend math; **vello unpremultiplies before storage**
+  (verified via Phase 1' p1prime_02 — `fine.wgsl:1390-1395`). Our
+  scene primitives are premultiplied → unpremultiply at the vello-
+  scene encoder. Storage holds straight-alpha sRGB-encoded; the
+  compositor sample-shader must premultiply after the sRGB→linear
+  decode. Gradient interpolation: `peniko::Gradient.interpolation_cs`
+  defaults to `Srgb` and the **GPU compute path ignores the field
+  entirely** (verified via Phase 1' p1prime_03 —
+  `vello_encoding/src/ramp_cache.rs:86,97` hard-codes
+  `to_alpha_color::<Srgb>()`). Linear-light gradient interpolation
+  is not reachable on mainline vello today.
 - **§11.3 scene/encoder model**: VERIFIED. `Renderer::render_to_texture`
   creates+submits its own `wgpu::CommandEncoder` per call; no
   encoder sharing; no multi-region-of-one-target API. `low_level`
@@ -288,26 +295,49 @@ vscene.fill(Fill::NonZero, aff, &g, None, &shape);
 N-stop is native — Phase 8D's per-instance `stops_offset` /
 `stops_count` storage-buffer plumbing disappears.
 
-**Color-space caveat (verified §11.2).** `peniko::Gradient`
-defaults to **sRGB-encoded interpolation**
-(`gradient.rs:21 DEFAULT_GRADIENT_COLOR_SPACE = ColorSpaceTag::Srgb`).
-Phase 8 receipts blended in straight-RGB component space; matching
-that requires explicit `Gradient::with_interpolation_cs(LinearSrgb)`
-on every gradient (or `with_interpolation_cs(Oklab)` for perceptual
-midtones). The encoder picks per-gradient based on what the parent
-plan's color contract chooses. For now: linear-sRGB to keep stop
-math identical to Phase 8 batched. Alpha-interpolation defaults to
-`Premultiplied` (the only mode vello currently supports).
+**Color-space caveat (verified §11.2 + Phase 1' p1prime_03).**
+`peniko::Gradient` defaults to sRGB-encoded interpolation
+(`gradient.rs:21 DEFAULT_GRADIENT_COLOR_SPACE = ColorSpaceTag::Srgb`),
+**and the GPU compute path ignores the override entirely.**
+`vello_encoding/src/encoding.rs:289-339` reads only `gradient.kind`,
+`stops`, `extend`, and `alpha` from the brush —
+`gradient.interpolation_cs` is never consulted. The ramp builder at
+`vello_encoding/src/ramp_cache.rs:84-111` hard-codes
+`stops[i].color.to_alpha_color::<Srgb>()` before the per-channel
+`lerp`. `interpolation_cs` is honored only by the `vello_hybrid`
+(sparse-strips / CPU) path, which we are not using.
 
-**Alpha boundary (verified §11.2).** `peniko::Color` is straight
-alpha; vello premultiplies internally (`vello_encoding/src/draw.rs:79`
-calls `convert::<Srgb>().premultiply()`). Our `SceneGradient.stops`
-hold premultiplied colors. The encoder MUST unpremultiply before
-constructing `peniko::Color`:
-`Color::from_rgba_f32(r/a, g/a, b/a, a)` for `a > 0`, with the
-`a == 0` case passing zeros straight through. (Same boundary
-conversion applies in §3.1 for solid rect colors and §3.2 for image
-tints.)
+**Implication:** Phase 8 receipts blended in straight-RGB component
+space (i.e. sRGB-encoded), so the GPU compute behavior matches Phase
+8 by accident. We can drop the per-gradient
+`with_interpolation_cs(LinearSrgb)` plumbing — it would be a no-op.
+Linear-light gradients stay out of reach until upstream wires
+`interpolation_cs` through; tracked as test
+`p1prime_03_gradient_default_is_srgb_encoded`, which inverts to a
+known-failure if upstream fixes this.
+
+**Alpha boundary (verified §11.2 + Phase 1' p1prime_02).**
+`peniko::Color` is straight-alpha at the input boundary; vello
+premultiplies internally for blend math; **vello unpremultiplies
+again before storage**
+(`vello_shaders/shader/fine.wgsl:1390-1395`: `fg.rgb * a_inv` then
+`textureStore`). The storage texture therefore holds straight-alpha
+sRGB-encoded values — confirmed by p1prime_02 reading
+`(255, 0, 0, 128)` for a half-opaque red fill, not the
+`(128, 0, 0, 128)` the §3.3-as-drafted assumed.
+
+This affects **two** boundaries:
+
+1. Encoder input: convert our premultiplied `SceneGradient.stops`
+   (and rect colors, image tints) to peniko's straight-alpha
+   convention via `Color::from_rgba_f32(r/a, g/a, b/a, a)` for
+   `a > 0`. Unchanged from the original plan.
+2. Compositor sample: when downstream shaders sample vello's output
+   through an `Rgba8UnormSrgb` view, hardware sRGB→linear decodes
+   RGB but leaves alpha untouched, so the sampled value is
+   straight-alpha linear. The compositor must premultiply before
+   blending. **This was wrong in §6.1 as-drafted** — see corrected
+   §6.1 below.
 
 ### 3.4 Clip rectangles
 
@@ -492,13 +522,16 @@ useful contract: **vello blends in sRGB-encoded space, the sample
 boundary recovers linear-light, downstream composition can work in
 linear if it wants, framebuffer encodes back to sRGB.**
 
-### 6.1 The view-format chain (verified §11.5-followup spike)
+### 6.1 The view-format chain (verified §11.5-followup spike + Phase 1' p1prime_02)
 
-Vello writes gamma-encoded sRGB values into an `Rgba8Unorm` storage
-texture. We sample that texture downstream through an
-`Rgba8UnormSrgb` view-format, which gets us hardware sRGB→linear
-decode at sample time — the **exact inverse** of vello's "treat
-sRGB-encoded bytes as if they were linear" internal pretense. So:
+Vello writes **straight-alpha** sRGB-encoded values into an `Rgba8Unorm`
+storage texture. (`fine.wgsl:1390-1395` premultiplies for blend math
+internally, then divides RGB by alpha and stores.) We sample that
+texture downstream through an `Rgba8UnormSrgb` view-format, which
+gets us hardware sRGB→linear decode of the RGB channels at sample
+time — the **exact inverse** of vello's "treat sRGB-encoded bytes as
+if they were linear" internal pretense. Alpha is unaffected by the
+sRGB decode path; it stays straight. So:
 
 - **Tile-Scene render target:** `Rgba8Unorm`, `view_formats:
   &[Rgba8UnormSrgb]`, usage `STORAGE_BINDING | TEXTURE_BINDING |
@@ -506,12 +539,22 @@ sRGB-encoded bytes as if they were linear" internal pretense. So:
   `usage: TEXTURE_BINDING` (no STORAGE_BINDING) — required by per-
   view usage rules added to WebGPU spec in late 2024 / Chrome 132.
 - **Storage view (vello writes here):** native `Rgba8Unorm`. Vello's
-  fine compute pass uses this.
+  fine compute pass uses this. Storage holds straight-alpha
+  sRGB-encoded.
 - **Sample view (downstream samples here):** `Rgba8UnormSrgb`.
-  Hardware decode on read; samples arrive in linear-light.
-- **Composite to framebuffer:** linear-light pixels blend cleanly;
-  framebuffer is `Rgba8UnormSrgb` so write encodes back to sRGB on
-  store.
+  Hardware decodes RGB to linear; alpha passes through untouched.
+  Samples arrive as **straight-alpha linear-light** (RGB linear,
+  α straight).
+- **Compositor premultiply.** Because samples are straight-alpha, the
+  composite shader (the netrender pipeline that consumes vello's
+  output as an image source) MUST multiply RGB by alpha before
+  participating in over-blend math: `rgb_premul = rgb_linear * a`.
+  This is one ALU per fragment and is the same pattern the existing
+  `brush_image` opaque/alpha-blend split already handles for
+  CPU-uploaded straight-alpha textures.
+- **Composite to framebuffer:** linear-light premultiplied pixels
+  blend cleanly under standard `One, OneMinusSrcAlpha`; framebuffer
+  is `Rgba8UnormSrgb` so write encodes back to sRGB on store.
 
 Cited references: `wgpu-types-29.0.1/src/texture/format.rs:1569` for
 `remove_srgb_suffix` validation; `vello/src/lib.rs:463` for
@@ -533,10 +576,10 @@ fallback (~8 ALU ops per fragment).
   (what the embedder sees) is unchanged.
 - **Phase 8/9 receipts re-green with vello-encoded gradients.** Stop
   values that were previously lerped in straight-RGB component space
-  now go through `Gradient::with_interpolation_cs(LinearSrgb)` to
-  match (or `Srgb` if matching vello's default sRGB-encoded
-  interp). Per-receipt decision; tolerance ±2/255 was already in
-  place.
+  match vello's default `Srgb` interpolation by accident (the GPU
+  compute path ignores `interpolation_cs` per §3.3 / p1prime_03), so
+  no per-gradient color-space override is needed. Tolerance ±2/255
+  was already in place.
 - **`Rgba16Float` linear intermediates: not on the table.** If a
   future receipt absolutely requires HDR-precision linear, the path
   is a separate non-vello compute pass that copies vello output
@@ -765,6 +808,39 @@ to resolve, but neither is plan-blocking:
 
 Both fall out naturally in Phase 1' first-light — schedule there,
 not as separate work.
+
+### 11.7 Phase 1' first-light findings (2026-05-02) — **CLEARED**
+
+`netrender/tests/p1prime_vello_first_light.rs` runs three probes
+against a real `boot()` device + `Renderer::render_to_texture`:
+
+1. **`p1prime_01_vello_renders_red_rect`** — opaque red round-trips
+   to `(255, 0, 0, 255)` ✓. Confirms vello compiles, links, boots on
+   our device, and writes through the `Rgba8Unorm` storage with
+   `Rgba8UnormSrgb` view-format slot reserved without producing
+   adapter-side validation errors. Quantization round-trip clears.
+2. **`p1prime_02_alpha_storage_is_straight`** — half-opaque red
+   `(255, 0, 0, 128)` lands in storage as `(255, 0, 0, 128)` ✓.
+   **Plan correction:** vello stores **straight-alpha**, not
+   premultiplied. Internal blend math is premultiplied
+   (`fine.wgsl` blend stages), but the output stage at
+   `vello_shaders/shader/fine.wgsl:1390-1395` divides by alpha
+   before `textureStore`. §6.1 updated: compositor must
+   premultiply at sample time.
+3. **`p1prime_03_gradient_default_is_srgb_encoded`** — red→blue
+   linear gradient midpoint is `(128, 0, 128)` for both default and
+   `with_interpolation_cs(LinearSrgb)` ✓. **Plan correction:** the
+   GPU compute path ignores `interpolation_cs` entirely.
+   `vello_encoding/src/encoding.rs:289-339` doesn't read it;
+   `vello_encoding/src/ramp_cache.rs:84-111` hard-codes
+   `to_alpha_color::<Srgb>()` for every stop. Linear-light
+   gradients are unreachable until upstream wires it through.
+   §3.3 updated. Test inverts to known-failure if upstream fixes
+   this.
+
+Both 11.6 items resolved as a side effect: no Vulkan validation
+errors observed on the dev box (DX12-backed wgpu adapter), and
+quantization round-trip is exact for primary opaque colors.
 
 ## 12. Phase mapping under this plan
 
