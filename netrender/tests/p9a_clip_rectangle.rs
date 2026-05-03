@@ -30,7 +30,6 @@ use common::clip_rectangle_callback;
 
 const W: u32 = 64;
 const H: u32 = 64;
-const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -77,16 +76,6 @@ fn render_to_bytes(renderer: &Renderer, scene: &Scene) -> Vec<u8> {
 fn pixel(bytes: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     let i = ((y * width + x) * 4) as usize;
     [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]
-}
-
-fn srgb_encode(linear: f32) -> u8 {
-    let l = linear.clamp(0.0, 1.0);
-    let v = if l <= 0.0031308 {
-        12.92 * l
-    } else {
-        1.055 * l.powf(1.0 / 2.4) - 0.055
-    };
-    (v * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 fn channel_diff(a: u8, b: u8) -> u8 {

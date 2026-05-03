@@ -33,7 +33,6 @@ use common::{blur_pass_callback, clip_rectangle_callback, make_bilinear_sampler}
 
 const W: u32 = 64;
 const H: u32 = 64;
-const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 fn make_renderer() -> Renderer {

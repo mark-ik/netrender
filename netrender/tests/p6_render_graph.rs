@@ -25,7 +25,6 @@ mod common;
 use common::{blur_pass_callback, make_bilinear_sampler};
 
 const DIM: u32 = 64;
-const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const BLUR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
