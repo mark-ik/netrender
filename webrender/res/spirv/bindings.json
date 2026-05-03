@@ -147,73 +147,73 @@
         "bindings": [
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -368,73 +368,73 @@
         "bindings": [
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -589,73 +589,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -810,73 +810,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -1031,73 +1031,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -1252,73 +1252,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -1473,73 +1473,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -1694,73 +1694,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -1915,73 +1915,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -2136,73 +2136,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -2357,73 +2357,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -2578,73 +2578,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -2799,73 +2799,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -3020,73 +3020,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -3241,73 +3241,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -3462,73 +3462,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -3683,73 +3683,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -3904,73 +3904,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -4089,37 +4089,37 @@
         "bindings": [
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -4238,37 +4238,37 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -4387,37 +4387,37 @@
         "bindings": [
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -4572,73 +4572,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -4793,73 +4793,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -5014,73 +5014,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -5176,37 +5176,37 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -5312,37 +5312,37 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -5448,37 +5448,37 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -5594,37 +5594,37 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -5804,73 +5804,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -6050,73 +6050,73 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -6625,37 +6625,37 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           }
@@ -6911,13 +6911,13 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           }
@@ -7036,61 +7036,61 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -7209,61 +7209,61 @@
         "bindings": [
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -7387,61 +7387,61 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -7565,61 +7565,61 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -7738,61 +7738,61 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -7911,61 +7911,61 @@
         "bindings": [
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           }
@@ -8120,73 +8120,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -8341,73 +8341,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -8562,73 +8562,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }
@@ -8783,73 +8783,73 @@
         "bindings": [
           {
             "name": "sClipMask_image",
-            "group": 0,
+            "group": 1,
             "binding": 0,
             "kind": "sampled_texture"
           },
           {
             "name": "sClipMask_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 1,
             "kind": "sampler"
           },
           {
             "name": "sColor0_image",
-            "group": 0,
+            "group": 1,
             "binding": 2,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor0_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 3,
             "kind": "sampler"
           },
           {
             "name": "sColor1_image",
-            "group": 0,
+            "group": 1,
             "binding": 4,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor1_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 5,
             "kind": "sampler"
           },
           {
             "name": "sColor2_image",
-            "group": 0,
+            "group": 1,
             "binding": 6,
             "kind": "sampled_texture"
           },
           {
             "name": "sColor2_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 7,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferF_image",
-            "group": 0,
+            "group": 1,
             "binding": 8,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferF_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 9,
             "kind": "sampler"
           },
           {
             "name": "sGpuBufferI_image",
-            "group": 0,
+            "group": 1,
             "binding": 10,
             "kind": "sampled_texture"
           },
           {
             "name": "sGpuBufferI_sampler",
-            "group": 0,
+            "group": 1,
             "binding": 11,
             "kind": "sampler"
           }

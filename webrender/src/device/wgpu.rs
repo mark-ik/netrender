@@ -138,11 +138,19 @@ impl WgpuDevice {
             instance_offset += attr.size_in_bytes() as u64;
         }
 
+        // wgpu requires vertex buffer stride aligned to VERTEX_ALIGNMENT
+        // (4 bytes). Round up — the GPU reads `array_stride` bytes per
+        // vertex regardless of attribute layout, so trailing padding is
+        // fine. Common case: aPosition u8norm count=2 = 2 bytes,
+        // padded to 4.
+        let vertex_stride = align_up(vertex_offset, wgpu::VERTEX_ALIGNMENT);
+        let instance_stride = align_up(instance_offset, wgpu::VERTEX_ALIGNMENT);
+
         WgpuVertexLayouts {
             vertex_attrs,
             instance_attrs,
-            vertex_stride: vertex_offset,
-            instance_stride: instance_offset,
+            vertex_stride,
+            instance_stride,
         }
     }
 
@@ -288,8 +296,9 @@ mod vertex_adapter_tests {
     fn ps_clear_layout_matches_oracle() {
         let layouts = WgpuDevice::descriptor_to_wgpu_layouts(&PS_CLEAR);
 
-        // Vertex stride: aPosition (U8Norm count 2) = 2 bytes.
-        assert_eq!(layouts.vertex_stride(), 2);
+        // Vertex stride: aPosition (U8Norm count 2) = 2 bytes; padded to
+        // 4 to satisfy wgpu's VERTEX_ALIGNMENT.
+        assert_eq!(layouts.vertex_stride(), 4);
         assert_eq!(layouts.vertex_attrs().len(), 1);
         assert_eq!(layouts.vertex_attrs()[0].format, wgpu::VertexFormat::Unorm8x2);
         assert_eq!(layouts.vertex_attrs()[0].offset, 0);
@@ -334,12 +343,46 @@ mod vertex_adapter_tests {
 
     #[test]
     fn stride_accumulates_offsets_correctly() {
-        // f32x2 (8) + f32 (4) + i32x4 (16) = 28 bytes total.
+        // f32x2 (8) + f32 (4) + i32x4 (16) = 28 bytes; aligned up to
+        // 28 (already a multiple of 4 — VERTEX_ALIGNMENT).
         let layouts = WgpuDevice::descriptor_to_wgpu_layouts(&STRIDE);
         assert_eq!(layouts.instance_stride(), 28);
         let offsets: Vec<u64> = layouts.instance_attrs().iter().map(|a| a.offset).collect();
         assert_eq!(offsets, vec![0, 8, 12]);
     }
+}
+
+/// Rounds `value` up to the nearest multiple of `align` (which must be
+/// a power of two). Used to satisfy wgpu's VERTEX_ALIGNMENT requirement
+/// for vertex buffer strides.
+fn align_up(value: u64, align: u64) -> u64 {
+    debug_assert!(align.is_power_of_two());
+    (value + align - 1) & !(align - 1)
+}
+
+/// Builds the SPIR-V artifact stem from a base shader name + features.
+/// Mirrors gen_spirv.rs's naming exactly: features are sorted, then
+/// underscore-joined onto the base. Empty feature list = bare base name.
+fn shader_stem(base: &str, features: &[&str]) -> String {
+    if features.is_empty() {
+        base.to_string()
+    } else {
+        let mut sorted: Vec<&str> = features.to_vec();
+        sorted.sort_unstable();
+        format!("{}_{}", base, sorted.join("_"))
+    }
+}
+
+/// Reads a committed `.spv` artifact for the given stem + stage.
+/// Path is `{webrender crate manifest dir}/res/spirv/{stem}.{stage}.spv`,
+/// which works for dev/test builds. Production deployments should plumb
+/// the bytes through include_bytes! or a build.rs-generated table.
+fn load_committed_spv(stem: &str, stage: &str) -> Result<Vec<u8>, std::io::Error> {
+    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("res");
+    path.push("spirv");
+    path.push(format!("{}.{}.spv", stem, stage));
+    std::fs::read(path)
 }
 
 /// Reinterprets a typed slice as bytes for queue.write_buffer/write_texture.
@@ -457,7 +500,34 @@ pub(crate) fn image_format_to_wgpu(fmt: ImageFormat) -> wgpu::TextureFormat {
 // Marker structs gain real fields as the trait method impls land. Distinct
 // types per associated type preserve the type-system contract.
 
-pub struct WgpuProgram;
+/// A wgpu-backed shader program.
+///
+/// Bundles vert + frag SPIR-V `ShaderModule`s plus the uniform buffer for
+/// the `WrLocals { uTransform }` UBO. The actual `wgpu::RenderPipeline`
+/// is built lazily by `link_program` once the `VertexDescriptor` is known
+/// (matches GL device's two-stage create + link pattern).
+///
+/// Fields are wrapped in `RefCell` so trait methods that take `&Program`
+/// (the GL contract) can mutate the cached pipeline. The trait's
+/// `&Self::Program` signature follows GL where mutation happened via
+/// global GL state; for wgpu we need interior mutability.
+pub struct WgpuProgram {
+    pub vert_module: wgpu::ShaderModule,
+    pub frag_module: wgpu::ShaderModule,
+    /// `None` until link_program builds it.
+    pub pipeline: RefCell<Option<wgpu::RenderPipeline>>,
+    /// Uniform buffer for WrLocals { mat4 uTransform; }. 64 bytes.
+    pub uniform_buffer: wgpu::Buffer,
+    /// Stem name (e.g. "ps_clear", "brush_solid_ALPHA_PASS") for diagnostics.
+    pub stem: String,
+}
+
+/// wgpu doesn't have per-uniform locations — bindings are at the bind-group
+/// level, by index not by name. This is a placeholder that satisfies the
+/// trait's associated type without carrying any meaningful state. Renderer
+/// code that actually needs to write a uniform value goes through
+/// `set_uniforms` (writes to the program's uniform buffer at offset 0)
+/// rather than via this location handle.
 pub struct WgpuUniformLocation;
 
 /// A wgpu-backed texture. Holds the GPU resource + a default view +
@@ -674,30 +744,124 @@ impl GpuShaders for WgpuDevice {
 
     fn create_program(
         &mut self,
-        _base_filename: &'static str,
-        _features: &[&'static str],
-    ) -> Result<Self::Program, ShaderError> { unimplemented!() }
+        base_filename: &'static str,
+        features: &[&'static str],
+    ) -> Result<Self::Program, ShaderError> {
+        let stem = shader_stem(base_filename, features);
+        let vert_bytes = load_committed_spv(&stem, "vert").map_err(|e| {
+            ShaderError::Compilation(stem.clone(), format!("load vert: {}", e))
+        })?;
+        let frag_bytes = load_committed_spv(&stem, "frag").map_err(|e| {
+            ShaderError::Compilation(stem.clone(), format!("load frag: {}", e))
+        })?;
+
+        let vert_module =
+            self.create_shader_module_from_spv(Some(&format!("{}.vert", stem)), &vert_bytes);
+        let frag_module =
+            self.create_shader_module_from_spv(Some(&format!("{}.frag", stem)), &frag_bytes);
+
+        // WrLocals UBO is mat4 (64 bytes). We size for that even when the
+        // particular shader doesn't sample uTransform (e.g. fragment-only
+        // pipelines) — wasted 64 bytes per program is negligible.
+        let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&format!("WgpuProgram[{}] uTransform UBO", stem)),
+            size: 64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Ok(WgpuProgram {
+            vert_module,
+            frag_module,
+            pipeline: RefCell::new(None),
+            uniform_buffer,
+            stem,
+        })
+    }
 
     fn create_program_linked(
         &mut self,
-        _base_filename: &'static str,
-        _features: &[&'static str],
-        _descriptor: &VertexDescriptor,
-    ) -> Result<Self::Program, ShaderError> { unimplemented!() }
+        base_filename: &'static str,
+        features: &[&'static str],
+        descriptor: &VertexDescriptor,
+    ) -> Result<Self::Program, ShaderError> {
+        let mut program = self.create_program(base_filename, features)?;
+        self.link_program(&mut program, descriptor)?;
+        Ok(program)
+    }
 
     fn link_program(
         &mut self,
-        _program: &mut Self::Program,
-        _descriptor: &VertexDescriptor,
-    ) -> Result<(), ShaderError> { unimplemented!() }
+        program: &mut Self::Program,
+        descriptor: &VertexDescriptor,
+    ) -> Result<(), ShaderError> {
+        // Build the pipeline using the descriptor's vertex layout.
+        // `layout: None` lets wgpu's internal naga auto-derive the
+        // PipelineLayout from the SPIR-V modules' bindings (verified
+        // working for the 97/125 reflectable stages by P2 + the
+        // bindings-distribution fix in #7).
+        let layouts = WgpuDevice::descriptor_to_wgpu_layouts(descriptor);
+        let buffers = layouts.buffers();
 
-    fn delete_program(&mut self, _program: Self::Program) { unimplemented!() }
+        // For programs that don't actually use vertex/instance buffers
+        // (rare; mostly the cs_* compute-style shaders), wgpu accepts
+        // empty layout arrays. Drop empty entries to avoid validation
+        // errors for shaders without any per-vertex inputs.
+        let nonempty: Vec<wgpu::VertexBufferLayout<'_>> = buffers
+            .iter()
+            .filter(|b| !b.attributes.is_empty())
+            .cloned()
+            .collect();
+
+        // Color target format: BGRA8 matches our preferred_color_formats().
+        // For render-target-cache textures using RGBA8, the renderer would
+        // need a per-target pipeline cache — defer that detail to P5+.
+        let pipeline = self.device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some(&format!("WgpuProgram[{}] pipeline", program.stem)),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &program.vert_module,
+                    entry_point: Some("main"),
+                    buffers: &nonempty,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &program.frag_module,
+                    entry_point: Some("main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Bgra8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        );
+        *program.pipeline.borrow_mut() = Some(pipeline);
+        Ok(())
+    }
+
+    fn delete_program(&mut self, _program: Self::Program) {
+        // Drop releases the modules + pipeline + uniform buffer.
+    }
 
     fn get_uniform_location(
         &self,
         _program: &Self::Program,
         _name: &str,
-    ) -> Self::UniformLocation { unimplemented!() }
+    ) -> Self::UniformLocation {
+        // wgpu has no name-based uniform location lookup; uniforms are
+        // bound by group/binding index. Return a placeholder; callers
+        // that store the result and pass it back to set_uniforms will
+        // get the WrLocals UBO write regardless of the name.
+        WgpuUniformLocation
+    }
 
     fn bind_shader_samplers<S>(
         &mut self,
@@ -706,7 +870,13 @@ impl GpuShaders for WgpuDevice {
     )
     where
         S: Into<TextureSlot> + Copy,
-    { unimplemented!() }
+    {
+        // GL: sets sampler uniform values at named locations to texture
+        // unit indices. In wgpu, sampler-to-binding mapping is baked
+        // into the pipeline layout (auto-derived from SPIR-V). The
+        // renderer's BindGroup construction picks up the correct
+        // bindings by index at draw time. No-op here.
+    }
 }
 
 impl GpuResources for WgpuDevice {

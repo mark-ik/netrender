@@ -187,7 +187,7 @@ pub use crate::internal_types::RenderTargetInfo;
 #[cfg(feature = "wgpu_backend")]
 pub use crate::device::WgpuDevice;
 #[cfg(feature = "wgpu_backend")]
-pub use crate::device::wgpu::{WgpuPbo, WgpuTexture, WgpuVbo};
+pub use crate::device::wgpu::{WgpuPbo, WgpuProgram, WgpuTexture, WgpuVbo};
 pub use crate::profiler::{ProfilerHooks, set_profiler_hooks};
 pub use crate::renderer::{
     CpuProfile, DebugFlags, GpuProfile, GraphicsApi,

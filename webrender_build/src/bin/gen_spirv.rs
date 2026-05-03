@@ -81,10 +81,21 @@ fn main() {
                 (&frag_glsl, ShaderKind::Fragment, "frag"),
             ] {
                 let filename = format!("{}.{}.spv", stem, ext);
+                // Per-stage DescriptorSet assignment: vert stage uses
+                // set 0, frag uses set 1. Prevents binding collisions
+                // when both stages declare different resources at the
+                // same binding number — wgpu requires layout consistency
+                // within a single descriptor set across stages of one
+                // pipeline.
+                let stage_set: u32 = match ext {
+                    "vert" => 0,
+                    "frag" => 1,
+                    _ => 0,
+                };
                 match compile(&compiler, glsl, kind, shader_name) {
                     Ok(spirv) => match split_combined_samplers(&spirv) {
                         Ok(split) => {
-                            let bound = assign_sequential_bindings(&split);
+                            let bound = assign_sequential_bindings(&split, stage_set);
                             let out_path = out_dir.join(&filename);
                             fs::write(&out_path, &bound).unwrap_or_else(|e| {
                                 panic!("write {}: {}", out_path.display(), e)
@@ -141,17 +152,28 @@ fn preprocess_for_vulkan(glsl: &str) -> String {
     )
 }
 
-/// Walks SPIR-V words and reassigns `OpDecorate <id> Binding <n>` literals
-/// so that each variable in each `DescriptorSet` gets a unique sequential
-/// binding number, in declaration-encounter order. Workaround for
-/// shaderc/glslang's auto_bind_uniforms not actually distributing bindings
-/// for our combined-sampler GLSL (verified empirically: with auto_bind on
-/// + per-kind binding bases set, all variables still came out at binding 0).
+/// Walks SPIR-V words and rewrites `OpDecorate <id> DescriptorSet <set>`
+/// to a fixed `stage_set` value, then reassigns `OpDecorate <id> Binding
+/// <n>` literals so each variable gets a unique sequential binding within
+/// that set, in declaration-encounter order.
 ///
-/// Pure SPIR-V byte transform — doesn't touch any other instruction. Runs
-/// after `--split-combined-image-sampler` so each split image+sampler pair
-/// gets its own distinct binding number.
-fn assign_sequential_bindings(spirv: &[u8]) -> Vec<u8> {
+/// Two reasons for the dual rewrite:
+///
+/// 1. shaderc/glslang's `set_auto_bind_uniforms` does not actually
+///    distribute bindings for our combined-sampler GLSL (verified
+///    empirically: per-kind `set_binding_base` had zero effect, all
+///    variables still came out at binding 0).
+/// 2. wgpu requires bind-group layouts to be consistent across stages of
+///    a single pipeline. If vert.spv and frag.spv both renumber bindings
+///    starting from 0 within set 0, they collide (e.g. vert binding 0 =
+///    UBO, frag binding 0 = sampled_texture). Putting each stage in its
+///    own descriptor set (vert→0, frag→1) avoids the collision: each
+///    stage's bindings are isolated.
+///
+/// Pure SPIR-V byte transform — doesn't touch any other instruction.
+/// Runs after `--split-combined-image-sampler` so each split image+sampler
+/// pair gets its own distinct binding number within the stage set.
+fn assign_sequential_bindings(spirv: &[u8], stage_set: u32) -> Vec<u8> {
     use std::collections::HashMap;
 
     let mut words: Vec<u32> = spirv
@@ -166,6 +188,7 @@ fn assign_sequential_bindings(spirv: &[u8]) -> Vec<u8> {
 
     let mut id_to_set: HashMap<u32, u32> = HashMap::new();
     let mut binding_decoration_indices: Vec<(usize, u32)> = Vec::new();
+    let mut set_decoration_indices: Vec<usize> = Vec::new();
 
     let mut idx = 5; // skip header
     while idx < words.len() {
@@ -181,6 +204,9 @@ fn assign_sequential_bindings(spirv: &[u8]) -> Vec<u8> {
             match decoration {
                 33 => binding_decoration_indices.push((idx, target)),
                 34 => {
+                    set_decoration_indices.push(idx);
+                    // Track the original set so later binding lookup works
+                    // (we'll rewrite to stage_set after).
                     id_to_set.insert(target, words[idx + 3]);
                 }
                 _ => {}
@@ -189,12 +215,20 @@ fn assign_sequential_bindings(spirv: &[u8]) -> Vec<u8> {
         idx += wc;
     }
 
-    let mut next_binding_per_set: HashMap<u32, u32> = HashMap::new();
-    for (word_idx, target_id) in binding_decoration_indices {
-        let set = *id_to_set.get(&target_id).unwrap_or(&0);
-        let next = next_binding_per_set.entry(set).or_insert(0);
-        words[word_idx + 3] = *next;
-        *next += 1;
+    // Rewrite all DescriptorSet decorations to stage_set.
+    for set_idx in &set_decoration_indices {
+        words[set_idx + 3] = stage_set;
+    }
+
+    // Reassign bindings per (original) set group, then place in stage_set.
+    // Since we're putting everything in stage_set, "per set" collapses to
+    // a single counter — but iterating in encounter order preserves the
+    // declaration-order assignment (matches GL device's expectation that
+    // first-declared resources get the lowest binding numbers).
+    let mut next_binding: u32 = 0;
+    for (word_idx, _target_id) in binding_decoration_indices {
+        words[word_idx + 3] = next_binding;
+        next_binding += 1;
     }
 
     let mut bytes = Vec::with_capacity(words.len() * 4);
