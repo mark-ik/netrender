@@ -12,15 +12,22 @@
 //! `tests/p2prime_vello_rects.rs`, `tests/p5prime_vello_image.rs`,
 //! and `tests/p8prime_vello_gradients.rs`.
 //!
-//! ## Image-tint scope (Phase 5a)
+//! ## Image-tint encoding (Phase 5a + 5b)
 //!
-//! `SceneImage.color` is a premultiplied RGBA tint. Phase 5a handles
-//! achromatic tints (`r == g == b == a` per the §3.2 plan: "(a, a,
-//! a, a) is an alpha multiplier") via `ImageBrush::with_alpha(a)`.
-//! Chromatic tints (the §3.2 plan's "Mix::Multiply layer" path —
-//! used by 9A's mask-as-tinted-image case) require an extra layer
-//! and land in a later sub-phase. Non-achromatic input panics with a
-//! TODO so callers don't get silently wrong colors.
+//! `SceneImage.color` is a premultiplied RGBA tint, decomposed into
+//! `alpha_factor = a` and `chromatic_factor = (r/a, g/a, b/a)`:
+//!
+//! - **Phase 5a — alpha factor.** Applied via
+//!   `ImageBrush::with_alpha(a)`. Sufficient for achromatic tints
+//!   (white-with-alpha, the tile-cache composite case).
+//! - **Phase 5b — chromatic factor.** When `chromatic_factor` is
+//!   not `(1, 1, 1)`, paint the alpha-modulated image and then
+//!   apply a `BlendMode::new(Mix::Multiply, Compose::SrcAtop)`
+//!   layer that fills the image rect with the chromatic factor as
+//!   a solid color (alpha 1.0). `SrcAtop` constrains the multiply
+//!   to where the image already painted, so transparent regions of
+//!   the image stay transparent. Used by 9A's mask-as-tinted-image
+//!   case and any drop-shadow style with a colored shadow.
 //!
 //! ## Boundary conventions (verified Phase 1' p1prime_02 / p1prime_03)
 //!
@@ -45,8 +52,8 @@ use std::sync::Arc;
 
 use vello::kurbo::{Affine, Point, Rect};
 use vello::peniko::{
-    self, Blob, Color, ColorStop, Fill, Gradient, ImageAlphaType, ImageBrush, ImageData,
-    ImageFormat,
+    self, BlendMode, Blob, Color, ColorStop, Compose, Fill, Gradient, ImageAlphaType, ImageBrush,
+    ImageData, ImageFormat, Mix,
 };
 
 use crate::scene::{
@@ -228,7 +235,7 @@ fn emit_image(
         .get(&image.key)
         .expect("scene_to_vello: SceneImage references unknown ImageKey");
 
-    let alpha = achromatic_tint_alpha(image.color);
+    let (alpha, chromatic) = split_tint(image.color);
     let brush = ImageBrush::new(img.clone()).with_alpha(alpha);
 
     let target = Rect::new(
@@ -250,13 +257,40 @@ fn emit_image(
         );
         vscene.push_layer(
             Fill::NonZero,
-            peniko::Mix::Normal,
+            Mix::Normal,
             1.0,
             Affine::IDENTITY,
             &clip,
         );
     }
-    vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
+
+    if let Some(chromatic_color) = chromatic {
+        // Wrap image + multiply step in a layer so the multiply
+        // composes with the *image*, not with anything painted
+        // before this primitive. SrcAtop on the inner Multiply
+        // layer keeps transparent regions of the image transparent.
+        vscene.push_layer(
+            Fill::NonZero,
+            Mix::Normal,
+            1.0,
+            Affine::IDENTITY,
+            &target,
+        );
+        vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
+        vscene.push_layer(
+            Fill::NonZero,
+            BlendMode::new(Mix::Multiply, Compose::SrcAtop),
+            1.0,
+            Affine::IDENTITY,
+            &target,
+        );
+        vscene.fill(Fill::NonZero, world, chromatic_color, None, &target);
+        vscene.pop_layer();
+        vscene.pop_layer();
+    } else {
+        vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
+    }
+
     if needs_clip {
         vscene.pop_layer();
     }
@@ -285,19 +319,35 @@ fn uv_to_target_affine(uv: [f32; 4], target: Rect, image_w: u32, image_h: u32) -
         * Affine::scale_non_uniform(sx, sy)
 }
 
-/// Extract the achromatic alpha multiplier from a premultiplied tint.
-/// Panics if the tint has chromatic content (R != G or G != B); those
-/// require a Mix::Multiply layer not yet implemented (§3.2 footnote).
-fn achromatic_tint_alpha(color: [f32; 4]) -> f32 {
+/// Decompose a premultiplied tint `[r, g, b, a]` into an alpha
+/// multiplier (applied to the image brush via `with_alpha`) and an
+/// optional chromatic factor (applied via a `Mix::Multiply` layer
+/// per §3.2). Returns `(a, None)` when the tint is achromatic
+/// (white-with-alpha — straight RGB equals 1).
+fn split_tint(color: [f32; 4]) -> (f32, Option<Color>) {
     let [r, g, b, a] = color;
-    let chromatic = (r - g).abs() > 1e-3 || (g - b).abs() > 1e-3 || (r - a).abs() > 1e-3;
-    assert!(
-        !chromatic,
-        "vello_rasterizer: chromatic image tints not yet supported (color = {:?}). \
-         §3.2 calls for a Mix::Multiply layer; land that before using non-achromatic tints.",
-        color
-    );
-    a.clamp(0.0, 1.0)
+    let a_clamped = a.clamp(0.0, 1.0);
+    if a_clamped <= 0.0 {
+        return (0.0, None);
+    }
+    // Premultiplied → straight: each channel divided by alpha.
+    let sr = (r / a_clamped).clamp(0.0, 1.0);
+    let sg = (g / a_clamped).clamp(0.0, 1.0);
+    let sb = (b / a_clamped).clamp(0.0, 1.0);
+    let achromatic = (sr - 1.0).abs() < 1e-3
+        && (sg - 1.0).abs() < 1e-3
+        && (sb - 1.0).abs() < 1e-3;
+    if achromatic {
+        (a_clamped, None)
+    } else {
+        let chromatic = Color::from_rgba8(
+            (sr * 255.0).round() as u8,
+            (sg * 255.0).round() as u8,
+            (sb * 255.0).round() as u8,
+            255,
+        );
+        (a_clamped, Some(chromatic))
+    }
 }
 
 fn transform_to_affine(t: &Transform) -> Affine {
