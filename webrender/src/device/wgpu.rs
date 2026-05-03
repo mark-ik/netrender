@@ -671,7 +671,43 @@ impl GpuResources for WgpuDevice {
 
     fn upload_texture<'a>(&mut self, _pbo_pool: &'a mut Self::UploadPboPool) -> Self::TextureUploader<'a> { unimplemented!() }
 
-    fn upload_texture_immediate<T: Texel>(&mut self, _texture: &Self::Texture, _pixels: &[T]) { unimplemented!() }
+    fn upload_texture_immediate<T: Texel>(&mut self, texture: &Self::Texture, pixels: &[T]) {
+        // Convert typed pixel slice to bytes. Texel guarantees Copy + Default;
+        // by trait contract, T's size matches texture.format.bytes_per_pixel.
+        let pixels_bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                pixels.as_ptr() as *const u8,
+                pixels.len() * std::mem::size_of::<T>(),
+            )
+        };
+
+        let width = texture.size.width.max(0) as u32;
+        let height = texture.size.height.max(0) as u32;
+        let bytes_per_pixel = texture.format.bytes_per_pixel() as u32;
+        let bytes_per_row = bytes_per_pixel * width;
+
+        // queue.write_texture handles copy-on-submit (next queue submission
+        // will include this upload); no explicit encoder needed.
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels_bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 
     fn map_pbo_for_readback<'a>(&'a mut self, _pbo: &'a Self::Pbo) -> Option<Self::BoundPbo<'a>> { unimplemented!() }
 

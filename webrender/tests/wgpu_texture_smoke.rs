@@ -99,6 +99,76 @@ fn render_target_flag_sets_attachment_usage() {
 }
 
 #[test]
+fn upload_texture_immediate_writes_pixels() {
+    // Verifies upload + readback roundtrip via wgpu's mapped buffer copy.
+    // Uses R8 since Texel is currently only impl'd for u8.
+    let Some(mut wgpu_device) = try_create_device() else {
+        eprintln!("skip: no wgpu adapter available");
+        return;
+    };
+
+    let tex = wgpu_device.create_texture(
+        api::ImageBufferKind::Texture2D,
+        ImageFormat::R8,
+        4,
+        2,
+        TextureFilter::Nearest,
+        None,
+    );
+    // 4x2 R8 = 8 bytes
+    let pixels: [u8; 8] = [0, 1, 2, 3, 10, 20, 30, 40];
+    wgpu_device.upload_texture_immediate(&tex, &pixels);
+
+    // Read back: copy texture to a buffer, map, compare. wgpu requires
+    // bytes_per_row aligned to COPY_BYTES_PER_ROW_ALIGNMENT (256) for
+    // texture-to-buffer copies, so we use a padded buffer.
+    let device = wgpu_device.device().clone();
+    let queue = wgpu_device.queue().clone();
+    let aligned_bpr = ((4 + 255) / 256) * 256; // 256 in our case
+    let buffer_size = (aligned_bpr * 2) as u64;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("readback encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &tex.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(aligned_bpr as u32),
+                rows_per_image: Some(2),
+            },
+        },
+        wgpu::Extent3d { width: 4, height: 2, depth_or_array_layers: 1 },
+    );
+    queue.submit([encoder.finish()]);
+
+    // Map and read.
+    let slice = readback.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None }).expect("poll");
+    let data = slice.get_mapped_range();
+    // Row 0 = first 4 bytes; row 1 starts at aligned_bpr offset.
+    assert_eq!(&data[0..4], &[0u8, 1, 2, 3]);
+    assert_eq!(&data[aligned_bpr..aligned_bpr + 4], &[10u8, 20, 30, 40]);
+
+    drop(data);
+    readback.unmap();
+    wgpu_device.delete_texture(tex);
+}
+
+#[test]
 fn copy_texture_methods_do_not_panic() {
     let Some(mut wgpu_device) = try_create_device() else {
         eprintln!("skip: no wgpu adapter available");
