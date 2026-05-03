@@ -99,6 +99,38 @@ fn render_target_flag_sets_attachment_usage() {
 }
 
 #[test]
+fn copy_texture_methods_do_not_panic() {
+    let Some(mut wgpu_device) = try_create_device() else {
+        eprintln!("skip: no wgpu adapter available");
+        return;
+    };
+
+    let mut a = wgpu_device.create_texture(
+        api::ImageBufferKind::Texture2D,
+        ImageFormat::BGRA8,
+        64, 64,
+        TextureFilter::Linear,
+        None,
+    );
+    let b = wgpu_device.create_texture(
+        api::ImageBufferKind::Texture2D,
+        ImageFormat::BGRA8,
+        64, 64,
+        TextureFilter::Linear,
+        None,
+    );
+
+    wgpu_device.copy_entire_texture(&mut a, &b);
+    wgpu_device.copy_texture_sub_region(&b, 8, 8, &a, 0, 0, 16, 16);
+
+    // No assertion of pixel content — verifying that the encoder + submit
+    // path runs without panic is the smoke target. Real readback comes
+    // when upload_texture_immediate (P4d) lets us put known data in.
+    wgpu_device.delete_texture(a);
+    wgpu_device.delete_texture(b);
+}
+
+#[test]
 fn dimensions_clamp_to_max() {
     let Some(mut wgpu_device) = try_create_device() else {
         eprintln!("skip: no wgpu adapter available");

@@ -536,28 +536,94 @@ impl GpuResources for WgpuDevice {
         // any in-flight command buffers using it complete.
     }
 
-    fn copy_entire_texture(&mut self, _dst: &mut Self::Texture, _src: &Self::Texture) { unimplemented!() }
+    fn copy_entire_texture(&mut self, dst: &mut Self::Texture, src: &Self::Texture) {
+        // One-shot encoder per call — simple but inefficient. Batching into
+        // a per-frame encoder is a P5+ optimization.
+        let copy_w = src.size.width.min(dst.size.width).max(0) as u32;
+        let copy_h = src.size.height.min(dst.size.height).max(0) as u32;
+        if copy_w == 0 || copy_h == 0 {
+            return;
+        }
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("WgpuDevice::copy_entire_texture"),
+        });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &src.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &dst.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d { width: copy_w, height: copy_h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([encoder.finish()]);
+    }
 
     fn copy_texture_sub_region(
         &mut self,
-        _src_texture: &Self::Texture,
-        _src_x: usize,
-        _src_y: usize,
-        _dest_texture: &Self::Texture,
-        _dest_x: usize,
-        _dest_y: usize,
-        _width: usize,
-        _height: usize,
-    ) { unimplemented!() }
+        src_texture: &Self::Texture,
+        src_x: usize,
+        src_y: usize,
+        dest_texture: &Self::Texture,
+        dest_x: usize,
+        dest_y: usize,
+        width: usize,
+        height: usize,
+    ) {
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("WgpuDevice::copy_texture_sub_region"),
+        });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &src_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: src_x as u32, y: src_y as u32, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &dest_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: dest_x as u32, y: dest_y as u32, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: width as u32,
+                height: height as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.queue.submit([encoder.finish()]);
+    }
 
-    fn invalidate_render_target(&mut self, _texture: &Self::Texture) { unimplemented!() }
-    fn invalidate_depth_target(&mut self) { unimplemented!() }
+    fn invalidate_render_target(&mut self, _texture: &Self::Texture) {
+        // GL-only optimization hint (`glInvalidateFramebuffer`). wgpu's
+        // render pass `LoadOp::Clear`/`LoadOp::DontCare` semantics achieve
+        // the same effect at pass-start time; no per-texture action needed.
+    }
+
+    fn invalidate_depth_target(&mut self) {
+        // Same as invalidate_render_target — no-op in wgpu's model.
+    }
 
     fn reuse_render_target<T: Texel>(
         &mut self,
         _texture: &mut Self::Texture,
         _rt_info: crate::internal_types::RenderTargetInfo,
-    ) { unimplemented!() }
+    ) {
+        // GL: updates last-frame-used cache metadata + lazily attaches a
+        // depth render-buffer if `rt_info.has_depth` and texture lacks one.
+        // wgpu: textures are immutable in shape post-creation, so
+        // depth-attach mid-life would require recreation. For now: no-op;
+        // depth-bearing render targets must be created with the right
+        // attachment usage from `create_texture` time. Revisit when the
+        // renderer's render-target-cache machinery wires through this trait.
+    }
 
     fn create_fbo(&mut self) -> Self::RenderTargetHandle { unimplemented!() }
     fn create_fbo_for_external_texture(&mut self, _texture_id: u32) -> Self::RenderTargetHandle { unimplemented!() }
