@@ -84,14 +84,12 @@ fn main() {
                 match compile(&compiler, glsl, kind, shader_name) {
                     Ok(spirv) => match split_combined_samplers(&spirv) {
                         Ok(split) => {
+                            let bound = assign_sequential_bindings(&split);
                             let out_path = out_dir.join(&filename);
-                            fs::write(&out_path, &split).unwrap_or_else(|e| {
+                            fs::write(&out_path, &bound).unwrap_or_else(|e| {
                                 panic!("write {}: {}", out_path.display(), e)
                             });
-                            println!(
-                                "  ok  {} ({} bytes after split, was {})",
-                                filename, split.len(), spirv.len()
-                            );
+                            println!("  ok  {} ({} bytes)", filename, bound.len());
                             ok += 1;
                         }
                         Err(e) => {
@@ -141,6 +139,69 @@ fn preprocess_for_vulkan(glsl: &str) -> String {
         "uniform mat4 uTransform;",
         "uniform WrLocals { mat4 uTransform; };",
     )
+}
+
+/// Walks SPIR-V words and reassigns `OpDecorate <id> Binding <n>` literals
+/// so that each variable in each `DescriptorSet` gets a unique sequential
+/// binding number, in declaration-encounter order. Workaround for
+/// shaderc/glslang's auto_bind_uniforms not actually distributing bindings
+/// for our combined-sampler GLSL (verified empirically: with auto_bind on
+/// + per-kind binding bases set, all variables still came out at binding 0).
+///
+/// Pure SPIR-V byte transform — doesn't touch any other instruction. Runs
+/// after `--split-combined-image-sampler` so each split image+sampler pair
+/// gets its own distinct binding number.
+fn assign_sequential_bindings(spirv: &[u8]) -> Vec<u8> {
+    use std::collections::HashMap;
+
+    let mut words: Vec<u32> = spirv
+        .chunks_exact(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    // SPIR-V opcode 71 = OpDecorate. Decoration enum: 33 = Binding,
+    // 34 = DescriptorSet. OpDecorate format: header | target_id |
+    // decoration | [operands]. For Binding/DescriptorSet, operand[2]
+    // (== words[idx+3]) is the literal value.
+
+    let mut id_to_set: HashMap<u32, u32> = HashMap::new();
+    let mut binding_decoration_indices: Vec<(usize, u32)> = Vec::new();
+
+    let mut idx = 5; // skip header
+    while idx < words.len() {
+        let header = words[idx];
+        let opcode = header & 0xffff;
+        let wc = (header >> 16) as usize;
+        if wc == 0 {
+            break;
+        }
+        if opcode == 71 && wc >= 4 {
+            let target = words[idx + 1];
+            let decoration = words[idx + 2];
+            match decoration {
+                33 => binding_decoration_indices.push((idx, target)),
+                34 => {
+                    id_to_set.insert(target, words[idx + 3]);
+                }
+                _ => {}
+            }
+        }
+        idx += wc;
+    }
+
+    let mut next_binding_per_set: HashMap<u32, u32> = HashMap::new();
+    for (word_idx, target_id) in binding_decoration_indices {
+        let set = *id_to_set.get(&target_id).unwrap_or(&0);
+        let next = next_binding_per_set.entry(set).or_insert(0);
+        words[word_idx + 3] = *next;
+        *next += 1;
+    }
+
+    let mut bytes = Vec::with_capacity(words.len() * 4);
+    for w in words {
+        bytes.extend_from_slice(&w.to_le_bytes());
+    }
+    bytes
 }
 
 /// Runs `spirv-opt --split-combined-image-sampler` on the given SPIR-V bytes
@@ -199,6 +260,10 @@ fn compile(
 
     // WebRender's GLSL uses GL-style named uniform binding (no layout qualifiers).
     // Tell glslang to assign binding indices automatically when targeting Vulkan.
+    // Note: empirically this leaves all bindings at 0 for our combined-sampler
+    // GLSL — shaderc/glslang's auto-bind appears to no-op on combined samplers.
+    // We post-process via assign_sequential_bindings() below to actually
+    // distribute binding numbers.
     opts.set_auto_bind_uniforms(true);
 
     // WebRender's varyings and attributes have no explicit location qualifiers.
