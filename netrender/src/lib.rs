@@ -50,7 +50,6 @@ pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
 // `WgpuHandles` and run render-graph tasks (blur, clip mask) whose
 // outputs feed into vello scenes via `Renderer::insert_image_vello`.
 pub use netrender_device::{
-    BrushBlurPipeline, ClipRectanglePipeline, ColorAttachment, DepthAttachment, DrawIntent,
-    REQUIRED_FEATURES, RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur,
-    build_clip_rectangle,
+    BrushBlurPipeline, ClipRectanglePipeline, REQUIRED_FEATURES, WgpuDevice, WgpuHandles, boot,
+    build_brush_blur, build_clip_rectangle,
 };
