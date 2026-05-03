@@ -27,6 +27,7 @@ pub(crate) mod batch;
 mod compositor;
 pub(crate) mod glyph_atlas;
 pub(crate) mod image_cache;
+pub mod rasterizer;
 pub mod render_graph;
 mod renderer;
 pub mod scene;
@@ -34,6 +35,7 @@ pub(crate) mod space;
 pub mod tile_cache;
 
 pub use crate::compositor::{Compositor, NativeCompositor};
+pub use crate::rasterizer::RasterContext;
 pub use crate::render_graph::{EncodeCallback, RenderGraph, Task, TaskId};
 pub use crate::renderer::init::{NetrenderOptions, create_netrender_instance};
 pub use crate::renderer::{

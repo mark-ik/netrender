@@ -2,24 +2,36 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-//! Phase 10a.1 receipt — grayscale text via the renderer-owned
+//! Phase 10a.1 / 10a.2 receipt — grayscale text via the renderer-owned
 //! glyph atlas + `ps_text_run` pipeline.
 //!
-//! The test fixture is a hand-authored 5×7 'A' bitmap (no rasterizer
-//! dependency). 10a.2 will replace it with `swash::Scaler`.
+//! 10a.1 fixtures hand-author a 5×7 'A' bitmap (no rasterizer
+//! dependency). 10a.2 fixtures rasterize the same letter from
+//! `Proggy.ttf` via [`netrender::RasterContext`] (a thin
+//! `swash::scale::ScaleContext` wrapper).
 //!
 //! Tests:
 //!   p10a1_hand_authored_glyph     — golden: 'A' on transparent
 //!   p10a1_pen_position_math       — assert the bitmap lands at the
 //!                                   expected pen + bearing position
 //!   p10a1_run_groups_glyphs       — two-glyph run shares z + color
+//!   p10a2_swash_glyph_nonempty    — sanity: Proggy 'A' rasterizes to
+//!                                   a non-empty bitmap with at
+//!                                   least one filled pixel
+//!   p10a2_swash_glyph_renders     — golden: same Proggy 'A' pushed
+//!                                   through the renderer pipeline
 
 use std::path::{Path, PathBuf};
 
 use netrender::{
-    ColorLoad, FrameTarget, GlyphInstance, GlyphKey, GlyphRaster, NetrenderOptions, Scene,
-    boot, create_netrender_instance,
+    ColorLoad, FrameTarget, GlyphInstance, GlyphKey, GlyphRaster, NetrenderOptions,
+    RasterContext, Scene, boot, create_netrender_instance,
 };
+
+/// Proggy Clean — bitmap-only font, EBDT strike, included for the
+/// 10a.2 swash receipt. Phase 0.5 preserved this on disk for exactly
+/// this purpose.
+const PROGGY_TTF: &[u8] = include_bytes!("../res/Proggy.ttf");
 
 const VIEWPORT: u32 = 64;
 const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -220,6 +232,92 @@ fn p10a1_pen_position_math() {
 
     // Outside the bitmap on the right: pixel (20, 27) must be clear.
     assert_eq!(pixel(20, 27), [0, 0, 0, 0], "right-of-bitmap pixel must be clear");
+}
+
+// ── 10a.2 — swash rasterization (Proggy.ttf) ───────────────────────
+
+
+/// Sanity: rasterize 'A' from Proggy.ttf and confirm the bitmap is
+/// non-empty and at least one pixel is filled. Independent of the
+/// renderer pipeline — this is the cross-check that the swash
+/// integration itself works before the golden test loads it through
+/// `set_glyph_raster` / `push_text_run`.
+#[test]
+fn p10a2_swash_glyph_nonempty() {
+    let mut ctx = RasterContext::new();
+
+    let gid = ctx
+        .glyph_id_for_char(PROGGY_TTF, 0, 'A')
+        .expect("Proggy.ttf parses");
+    assert_ne!(gid, 0, "Proggy must map a glyph for 'A' (got .notdef)");
+
+    // Proggy Clean ships a 13-px ppem bitmap strike. swash's
+    // BestFit picks that strike when we ask for 13 px; hint=false
+    // since hinting only applies to outline glyphs (Proggy has none).
+    let raster = ctx
+        .rasterize(PROGGY_TTF, 0, gid, 13.0, false)
+        .expect("rasterize 'A' from Proggy.ttf");
+
+    assert!(
+        raster.width > 0 && raster.height > 0,
+        "rasterized 'A' has non-zero dimensions: {}x{}",
+        raster.width,
+        raster.height,
+    );
+    assert_eq!(
+        raster.pixels.len(),
+        (raster.width * raster.height) as usize,
+        "pixels.len matches width*height (R8 single-channel)",
+    );
+    let filled = raster.pixels.iter().filter(|&&b| b > 0).count();
+    assert!(
+        filled > 0,
+        "rasterized 'A' has at least one filled pixel (got {} of {})",
+        filled,
+        raster.pixels.len(),
+    );
+
+    // Sanity-check the metrics: 'A' at 13 px should be on the order
+    // of 5-12 px wide and tall. Bracket loosely; the exact strike
+    // sizes are font-specific and not the receipt's concern.
+    assert!(
+        (3..=20).contains(&raster.width),
+        "'A' width plausible at 13 px: {}",
+        raster.width,
+    );
+    assert!(
+        (3..=20).contains(&raster.height),
+        "'A' height plausible at 13 px: {}",
+        raster.height,
+    );
+}
+
+/// Golden: push the swash-rasterized 'A' through the full netrender
+/// pipeline. Receipt that 10a.2's RasterContext output flows
+/// unchanged into the same atlas + ps_text_run path that 10a.1
+/// proved on a hand-authored bitmap.
+#[test]
+fn p10a2_swash_glyph_renders() {
+    let mut ctx = RasterContext::new();
+    let gid = ctx
+        .glyph_id_for_char(PROGGY_TTF, 0, 'A')
+        .expect("Proggy.ttf parses");
+    let raster = ctx
+        .rasterize(PROGGY_TTF, 0, gid, 13.0, false)
+        .expect("rasterize 'A' from Proggy.ttf");
+
+    let key = GlyphKey {
+        font_id: 1, // distinct from KEY_A in 10a.1 tests
+        glyph_id: gid as u32,
+        size_x64: 13 * 64,
+    };
+    let mut scene = Scene::new(VIEWPORT, VIEWPORT);
+    scene.set_glyph_raster(key, raster);
+    scene.push_text_run(
+        vec![GlyphInstance { key, x: 16.0, y: 32.0 }],
+        [1.0, 1.0, 1.0, 1.0], // premultiplied white
+    );
+    run_scene_golden("p10a2_swash_glyph_renders", scene);
 }
 
 /// A two-glyph run shares the run's color and z. Render two adjacent

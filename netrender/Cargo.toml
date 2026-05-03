@@ -9,6 +9,13 @@ edition = "2018"
 log = "0.4"
 wgpu = "29"
 netrender_device = { path = "../netrender_device" }
+# Phase 10a.2: pure-Rust glyph rasterization (outline + bitmap).
+# Per the design plan §5 "Glyph rasterization" decision, swash is
+# adopted as the rasterizer behind a thin RasterContext wrapper.
+# Outline+hinting parity with FreeType; bitmap-strike fonts (Proggy)
+# also handled.
+swash = "0.2"
+zeno = "0.3"
 
 [dev-dependencies]
 png = "0.17"

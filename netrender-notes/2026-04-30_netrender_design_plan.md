@@ -1246,6 +1246,72 @@ regressions from the n_total expansion.
   in `init.rs`; promote to `NetrenderOptions` at 10a.5 alongside
   the tile-cache plumbing.
 
+**Status (2026-05-02, 10a.2 delivered)**: swash rasterization wired
+through a thin `RasterContext` wrapper. Hand-authored bitmap
+fixture and the swash-driven fixture both flow through the same
+atlas + `ps_text_run` path proven in 10a.1.
+
+New surface:
+
+- `netrender::rasterizer::RasterContext` — wraps
+  `swash::scale::ScaleContext`; one per consumer thread (swash
+  caches scaled outlines internally, so reuse across calls is the
+  hot path). `RasterContext::rasterize(font_bytes, font_index,
+  glyph_id, px_size, hint) -> Option<GlyphRaster>` handles
+  outline / bitmap / color-bitmap source selection and produces
+  the same `GlyphRaster` shape `Scene::set_glyph_raster` consumes.
+  `RasterContext::glyph_id_for_char(font_bytes, font_index, c) ->
+  Option<u16>` is the convenience charmap lookup.
+- `netrender::RasterContext` re-export.
+- `netrender/Cargo.toml` deps: `swash = "0.2"`, `zeno = "0.3"`.
+  Transitively pulls `skrifa = "0.40"` — the Linebender font
+  crate the 2026-05-01 plan flagged as a future migration target
+  (already happened upstream; swash 0.2.7 sits on skrifa).
+
+Sequenced finding during 10a.2: swash's `Render::render` with the
+slice `[Outline, Bitmap, ColorBitmap]` short-circuits at the first
+source whose `has_X()` gate passes — but the gate is on *table
+presence*, not on whether any glyph actually has data in that
+table. Proggy has empty outline tables and a populated EBDT
+bitmap strike; the slice form returns `Some(image)` from the
+outline source with placement `(0, 0)` and never tries the
+bitmap source. Fix: try sources individually and reject the first
+empty result. Documented inline in `rasterizer.rs`. Returning
+`None` for legitimately-empty glyphs (space, control characters)
+is the correct atlas-population behavior — consumers advance the
+pen via glyph metrics regardless of bitmap presence.
+
+Receipt — `tests/p10a_text.rs` gains two tests, both green:
+
+- `p10a2_swash_glyph_nonempty` — sanity: 'A' from Proggy
+  rasterizes to a non-empty `GlyphRaster` with at least one
+  filled pixel and plausible 13-px-bracket dimensions. Cross-check
+  for the swash integration independent of the renderer pipeline.
+- `p10a2_swash_glyph_renders` — golden: the same Proggy 'A'
+  pushed through `set_glyph_raster` + `push_text_run` lands on a
+  64×64 transparent target. PNG diff tolerance 0.
+
+Full suite (22 binaries, 91 tests) green — no Phase 4-9 / 10a.1
+regressions.
+
+**Carry-forwards for follow-up slices.**
+
+- `RasterContext` always asks swash for `Format::Alpha`; color
+  emoji currently degrades to its alpha plane. Phase 10b will
+  introduce a parallel color-aware path with a paired RGBA8
+  atlas + shader.
+- `RasterContext` is stateless across calls — every `rasterize()`
+  re-parses the font bytes via `FontRef::from_index`. swash's
+  parse is cheap (no allocation, no decode), but consumers
+  rasterizing many glyphs from one font will want a
+  `RasterContext::with_font(font_bytes)` -> `BoundContext`-style
+  shape that holds the FontRef alive. Land that at 10a.3 when
+  the shaped-run API needs to tie a run to its font handle.
+- `hint` is exposed as a parameter; the callsite (test) passes
+  `false` for Proggy (bitmap-only). Outline fonts at small sizes
+  generally want `true`; the consumer's rasterization layer is
+  the natural place to make that decision per font / per size.
+
 ### Phase 10b — Browser-grade text correctness
 
 10a paints glyph quads. 10b confronts the gap between "glyphs
