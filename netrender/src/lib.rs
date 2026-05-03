@@ -35,7 +35,7 @@ pub(crate) mod space;
 pub mod tile_cache;
 
 pub use crate::compositor::{Compositor, NativeCompositor};
-pub use crate::rasterizer::RasterContext;
+pub use crate::rasterizer::{BoundRaster, FontHandle, RasterContext};
 pub use crate::render_graph::{EncodeCallback, RenderGraph, Task, TaskId};
 pub use crate::renderer::init::{NetrenderOptions, create_netrender_instance};
 pub use crate::renderer::{

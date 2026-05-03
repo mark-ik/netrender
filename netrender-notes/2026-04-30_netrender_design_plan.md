@@ -1305,17 +1305,88 @@ regressions.
   emoji currently degrades to its alpha plane. Phase 10b will
   introduce a parallel color-aware path with a paired RGBA8
   atlas + shader.
-- `RasterContext` is stateless across calls — every `rasterize()`
-  re-parses the font bytes via `FontRef::from_index`. swash's
-  parse is cheap (no allocation, no decode), but consumers
-  rasterizing many glyphs from one font will want a
-  `RasterContext::with_font(font_bytes)` -> `BoundContext`-style
-  shape that holds the FontRef alive. Land that at 10a.3 when
-  the shaped-run API needs to tie a run to its font handle.
 - `hint` is exposed as a parameter; the callsite (test) passes
   `false` for Proggy (bitmap-only). Outline fonts at small sizes
   generally want `true`; the consumer's rasterization layer is
   the natural place to make that decision per font / per size.
+
+**Status (2026-05-02, 10a.3 delivered)**: bound-raster API lands;
+shaped runs no longer pay the per-glyph font re-parse cost.
+
+New surface:
+
+- `netrender::FontHandle` — owned `Arc<[u8]>` + `font_index: u32` +
+  caller-assigned `font_id: u32`. `Clone` is `Arc::clone` cheap;
+  `from_static(&'static [u8], ...)` is the convenience for
+  `include_bytes!` callers (one-time copy into the `Arc<[u8]>`);
+  `new(Arc<[u8]>, ...)` is the production form for embedders that
+  already mmap or stream font bytes.
+- `netrender::BoundRaster<'a>` — `swash::scale::Scaler` bound to
+  one font + size + hinting policy. Returned by
+  `RasterContext::bind(handle, px_size, hint)`. Holds both the
+  scaler (mutable, for `rasterize`) and a separate `FontRef<'a>`
+  (immutable, for `glyph_id_for_char`); `FontRef<'_>` is `Copy`
+  so the duplication is free.
+- `BoundRaster::rasterize(glyph_id) -> Option<GlyphRaster>` —
+  reuses the source-priority + empty-placement-skip policy
+  factored to `SOURCE_PRIORITY` in 10a.2 cleanup.
+- `BoundRaster::glyph_id_for_char(c) -> u16` — charmap lookup
+  without re-parsing.
+- `BoundRaster::key_for_glyph(glyph_id) -> GlyphKey` — produces
+  the `Scene::set_glyph_raster` key with the bound `font_id` and
+  size automatically. `size_x64 = (px_size * 64.0) as u32`.
+- `BoundRaster::rasterize_char(c) -> Option<(GlyphKey, GlyphRaster)>`
+  — convenience that combines the three above into the natural
+  unit consumers want for atlas-population.
+
+`RasterContext::rasterize` and `glyph_id_for_char` (the one-shot
+`&[u8]` forms from 10a.2) are preserved unchanged for tests and
+for consumers that hand in a different font on every call.
+
+Receipt — `tests/p10a_text.rs` gains three tests, all green
+(8/8 in the binary now):
+
+- `p10a3_bound_matches_oneshot` — sanity: `BoundRaster::rasterize`
+  produces byte-identical output to `RasterContext::rasterize` for
+  the same font + size + glyph. Confirms the bind path doesn't
+  lose information vs. the re-parse-per-call path.
+- `p10a3_run_layout` — golden: two-glyph 'AB' run via one
+  `BoundRaster` (single font parse, single Scaler build, both
+  glyphs). Exercises the shaped-run shape consumers will use for
+  real text.
+- `p10a3_font_handle_is_arc_cheap` — assert `FontHandle::clone`
+  shares the underlying `Arc<[u8]>` (pointer-eq on the slice's
+  data pointer); two clones rasterize identically.
+
+Full suite (22 binaries, 94 tests) green — no Phase 4-9 / 10a.1
+/ 10a.2 regressions.
+
+**Caller-assigned `font_id` invariant**: documented on
+`FontHandle`. Two distinct fonts must never share a `font_id`,
+or atlas slots will collide (glyph 'A' from font A might render
+as 'A' from font B). Today netrender does not deduplicate or
+hash font bytes — that's a 10b atlas-eviction-era concern. Until
+then, the consumer must hand out unique ids per font (a monotonic
+counter is the simplest correct policy).
+
+**Carry-forwards for follow-up slices.**
+
+- Horizontal advance metrics are not yet exposed. `BoundRaster`
+  knows the font but doesn't expose `advance_width(glyph_id) ->
+  f32`; the test hand-spaces glyphs at integer pen positions.
+  10a.4 (subpixel AA) introduces subpixel positioning where
+  metrics start to matter; expose `advance_width` then so the
+  test harness can compute pen positions like a real shaper
+  would.
+- `RasterContext::bind` rebuilds the swash `Scaler` per call.
+  For consumers that rasterize many sizes from one font, a
+  scaler cache keyed by `(font_id, px_size, hint)` would amortise
+  the build cost; defer until profiling shows it matters.
+- `FontHandle::from_static` copies the `&'static [u8]` into an
+  `Arc<[u8]>`. The copy is one-time per handle construction and
+  irrelevant for production (where bytes come from mmap / stream
+  already in an `Arc`), but tests with very large font fixtures
+  could feel it. Acceptable for 10a.3.
 
 ### Phase 10b — Browser-grade text correctness
 

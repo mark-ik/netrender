@@ -2,13 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
-//! Phase 10a.1 / 10a.2 receipt — grayscale text via the renderer-owned
-//! glyph atlas + `ps_text_run` pipeline.
+//! Phase 10a.1 / 10a.2 / 10a.3 receipt — grayscale text via the
+//! renderer-owned glyph atlas + `ps_text_run` pipeline.
 //!
 //! 10a.1 fixtures hand-author a 5×7 'A' bitmap (no rasterizer
 //! dependency). 10a.2 fixtures rasterize the same letter from
 //! `Proggy.ttf` via [`netrender::RasterContext`] (a thin
-//! `swash::scale::ScaleContext` wrapper).
+//! `swash::scale::ScaleContext` wrapper). 10a.3 fixtures use the
+//! bound-raster API ([`netrender::FontHandle`] +
+//! [`netrender::BoundRaster`]) so a multi-glyph run reuses one
+//! parsed font + one swash `Scaler` across all of its glyphs.
 //!
 //! Tests:
 //!   p10a1_hand_authored_glyph     — golden: 'A' on transparent
@@ -20,11 +23,15 @@
 //!                                   least one filled pixel
 //!   p10a2_swash_glyph_renders     — golden: same Proggy 'A' pushed
 //!                                   through the renderer pipeline
+//!   p10a3_run_layout              — golden: 'AB' run via BoundRaster
+//!                                   (one parse, one Scaler, two
+//!                                   glyphs)
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use netrender::{
-    ColorLoad, FrameTarget, GlyphInstance, GlyphKey, GlyphRaster, NetrenderOptions,
+    ColorLoad, FontHandle, FrameTarget, GlyphInstance, GlyphKey, GlyphRaster, NetrenderOptions,
     RasterContext, Scene, boot, create_netrender_instance,
 };
 
@@ -347,4 +354,108 @@ fn p10a1_run_groups_glyphs() {
     // and the second 'A' starts at col 20, so cols 15-19 row 26 are
     // clear background.
     assert_eq!(pixel(17, 26), [0, 0, 0, 0], "gap between glyphs must be clear");
+}
+
+// ── 10a.3 — bound-raster API (FontHandle + BoundRaster) ────────────
+
+/// Sanity: a `BoundRaster` produces the same glyph data as one-shot
+/// `RasterContext::rasterize` for the same font + size + glyph.
+/// Confirms the bind path doesn't lose information vs. the
+/// re-parse-per-call path.
+#[test]
+fn p10a3_bound_matches_oneshot() {
+    let handle = FontHandle::from_static(PROGGY_TTF, 0, 2);
+    let mut ctx_a = RasterContext::new();
+    let mut ctx_b = RasterContext::new();
+
+    // One-shot path
+    let gid = ctx_a
+        .glyph_id_for_char(handle.bytes(), handle.font_index(), 'A')
+        .expect("Proggy parses (one-shot)");
+    let oneshot = ctx_a
+        .rasterize(handle.bytes(), handle.font_index(), gid, 13.0, false)
+        .expect("rasterize 'A' (one-shot)");
+
+    // Bound path
+    let mut bound = ctx_b.bind(&handle, 13.0, false).expect("bind");
+    let bound_gid = bound.glyph_id_for_char('A');
+    assert_eq!(bound_gid, gid, "glyph id matches across paths");
+    let from_bound = bound.rasterize(bound_gid).expect("rasterize 'A' (bound)");
+
+    assert_eq!(from_bound.width, oneshot.width);
+    assert_eq!(from_bound.height, oneshot.height);
+    assert_eq!(from_bound.bearing_x, oneshot.bearing_x);
+    assert_eq!(from_bound.bearing_y, oneshot.bearing_y);
+    assert_eq!(from_bound.pixels, oneshot.pixels);
+}
+
+/// Golden: render a two-glyph 'AB' run rasterized through one
+/// `BoundRaster` (single font parse, single Scaler build, two
+/// glyphs). Exercises the shaped-run shape consumers will use for
+/// real text — a vec of `GlyphInstance` keyed off the bound
+/// raster's `key_for_glyph` helper.
+#[test]
+fn p10a3_run_layout() {
+    let handle = FontHandle::new(Arc::from(PROGGY_TTF), 0, 3);
+    let mut ctx = RasterContext::new();
+    let mut bound = ctx.bind(&handle, 13.0, false).expect("bind Proggy");
+
+    let (key_a, raster_a) = bound
+        .rasterize_char('A')
+        .expect("rasterize 'A'");
+    let (key_b, raster_b) = bound
+        .rasterize_char('B')
+        .expect("rasterize 'B'");
+
+    // Different glyphs in the same font + size share font_id and
+    // size_x64, differ on glyph_id.
+    assert_eq!(key_a.font_id, key_b.font_id);
+    assert_eq!(key_a.size_x64, key_b.size_x64);
+    assert_ne!(key_a.glyph_id, key_b.glyph_id, "A and B are different glyphs");
+
+    // Drop the bound raster early so we can re-borrow ctx if the
+    // test grows; not strictly necessary here.
+    drop(bound);
+
+    let mut scene = Scene::new(VIEWPORT, VIEWPORT);
+    scene.set_glyph_raster(key_a, raster_a);
+    scene.set_glyph_raster(key_b, raster_b);
+    // Pen positions: 'A' at (12, 32), 'B' at (22, 32). Loose 10-px
+    // advance — 10a.3 doesn't ship horizontal-metrics support, so
+    // the test just hand-spaces the pen. Real consumers compute
+    // advance from font metrics + shaping.
+    scene.push_text_run(
+        vec![
+            GlyphInstance { key: key_a, x: 12.0, y: 32.0 },
+            GlyphInstance { key: key_b, x: 22.0, y: 32.0 },
+        ],
+        [1.0, 1.0, 1.0, 1.0],
+    );
+    run_scene_golden("p10a3_run_layout", scene);
+}
+
+/// `FontHandle` is `Clone`-cheap (Arc-backed): a clone shares the
+/// underlying bytes. Test that two clones rasterize identically.
+#[test]
+fn p10a3_font_handle_is_arc_cheap() {
+    let h1 = FontHandle::from_static(PROGGY_TTF, 0, 4);
+    let h2 = h1.clone();
+
+    // Same Arc-backed bytes — pointer equality on the slice
+    // confirms no copy-on-clone.
+    assert!(
+        std::ptr::eq(h1.bytes().as_ptr(), h2.bytes().as_ptr()),
+        "FontHandle::clone must share Arc-backed bytes (no copy)",
+    );
+
+    let mut ctx = RasterContext::new();
+    let r1 = {
+        let mut b = ctx.bind(&h1, 13.0, false).unwrap();
+        b.rasterize_char('A').unwrap().1
+    };
+    let r2 = {
+        let mut b = ctx.bind(&h2, 13.0, false).unwrap();
+        b.rasterize_char('A').unwrap().1
+    };
+    assert_eq!(r1.pixels, r2.pixels);
 }
