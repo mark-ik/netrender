@@ -18,6 +18,7 @@ use euclid::default::Transform3D;
 use crate::internal_types::{Swizzle, SwizzleSettings};
 use crate::render_api::MemoryReport;
 use malloc_size_of::MallocSizeOfOps;
+use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::os::raw::c_void;
@@ -341,6 +342,51 @@ mod vertex_adapter_tests {
     }
 }
 
+/// Reinterprets a typed slice as bytes for queue.write_buffer/write_texture.
+/// Sound under the trait contract that V is plain-old-data shaped.
+fn slice_to_bytes<V>(slice: &[V]) -> &[u8] {
+    unsafe {
+        std::slice::from_raw_parts(
+            slice.as_ptr() as *const u8,
+            slice.len() * std::mem::size_of::<V>(),
+        )
+    }
+}
+
+/// Ensures the `RefCell<Option<wgpu::Buffer>>` slot holds a buffer with
+/// at least `bytes_needed` capacity, then writes the given data starting
+/// at offset 0. Allocates (or reallocates when growing) as needed; never
+/// shrinks. Used by `update_vao_*` and similar.
+fn upload_into_vao_buffer(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    slot: &RefCell<Option<wgpu::Buffer>>,
+    bytes: &[u8],
+    usage: wgpu::BufferUsages,
+    label: &'static str,
+) {
+    let needed = bytes.len() as u64;
+    if needed == 0 {
+        return;
+    }
+    let mut borrow = slot.borrow_mut();
+    let needs_new = match borrow.as_ref() {
+        Some(buf) => buf.size() < needed,
+        None => true,
+    };
+    if needs_new {
+        *borrow = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: needed,
+            usage,
+            mapped_at_creation: false,
+        }));
+    }
+    if let Some(buf) = borrow.as_ref() {
+        queue.write_buffer(buf, 0, bytes);
+    }
+}
+
 /// Builds a `Capabilities` describing what this wgpu device supports. Most
 /// fields default to `false` because they describe GL extensions with no
 /// wgpu equivalent (`KHR_blend_equation_advanced`, `QCOM_tiled_rendering`,
@@ -428,8 +474,37 @@ pub struct WgpuTexture {
     pub is_render_target: bool,
 }
 
-pub struct WgpuVao;
-pub struct WgpuCustomVao;
+/// Vertex array object equivalent. wgpu has no VAO concept — at draw
+/// time, the renderer binds vertex/instance/index buffers directly to
+/// the RenderPass. WgpuVao bundles them as a unit so the renderer can
+/// keep the same logical "VAO = a complete vertex setup" abstraction.
+///
+/// All three buffers start as `None`; the corresponding `update_vao_*`
+/// methods allocate (or reallocate when size grows) on first call. The
+/// trait takes `&Self::Vao` (not `&mut`) for those updates — matching
+/// the GL device's `&VAO` signature where mutation happens via global
+/// GL state — so we use `RefCell`/`Cell` for interior mutability.
+pub struct WgpuVao {
+    pub vertex_buffer: RefCell<Option<wgpu::Buffer>>,
+    pub vertex_count: Cell<usize>,
+    pub instance_buffer: RefCell<Option<wgpu::Buffer>>,
+    pub instance_count: Cell<usize>,
+    pub index_buffer: RefCell<Option<wgpu::Buffer>>,
+    pub index_count: Cell<usize>,
+    /// The descriptor used to create this VAO; `&'static`-borrowed slices
+    /// inside, so owning the struct is cheap.
+    pub descriptor: VertexDescriptor,
+    pub instance_divisor: u32,
+}
+
+/// Custom VAO — multi-stream vertex setup. Stores a `WgpuVbo`-equivalent
+/// per stream. wgpu's render-pass bind methods take indexed slot numbers,
+/// matching the per-stream model directly.
+pub struct WgpuCustomVao {
+    /// One buffer per Stream in the original `&[Stream<'_>]`. Streams are
+    /// allocated immediately (sized from stream descriptor data).
+    pub buffers: Vec<wgpu::Buffer>,
+}
 
 /// PBO (Pixel Buffer Object equivalent). In wgpu, this is just a generic
 /// `wgpu::Buffer` used for staged uploads and readback. `buffer` is `None`
@@ -838,16 +913,66 @@ impl GpuResources for WgpuDevice {
         // wgpu::Buffer is Drop-managed.
     }
 
-    fn create_vao(&mut self, _descriptor: &VertexDescriptor, _instance_divisor: u32) -> Self::Vao { unimplemented!() }
+    fn create_vao(&mut self, descriptor: &VertexDescriptor, instance_divisor: u32) -> Self::Vao {
+        // Buffers are lazy: actual wgpu::Buffer creation happens on first
+        // update_vao_* call when we know the data size. This matches GL
+        // device's behavior and avoids speculative allocation.
+        WgpuVao {
+            vertex_buffer: RefCell::new(None),
+            vertex_count: Cell::new(0),
+            instance_buffer: RefCell::new(None),
+            instance_count: Cell::new(0),
+            index_buffer: RefCell::new(None),
+            index_count: Cell::new(0),
+            descriptor: VertexDescriptor {
+                vertex_attributes: descriptor.vertex_attributes,
+                instance_attributes: descriptor.instance_attributes,
+            },
+            instance_divisor,
+        }
+    }
+
     fn create_vao_with_new_instances(
         &mut self,
-        _descriptor: &VertexDescriptor,
-        _base_vao: &Self::Vao,
-    ) -> Self::Vao { unimplemented!() }
-    fn delete_vao(&mut self, _vao: Self::Vao) { unimplemented!() }
+        descriptor: &VertexDescriptor,
+        base_vao: &Self::Vao,
+    ) -> Self::Vao {
+        // GL semantics: shares vertex + index buffers with base_vao, gets
+        // a fresh instance buffer. wgpu::Buffer isn't Clone, so we can't
+        // share by handle directly; renderer must repopulate via
+        // update_vao_* if it needs the same data here. (Future opt: wrap
+        // the buffer in Arc to enable cheap sharing.)
+        WgpuVao {
+            vertex_buffer: RefCell::new(None),
+            vertex_count: Cell::new(base_vao.vertex_count.get()),
+            instance_buffer: RefCell::new(None),
+            instance_count: Cell::new(0),
+            index_buffer: RefCell::new(None),
+            index_count: Cell::new(base_vao.index_count.get()),
+            descriptor: VertexDescriptor {
+                vertex_attributes: descriptor.vertex_attributes,
+                instance_attributes: descriptor.instance_attributes,
+            },
+            instance_divisor: base_vao.instance_divisor,
+        }
+    }
 
-    fn create_custom_vao<'a>(&mut self, _streams: &[Self::Stream<'a>]) -> Self::CustomVao { unimplemented!() }
-    fn delete_custom_vao(&mut self, _vao: Self::CustomVao) { unimplemented!() }
+    fn delete_vao(&mut self, _vao: Self::Vao) {
+        // Drop releases the wgpu::Buffer handles inside.
+    }
+
+    fn create_custom_vao<'a>(&mut self, _streams: &[Self::Stream<'a>]) -> Self::CustomVao {
+        // wgpu's Self::Stream<'a> is the placeholder WgpuStream<'a> (no
+        // constructors). Renderer code that wants a custom multi-stream
+        // VAO needs to construct WgpuStream values first, which means
+        // this method is effectively unreachable through cross-backend
+        // code paths today. Real impl lands when a renderer call site
+        // actually wires through.
+        unimplemented!("create_custom_vao on wgpu requires a WgpuStream constructor (deferred)")
+    }
+    fn delete_custom_vao(&mut self, _vao: Self::CustomVao) {
+        // Drop releases the buffers.
+    }
 
     fn create_vbo<T>(&mut self) -> Self::Vbo<T> {
         WgpuVbo::new()
@@ -896,23 +1021,81 @@ impl GpuResources for WgpuDevice {
 
     fn update_vao_main_vertices<V>(
         &mut self,
-        _vao: &Self::Vao,
-        _vertices: &[V],
+        vao: &Self::Vao,
+        vertices: &[V],
         _usage_hint: VertexUsageHint,
-    ) { unimplemented!() }
+    ) {
+        upload_into_vao_buffer(
+            &self.device,
+            &self.queue,
+            &vao.vertex_buffer,
+            slice_to_bytes(vertices),
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            "WgpuVao vertex_buffer",
+        );
+        vao.vertex_count.set(vertices.len());
+    }
+
     fn update_vao_instances<V: Clone>(
         &mut self,
-        _vao: &Self::Vao,
-        _instances: &[V],
+        vao: &Self::Vao,
+        instances: &[V],
         _usage_hint: VertexUsageHint,
-        _repeat: Option<NonZeroUsize>,
-    ) { unimplemented!() }
+        repeat: Option<NonZeroUsize>,
+    ) {
+        // GL's `repeat` parameter writes the instance data N times for
+        // workarounds where instance attribute divisors aren't reliable.
+        // Honor by expanding before upload when N > 1.
+        let multiplier = repeat.map(|n| n.get()).unwrap_or(1);
+        let total_count = instances.len() * multiplier;
+        if multiplier == 1 {
+            upload_into_vao_buffer(
+                &self.device,
+                &self.queue,
+                &vao.instance_buffer,
+                slice_to_bytes(instances),
+                wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                "WgpuVao instance_buffer",
+            );
+        } else {
+            let mut expanded: Vec<V> = Vec::with_capacity(total_count);
+            for v in instances {
+                for _ in 0..multiplier {
+                    expanded.push(v.clone());
+                }
+            }
+            upload_into_vao_buffer(
+                &self.device,
+                &self.queue,
+                &vao.instance_buffer,
+                slice_to_bytes(&expanded),
+                wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
+                "WgpuVao instance_buffer",
+            );
+        }
+        vao.instance_count.set(total_count);
+    }
+
     fn update_vao_indices<I>(
         &mut self,
-        _vao: &Self::Vao,
-        _indices: &[I],
+        vao: &Self::Vao,
+        indices: &[I],
         _usage_hint: VertexUsageHint,
-    ) { unimplemented!() }
+    ) {
+        upload_into_vao_buffer(
+            &self.device,
+            &self.queue,
+            &vao.index_buffer,
+            slice_to_bytes(indices),
+            wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC,
+            "WgpuVao index_buffer",
+        );
+        vao.index_count.set(indices.len());
+    }
 
     fn upload_texture<'a>(&mut self, _pbo_pool: &'a mut Self::UploadPboPool) -> Self::TextureUploader<'a> { unimplemented!() }
 

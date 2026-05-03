@@ -182,6 +182,7 @@ pub use crate::device::{UploadMethod, VertexUsageHint, get_gl_target, get_unopti
 pub use crate::device::{ProgramBinary, ProgramCache, ProgramCacheObserver, FormatDesc, ShaderError};
 pub use crate::device::Device;
 pub use crate::device::{TextureFilter, GpuFrame, GpuResources, GpuShaders, GpuPass};
+pub use crate::device::{VertexAttribute, VertexAttributeKind, VertexDescriptor};
 pub use crate::internal_types::RenderTargetInfo;
 #[cfg(feature = "wgpu_backend")]
 pub use crate::device::WgpuDevice;

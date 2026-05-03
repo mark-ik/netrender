@@ -8,7 +8,9 @@
 #![cfg(feature = "wgpu_backend")]
 
 use std::sync::Arc;
-use webrender::{GpuResources, VertexUsageHint, WgpuDevice};
+use webrender::{
+    GpuResources, VertexAttribute, VertexDescriptor, VertexUsageHint, WgpuDevice,
+};
 
 fn try_create_device() -> Option<WgpuDevice> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -84,6 +86,44 @@ fn vbo_allocate_fill_round_trip() {
 fn bytemuck_cast(bytes: &[u8]) -> &[u32] {
     assert_eq!(bytes.len() % 4, 0);
     unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const u32, bytes.len() / 4) }
+}
+
+#[test]
+fn vao_lazy_buffers_then_update_round_trip() {
+    let Some(mut wgpu_device) = try_create_device() else {
+        eprintln!("skip: no wgpu adapter available");
+        return;
+    };
+
+    static VERT_ATTRS: &[VertexAttribute] = &[VertexAttribute::quad_instance_vertex()];
+    static INST_ATTRS: &[VertexAttribute] = &[VertexAttribute::f32x4("aRect")];
+    static DESC: VertexDescriptor = VertexDescriptor {
+        vertex_attributes: VERT_ATTRS,
+        instance_attributes: INST_ATTRS,
+    };
+
+    let vao = wgpu_device.create_vao(&DESC, 1);
+    // Lazy: no buffers allocated yet.
+    assert!(vao.vertex_buffer.borrow().is_none());
+    assert!(vao.instance_buffer.borrow().is_none());
+    assert!(vao.index_buffer.borrow().is_none());
+
+    let verts: [u16; 4] = [0xAA, 0xBB, 0xCC, 0xDD];
+    wgpu_device.update_vao_main_vertices(&vao, &verts, VertexUsageHint::Static);
+    assert!(vao.vertex_buffer.borrow().is_some());
+    assert_eq!(vao.vertex_count.get(), 4);
+
+    let insts: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+    wgpu_device.update_vao_instances(&vao, &insts, VertexUsageHint::Dynamic, None);
+    assert!(vao.instance_buffer.borrow().is_some());
+    assert_eq!(vao.instance_count.get(), 4);
+
+    let idx: [u16; 6] = [0, 1, 2, 0, 2, 3];
+    wgpu_device.update_vao_indices(&vao, &idx, VertexUsageHint::Static);
+    assert!(vao.index_buffer.borrow().is_some());
+    assert_eq!(vao.index_count.get(), 6);
+
+    wgpu_device.delete_vao(vao);
 }
 
 #[test]
