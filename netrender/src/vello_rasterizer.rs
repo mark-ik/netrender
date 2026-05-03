@@ -69,9 +69,29 @@ use crate::scene::{
 /// painted over them — the same ordering the existing netrender
 /// pipeline uses.
 pub fn scene_to_vello(scene: &Scene) -> vello::Scene {
+    scene_to_vello_with_overrides(scene, &HashMap::new())
+}
+
+/// Translate a netrender [`Scene`] into a [`vello::Scene`] with
+/// caller-supplied [`peniko::ImageData`] overrides for selected
+/// [`ImageKey`]s.
+///
+/// `image_overrides` lets callers pre-register GPU-resident textures
+/// via [`vello::Renderer::register_texture`] (Path B from rasterizer
+/// plan §3.5) and pass the resulting [`ImageData`] in. Keys absent
+/// from the overrides map fall back to building from
+/// `scene.image_sources` CPU bytes (Path A — the default).
+///
+/// Use this entry point when image data lives as a render-graph
+/// output (already a `wgpu::Texture`, no CPU bytes), e.g., the blur
+/// task's output texture feeding into a vello-rasterized scene.
+pub fn scene_to_vello_with_overrides(
+    scene: &Scene,
+    image_overrides: &HashMap<ImageKey, ImageData>,
+) -> vello::Scene {
     let mut vscene = vello::Scene::new();
 
-    let images = build_image_cache(scene);
+    let images = build_image_cache(scene, image_overrides);
 
     for rect in &scene.rects {
         emit_rect(&mut vscene, rect, &scene.transforms);
@@ -86,8 +106,12 @@ pub fn scene_to_vello(scene: &Scene) -> vello::Scene {
     vscene
 }
 
-fn build_image_cache(scene: &Scene) -> HashMap<ImageKey, ImageData> {
-    let mut cache = HashMap::with_capacity(scene.image_sources.len());
+fn build_image_cache(
+    scene: &Scene,
+    overrides: &HashMap<ImageKey, ImageData>,
+) -> HashMap<ImageKey, ImageData> {
+    let mut cache = HashMap::with_capacity(scene.image_sources.len() + overrides.len());
+    // Path A — CPU bytes from scene.image_sources.
     for (key, data) in &scene.image_sources {
         let blob = Blob::new(Arc::new(data.bytes.clone()));
         cache.insert(
@@ -100,6 +124,10 @@ fn build_image_cache(scene: &Scene) -> HashMap<ImageKey, ImageData> {
                 height: data.height,
             },
         );
+    }
+    // Path B — caller-supplied overrides win on key collision.
+    for (key, image) in overrides {
+        cache.insert(*key, image.clone());
     }
     cache
 }
