@@ -58,6 +58,11 @@ pub struct Renderer {
     /// (renders dirty tiles, composites them via `brush_image_alpha`).
     /// Configured at construction via `NetrenderOptions::tile_cache_size`.
     pub(crate) tile_cache: Option<Mutex<TileCache>>,
+    /// Phase 7' — vello-backed tile rasterizer. Constructed at init
+    /// when `NetrenderOptions::enable_vello` is true. Independent of
+    /// the existing batched WGSL `prepare()` / `render()` pipeline;
+    /// `Renderer::render_vello` routes through this instead.
+    pub(crate) vello_rasterizer: Option<Mutex<crate::vello_tile_rasterizer::VelloTileRasterizer>>,
 }
 
 /// Retained per-frame resources whose lifetime needs to span the frame.
@@ -618,6 +623,68 @@ impl Renderer {
         );
         self.wgpu_device.submit(encoder);
     }
+
+    /// Phase 7' — render `scene` into `target_view` via the
+    /// vello-backed tile rasterizer.
+    ///
+    /// The renderer must have been constructed with
+    /// `NetrenderOptions { enable_vello: true, tile_cache_size:
+    /// Some(_), .. }`. The tile cache is shared with the existing
+    /// batched `prepare()` path, so callers can switch between the
+    /// two pipelines per frame without losing tile-level
+    /// invalidation state.
+    ///
+    /// Single-method entry point: invalidates the tile cache against
+    /// `scene`, rebuilds dirty tiles' vello::Scenes, composes them
+    /// via `Scene::append` with per-tile clip layers, and issues one
+    /// `vello::Renderer::render_to_texture` call. See
+    /// `vello_tile_rasterizer::VelloTileRasterizer::render` for the
+    /// step-by-step contract.
+    ///
+    /// # Panics
+    ///
+    /// - If `enable_vello` was `false` at construction (no rasterizer
+    ///   available).
+    /// - If `tile_cache_size` was `None` at construction (the vello
+    ///   rasterizer requires the cache; this is also enforced at
+    ///   construction time as `RendererError::VelloRequiresTileCache`,
+    ///   so reaching this panic means the renderer was malformed).
+    /// - If a vello render error occurs (returns the error wrapped
+    ///   in a panic message; matches the existing `render()` API
+    ///   shape, which doesn't return a Result).
+    /// Number of tiles whose vello::Scenes were rebuilt during the
+    /// most recent `render_vello` call. `0` after a no-op frame
+    /// (unchanged scene). Returns `None` if the renderer was
+    /// constructed without `enable_vello`.
+    pub fn vello_last_dirty_count(&self) -> Option<usize> {
+        let rast_mutex = self.vello_rasterizer.as_ref()?;
+        let rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        Some(rast.last_dirty_count())
+    }
+
+    /// Number of tile-Scenes currently held in the vello rasterizer's
+    /// cache. Returns `None` if `enable_vello` was false.
+    pub fn vello_cached_tile_count(&self) -> Option<usize> {
+        let rast_mutex = self.vello_rasterizer.as_ref()?;
+        let rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        Some(rast.cached_tile_count())
+    }
+
+    pub fn render_vello(&self, scene: &Scene, target_view: &wgpu::TextureView) {
+        let rast_mutex = self
+            .vello_rasterizer
+            .as_ref()
+            .expect("Renderer::render_vello requires NetrenderOptions::enable_vello = true");
+        let tc_mutex = self
+            .tile_cache
+            .as_ref()
+            .expect("Renderer::render_vello requires NetrenderOptions::tile_cache_size = Some(_)");
+
+        let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        let mut tc = tc_mutex.lock().expect("tile_cache lock");
+        rast.render(scene, &mut tc, target_view)
+            .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
+    }
 }
 
 /// Concatenate the per-family draw lists. Each batch emits opaques
@@ -639,4 +706,14 @@ fn merge_draw_order(
 #[derive(Debug)]
 pub enum RendererError {
     WgpuFeaturesMissing(wgpu::Features),
+    /// `NetrenderOptions::enable_vello = true` requires
+    /// `tile_cache_size = Some(_)`. The vello rasterizer holds the
+    /// per-tile vello::Scene cache; without a tile cache there's
+    /// nothing for it to cache against.
+    VelloRequiresTileCache,
+    /// `vello::Renderer` construction failed during
+    /// `create_netrender_instance`. The wrapped string is vello's
+    /// error formatted via `{:?}` (vello::Error doesn't implement
+    /// std::error::Error in 0.8 — the string is informational only).
+    VelloInit(String),
 }

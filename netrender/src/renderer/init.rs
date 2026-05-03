@@ -12,6 +12,7 @@ use netrender_device::{WgpuDevice, WgpuHandles};
 use crate::image_cache::ImageCache;
 use crate::renderer::{Renderer, RendererError};
 use crate::tile_cache::TileCache;
+use crate::vello_tile_rasterizer::VelloTileRasterizer;
 
 #[derive(Default)]
 pub struct NetrenderOptions {
@@ -21,6 +22,13 @@ pub struct NetrenderOptions {
     /// `brush_image_alpha`). `None` keeps the direct render path used
     /// in Phases 1–6.
     pub tile_cache_size: Option<u32>,
+    /// Phase 7' — when `true`, eagerly construct a `VelloTileRasterizer`
+    /// and route [`Renderer::render_vello`] through it. Requires
+    /// `tile_cache_size = Some(_)` (the vello rasterizer reuses the same
+    /// tile cache the batched path uses). Independent of the existing
+    /// `prepare()` / `render()` path — both pipelines coexist; callers
+    /// pick one per frame. Default: `false`.
+    pub enable_vello: bool,
 }
 
 /// Construct a wgpu-only `Renderer`. The embedder owns the wgpu
@@ -65,11 +73,24 @@ pub fn create_netrender_instance(
         .tile_cache_size
         .map(|size| Mutex::new(TileCache::new(size)));
 
+    let vello_rasterizer = if options.enable_vello {
+        if tile_cache.is_none() {
+            return Err(RendererError::VelloRequiresTileCache);
+        }
+        let handles = wgpu_device.core.clone();
+        let rast = VelloTileRasterizer::new(handles)
+            .map_err(|e| RendererError::VelloInit(format!("{:?}", e)))?;
+        Some(Mutex::new(rast))
+    } else {
+        None
+    };
+
     Ok(Renderer {
         wgpu_device,
         image_cache: Mutex::new(ImageCache::new()),
         nearest_sampler,
         bilinear_sampler,
         tile_cache,
+        vello_rasterizer,
     })
 }
