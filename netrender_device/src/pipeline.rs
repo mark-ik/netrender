@@ -190,6 +190,90 @@ pub fn build_brush_image(
     BrushImagePipeline { pipeline, layout }
 }
 
+/// Phase 10a.1 grayscale text pipeline. Same five-binding shape as
+/// `BrushImagePipeline`; the only delta is what's bound at slot 3
+/// (R8Unorm glyph atlas) and the fragment-side `.r × tint` swizzle.
+/// Always alpha-blended (no opaque-text path); depth-test only.
+#[derive(Clone)]
+pub struct BrushTextPipeline {
+    pub pipeline: wgpu::RenderPipeline,
+    pub layout: wgpu::BindGroupLayout,
+}
+
+/// Build the `ps_text_run` pipeline.
+///
+/// - `target_format`: color attachment format.
+/// - `depth_format`: when `Some`, attach a depth-stencil state with
+///   depth-test ON and depth-write OFF (matches alpha-pass policy
+///   from `BrushRectSolidPipeline` / `BrushImagePipeline`). `None`
+///   for off-screen passes that don't carry depth.
+///
+/// Always premultiplied-alpha blended. Subpixel-AA dual-source
+/// variant lands at 10a.4 as a sibling factory.
+pub fn build_brush_text(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+    depth_format: Option<wgpu::TextureFormat>,
+) -> BrushTextPipeline {
+    let layout = crate::binding::ps_text_run_layout(device);
+
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("ps_text_run"),
+        source: wgpu::ShaderSource::Wgsl(crate::shader::PS_TEXT_RUN_WGSL.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("ps_text_run pipeline layout"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+
+    let depth_stencil = depth_format.map(|fmt| wgpu::DepthStencilState {
+        format: fmt,
+        depth_write_enabled: Some(false),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    });
+
+    let label = if depth_format.is_some() {
+        "ps_text_run alpha"
+    } else {
+        "ps_text_run alpha nodepth"
+    };
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    BrushTextPipeline { pipeline, layout }
+}
+
 /// Analytic gradient kind, selected at pipeline-compile time via the
 /// WGSL `override GRADIENT_KIND` constant. The numeric values match
 /// the constants the shader compares against; do not renumber.

@@ -19,9 +19,9 @@ use crate::frame;
 use crate::pass::{self, DrawIntent, RenderPassTarget};
 use crate::pipeline::{
     BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, ClipRectanglePipeline, GradientKind, build_brush_blur,
-    build_brush_gradient, build_brush_image, build_brush_rect_solid,
-    build_brush_solid_specialized, build_clip_rectangle,
+    BrushSolidPipeline, BrushTextPipeline, ClipRectanglePipeline, GradientKind,
+    build_brush_blur, build_brush_gradient, build_brush_image, build_brush_rect_solid,
+    build_brush_solid_specialized, build_brush_text, build_clip_rectangle,
 };
 use crate::readback;
 use crate::texture::{TextureDesc, WgpuTexture};
@@ -51,6 +51,10 @@ pub struct WgpuDevice {
     brush_gradient: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>, bool, GradientKind), BrushGradientPipeline>>,
     // Cache key: (target_format, has_rounded_corners) — Phase 9A/9C
     clip_rectangle: Mutex<HashMap<(wgpu::TextureFormat, bool), ClipRectanglePipeline>>,
+    // Cache key: (color_format, depth_format) — Phase 10a.1.
+    // No alpha-blend dimension (text is always alpha-blend); subpixel
+    // dual-source variant lands at 10a.4 with its own cache map.
+    brush_text: Mutex<HashMap<(wgpu::TextureFormat, Option<wgpu::TextureFormat>), BrushTextPipeline>>,
 }
 
 impl WgpuDevice {
@@ -79,6 +83,7 @@ impl WgpuDevice {
             brush_blur: Mutex::new(HashMap::new()),
             brush_gradient: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
+            brush_text: Mutex::new(HashMap::new()),
         })
     }
 
@@ -94,6 +99,7 @@ impl WgpuDevice {
             brush_blur: Mutex::new(HashMap::new()),
             brush_gradient: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
+            brush_text: Mutex::new(HashMap::new()),
         })
     }
 
@@ -205,6 +211,24 @@ impl WgpuDevice {
         cache
             .entry((target_format, has_rounded_corners))
             .or_insert_with(|| build_clip_rectangle(&self.core.device, target_format, has_rounded_corners))
+            .clone()
+    }
+
+    /// Phase 10a.1 `ps_text_run` pipeline for `(color_format,
+    /// depth_format)`. Always alpha-blended, depth-test ON, depth-write
+    /// OFF. The atlas binding (slot 3) is always an R8Unorm view; layout
+    /// is locked at pipeline-build time, so 10a.4's dual-source variant
+    /// will live in a sibling cache map rather than as a per-call
+    /// override here.
+    pub fn ensure_brush_text(
+        &self,
+        color_format: wgpu::TextureFormat,
+        depth_format: wgpu::TextureFormat,
+    ) -> BrushTextPipeline {
+        let mut cache = self.brush_text.lock().expect("brush_text lock");
+        cache
+            .entry((color_format, Some(depth_format)))
+            .or_insert_with(|| build_brush_text(&self.core.device, color_format, Some(depth_format)))
             .clone()
     }
 

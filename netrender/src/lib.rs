@@ -25,6 +25,7 @@
 
 pub(crate) mod batch;
 mod compositor;
+pub(crate) mod glyph_atlas;
 pub(crate) mod image_cache;
 pub mod render_graph;
 mod renderer;
@@ -39,8 +40,8 @@ pub use crate::renderer::{
     ColorLoad, FrameTarget, PreparedFrame, Renderer, RendererError, ResourceRefs,
 };
 pub use crate::scene::{
-    GradientKind, GradientStop, ImageData, ImageKey, NO_CLIP, Scene, SceneGradient, SceneImage,
-    SceneRect, Transform,
+    GlyphInstance, GlyphKey, GlyphRaster, GradientKind, GradientStop, ImageData, ImageKey,
+    NO_CLIP, Scene, SceneGradient, SceneImage, SceneRect, SceneText, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
@@ -50,8 +51,8 @@ pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};
 // build `DrawIntent`s for `PreparedFrame`.
 pub use netrender_device::{
     BrushBlurPipeline, BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline,
-    BrushSolidPipeline, ClipRectanglePipeline, ColorAttachment, DepthAttachment, DrawIntent,
-    REQUIRED_FEATURES, RenderPassTarget, WgpuDevice, WgpuHandles, boot, build_brush_blur,
-    build_brush_gradient, build_brush_image, build_brush_rect_solid,
-    build_brush_solid_specialized, build_clip_rectangle,
+    BrushSolidPipeline, BrushTextPipeline, ClipRectanglePipeline, ColorAttachment,
+    DepthAttachment, DrawIntent, REQUIRED_FEATURES, RenderPassTarget, WgpuDevice, WgpuHandles,
+    boot, build_brush_blur, build_brush_gradient, build_brush_image, build_brush_rect_solid,
+    build_brush_solid_specialized, build_brush_text, build_clip_rectangle,
 };

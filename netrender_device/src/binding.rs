@@ -173,6 +173,72 @@ pub(crate) fn brush_image_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
     })
 }
 
+/// ps_text_run bind group layout (Phase 10a.1).
+///
+/// Five bindings, structurally identical to `brush_image_layout`: the
+/// only consumer-visible delta is what's bound at slot 3 (R8Unorm
+/// glyph atlas vs. RGBA8 image cache entry) and the shader's sample
+/// swizzle. NonFiltering sampler at slot 4; bilinear / subpixel
+/// positioning is a 10a.4 / 10b concern.
+pub(crate) fn ps_text_run_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("ps_text_run bind group layout"),
+        entries: &[
+            // 0: instances (storage, VERTEX)
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 1: transforms (storage, VERTEX)
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 2: per_frame (uniform, VERTEX)
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 3: atlas_texture (R8Unorm, NonFiltering, FRAGMENT)
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // 4: atlas_sampler (NonFiltering, FRAGMENT)
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                count: None,
+            },
+        ],
+    })
+}
+
 /// brush_gradient bind group layout (Phase 8D unified analytic
 /// gradient). Four bindings: instances (storage, VERTEX), transforms
 /// (storage, VERTEX), per_frame (uniform, VERTEX), and stops (storage,

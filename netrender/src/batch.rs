@@ -20,9 +20,11 @@
 use std::collections::HashMap;
 
 use netrender_device::{
-    BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline, DrawIntent, GradientKind,
+    BrushGradientPipeline, BrushImagePipeline, BrushRectSolidPipeline, BrushTextPipeline,
+    DrawIntent, GradientKind,
 };
 
+use crate::glyph_atlas::GlyphAtlas;
 use crate::image_cache::ImageCache;
 use crate::scene::{ImageKey, Scene};
 
@@ -76,8 +78,11 @@ pub(crate) fn build_rect_batch(
         return Vec::new();
     }
 
-    // Unified depth range shared with image + gradient batches.
-    let n_total = scene.rects.len() + scene.images.len() + scene.gradients.len();
+    // Unified depth range shared with image + gradient + text batches.
+    let n_total = scene.rects.len()
+        + scene.images.len()
+        + scene.gradients.len()
+        + scene.texts.len();
 
     let mut opaque_order: Vec<(usize, f32)> = Vec::new();
     let mut alpha_order: Vec<(usize, f32)> = Vec::new();
@@ -181,7 +186,7 @@ pub(crate) fn build_image_batch(
     }
 
     let n_rects = scene.rects.len();
-    let n_total = n_rects + scene.images.len() + scene.gradients.len();
+    let n_total = n_rects + scene.images.len() + scene.gradients.len() + scene.texts.len();
 
     // Classify: (painter_index_j, z, key)
     let mut opaque_items: Vec<(usize, f32, ImageKey)> = Vec::new();
@@ -362,7 +367,7 @@ pub(crate) fn build_gradient_batch(
 
     let n_rects = scene.rects.len();
     let n_images = scene.images.len();
-    let n_total = n_rects + n_images + scene.gradients.len();
+    let n_total = n_rects + n_images + scene.gradients.len() + scene.texts.len();
 
     // Build the per-frame stops storage buffer for the gradients that
     // pass the filter. Stride 32: vec4 color (16) + vec4 offset_pad
@@ -487,6 +492,123 @@ pub(crate) fn build_gradient_batch(
     }
 
     draws
+}
+
+// ── Text batch (Phase 10a.1 grayscale) ────────────────────────────────
+
+/// Build all [`DrawIntent`]s for `scene.texts`. Each text run becomes
+/// one `ps_text_run` draw call: the run's glyphs expand into per-quad
+/// instances sharing the run's tint color and z-depth. Glyph instances
+/// inside a run are emitted in the order they appear (left-to-right
+/// for shaped runs).
+///
+/// Z assignment: text runs occupy painter indices `[n_rects + n_images
+/// + n_gradients, n_total)`. Front-most (latest pushed) gets the
+/// smallest z and wins the depth test against earlier-drawn batches.
+/// All glyphs in one run share the run's z (text glyphs don't overlap
+/// each other meaningfully within a single run).
+///
+/// Per-frame `filter` is honored at the run level — filtered-out runs
+/// produce no quads. The batch builder skips any run whose glyph keys
+/// haven't been uploaded to the atlas yet (tests that forget
+/// `set_glyph_raster` will simply render nothing rather than crash).
+pub(crate) fn build_text_batch(
+    scene: &Scene,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipe: &BrushTextPipeline,
+    atlas: &GlyphAtlas,
+    sampler: &wgpu::Sampler,
+    frame_res: &FrameResources,
+    filter: PrimFilter<'_>,
+) -> Vec<DrawIntent> {
+    if scene.texts.is_empty() {
+        return Vec::new();
+    }
+
+    let n_rects = scene.rects.len();
+    let n_images = scene.images.len();
+    let n_gradients = scene.gradients.len();
+    let n_total = n_rects + n_images + n_gradients + scene.texts.len();
+
+    // Phase 10a.1: one DrawIntent per text run. Future optimisation
+    // (10a.5+) is to coalesce runs that share the atlas + frame_res
+    // into one draw, but per-run is fine for the receipt and keeps the
+    // builder shape obvious.
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut total_glyph_count: u32 = 0;
+    for (i, run) in scene.texts.iter().enumerate() {
+        if let Some(f) = filter {
+            if !f(i) {
+                continue;
+            }
+        }
+        let global_idx = n_rects + n_images + n_gradients + i;
+        let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
+        for g in &run.glyphs {
+            let slot = match atlas.get(g.key) {
+                Some(s) => s,
+                None => continue, // raster not registered — skip silently
+            };
+            // Pen position + bearings → device-pixel quad.
+            let x0 = g.x + slot.bearing_x as f32;
+            let y0 = g.y - slot.bearing_y as f32;
+            let x1 = x0 + slot.width as f32;
+            let y1 = y0 + slot.height as f32;
+            write_image_instance(
+                &mut bytes,
+                [x0, y0, x1, y1],
+                slot.uv_rect,
+                run.color,
+                run.clip_rect,
+                run.transform_id,
+                z,
+            );
+            total_glyph_count += 1;
+        }
+    }
+    if total_glyph_count == 0 {
+        return Vec::new();
+    }
+
+    let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("ps_text_run instances"),
+        size: bytes.len() as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&instances_buf, 0, &bytes);
+
+    let atlas_tex = atlas.texture();
+    let atlas_view = atlas_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ps_text_run bind group"),
+        layout: &pipe.layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: instances_buf.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: frame_res.transforms.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&atlas_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    });
+
+    vec![DrawIntent {
+        pipeline: pipe.pipeline.clone(),
+        bind_group,
+        vertex_buffers: vec![],
+        vertex_range: 0..4,
+        instance_range: 0..total_glyph_count,
+        dynamic_offsets: Vec::new(),
+        push_constants: Vec::new(),
+    }]
 }
 
 // ── Shared instance writers ───────────────────────────────────────────

@@ -33,3 +33,10 @@ pub(crate) const BRUSH_GRADIENT_WGSL: &str = include_str!("shaders/brush_gradien
 /// path (Phase 9C).
 pub(crate) const CS_CLIP_RECTANGLE_WGSL: &str =
     include_str!("shaders/cs_clip_rectangle.wgsl");
+
+/// Phase 10a.1 grayscale text shader. Samples the R8Unorm glyph
+/// atlas at slot 3, multiplies by the per-instance premultiplied
+/// tint, and outputs to a single color attachment with
+/// `PREMULTIPLIED_ALPHA_BLENDING`. Subpixel-AA dual-source variant
+/// lands at 10a.4.
+pub(crate) const PS_TEXT_RUN_WGSL: &str = include_str!("shaders/ps_text_run.wgsl");

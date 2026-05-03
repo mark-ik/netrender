@@ -9,9 +9,16 @@ use std::sync::Mutex;
 
 use netrender_device::{WgpuDevice, WgpuHandles};
 
+use crate::glyph_atlas::GlyphAtlas;
 use crate::image_cache::ImageCache;
 use crate::renderer::{Renderer, RendererError};
 use crate::tile_cache::TileCache;
+
+/// Phase 10a.1 default atlas extent. 1024×1024 R8Unorm (1 MiB) is
+/// many orders of magnitude oversized for the single-glyph receipt;
+/// the size knob moves to `NetrenderOptions` at 10a.5 when the tile-
+/// cache integration surfaces a real-text scene.
+const DEFAULT_GLYPH_ATLAS_SIZE: u32 = 1024;
 
 #[derive(Default)]
 pub struct NetrenderOptions {
@@ -65,9 +72,16 @@ pub fn create_netrender_instance(
         .tile_cache_size
         .map(|size| Mutex::new(TileCache::new(size)));
 
+    let glyph_atlas = Mutex::new(GlyphAtlas::new(
+        &wgpu_device.core.device,
+        DEFAULT_GLYPH_ATLAS_SIZE,
+        DEFAULT_GLYPH_ATLAS_SIZE,
+    ));
+
     Ok(Renderer {
         wgpu_device,
         image_cache: Mutex::new(ImageCache::new()),
+        glyph_atlas,
         nearest_sampler,
         bilinear_sampler,
         tile_cache,

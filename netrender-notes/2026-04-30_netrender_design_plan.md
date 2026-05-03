@@ -1091,6 +1091,161 @@ time.
 glyph runs authored directly into the harness — no shaping is
 exercised through netrender.
 
+**Implementation plan (2026-05-02)**: Phase 10a is the first phase
+that introduces a dependency outside the existing wgpu / png / serde
+stack (swash). Sequencing isolates the atlas + shader work from the
+rasterizer integration so the device-side and renderer-side shapes
+land before any non-Rust-only crate enters `Cargo.toml`.
+
+*Sub-phase ladder.*
+
+- **10a.1 — Glyph atlas + grayscale shader skeleton.** New
+  `ps_text_run.wgsl` (R8 atlas sample × premultiplied tint),
+  `BrushTextPipeline` + `build_brush_text` factory, atlas-shaped
+  bind-group layout (instances / transforms / per_frame /
+  atlas_texture / atlas_sampler), `WgpuDevice::ensure_brush_text`
+  cache, `GlyphAtlas` (R8Unorm shelf-packed), `Scene` extensions
+  (`GlyphKey`, `GlyphRaster`, `GlyphInstance`, `SceneText`,
+  `Scene::push_text_run`, `Scene::set_glyph_raster`),
+  `build_text_batch` in `batch.rs` extending the unified
+  `n_total = n_rects + n_images + n_gradients + n_texts` z-depth
+  math, wired through `prepare_direct`. Test fixture is a
+  hand-authored 5×7 'A' bitmap — no rasterizer dependency yet.
+  Receipt: `p10a_text.rs::p10a1_hand_authored_glyph` golden, ±2/255.
+- **10a.2 — `swash::Scaler` integration.** Add `swash` to
+  `netrender`'s `Cargo.toml`, author a `RasterContext` that wraps
+  `swash::scale::ScaleContext`, replace the hand-authored bitmap with
+  a swash rasterization of glyph 'A' from `Proggy.ttf` (already on
+  disk per Phase 0.5). Test: `p10a_text.rs::p10a2_swash_glyph`,
+  golden + a separate sanity test that the rasterized bitmap is
+  non-empty and roughly the expected size.
+- **10a.3 — Shaped-run API surface.** `Scene::push_text_run` already
+  takes a `Vec<GlyphInstance>`; 10a.3 polishes the shape: typed
+  `FontHandle` (an opaque `Arc<dyn AsFontRef>` or similar so
+  consumers can hand in their `Vec<u8>` font bytes via a Rc/Arc
+  without netrender owning the parse), per-glyph `position`
+  (subpixel-aware float pen position rounded inside the renderer),
+  per-glyph `kerning_advance` ignored (consumer-side concern). Test:
+  `p10a3_run_layout` two-glyph 'AB' with explicit positions.
+- **10a.4 — Subpixel-AA pipeline.** `ps_text_run_dual_source.wgsl`
+  plus a `BrushTextPipeline` variant that uses `Output { color, alpha }`
+  with `Features::DUAL_SOURCE_BLENDING`. Feature gating moves into
+  the pipeline factory (per Phase 0.5's `REQUIRED_FEATURES` demote
+  contract): `WgpuDevice::ensure_brush_text_dual_source` returns
+  `Option<BrushTextPipeline>` based on adapter feature presence;
+  `prepare_direct` falls back to the grayscale path when `None`.
+  Test: `p10a4_subpixel` runs both variants where the adapter
+  supports it, asserts the dual-source variant's RGB channels carry
+  per-channel coverage (for the same 'A' bitmap, R/G/B coverage
+  varies based on phase shift across the glyph's left edge).
+- **10a.5 — Tile-cache integration.** Mirror Phase 9's deferral
+  pattern: add `build_text_batch` calls and the text pipeline
+  ensure to `render_dirty_tiles_with_transforms` so tiled scenes
+  with text composite correctly. Receipt: `p10a5_text_tiled`
+  pixel-equivalent to direct path (±2/255) on a scrolling-text
+  scene.
+
+*GlyphKey shape (10a.1).* `{ font_id: u32, glyph_id: u32, size_x64:
+u32 }` — size in 1/64ths of a pixel matches the FreeType / swash
+26.6 fixed-point convention. Subpixel-position dimension added at
+10a.4 when the dual-source path needs to distinguish horizontal
+phases.
+
+*GlyphInstance bytes layout (10a.1).* 80-byte stride — same as
+`ImageInstance`. The `write_image_instance` helper from `batch.rs`
+is reused: text and image quads have identical per-instance shape
+(rect + uv + premultiplied color + clip + transform_id + z + 8B
+pad); the only Phase-5-vs-10a delta is what's bound at slot 3 (R8
+glyph atlas vs. RGBA8 image cache entry) and the fragment shader's
+sample swizzle (`.r` × tint vs. `.rgba` × tint).
+
+*Atlas allocation (10a.1).* Single 1024×1024 R8Unorm texture,
+bump-allocated row by row: `next_x` advances horizontally;
+`current_row_height = max(current_row_height, glyph.height)`; on
+horizontal overflow, wrap to a new row at `next_y +=
+current_row_height`. Vertical overflow panics for 10a.1 — eviction
+is a 10b sub-task. Initial atlas size is `NetrenderOptions`-tunable
+in 10a.5 when the tiling integration surfaces a real scene with
+many glyphs; until then, 1024×1024 is plenty for the 1-glyph test.
+
+*Atlas ownership* (resolved in parent §10 Q14): owned by
+`netrender`, lives in `Renderer::glyph_atlas: Mutex<GlyphAtlas>`
+parallel to `image_cache: Mutex<ImageCache>`. Per-frame
+`get_or_upload(key, raster)` in `prepare_direct` populates new
+glyphs; `Scene::glyph_rasters: HashMap<GlyphKey, GlyphRaster>`
+carries CPU bitmaps from the consumer until uploaded.
+
+*What 10a.1 explicitly defers.* Tile-cache integration (→ 10a.5),
+swash dependency (→ 10a.2), shaped-run polish (→ 10a.3), subpixel
+AA (→ 10a.4), atlas eviction (→ 10b). The point of 10a.1 is to land
+the bind-group / pipeline / batch / scene shape end-to-end with the
+smallest possible test fixture so 10a.2's swash integration is just
+a "replace the bitmap source" delta.
+
+**Status (2026-05-02, 10a.1 delivered)**: end-to-end text path lands
+on the `idiomatic-wgpu-pipeline` branch with the design above
+implemented exactly. New surface:
+
+- `netrender_device/src/shaders/ps_text_run.wgsl` — grayscale text
+  (R8 atlas sample × premultiplied tint).
+- `netrender_device::BrushTextPipeline` + `build_brush_text(device,
+  target_format, depth_format)` (always alpha-blend; depth-test ON,
+  depth-write OFF). Cache key `(color_format, Option<depth_format>)`
+  on `WgpuDevice`; `ensure_brush_text(color_format, depth_format)`
+  accessor mirroring `ensure_brush_image_alpha`.
+- `netrender_device::ps_text_run_layout` — 5 bindings, layout-shape
+  identical to `brush_image_layout`.
+- `netrender::glyph_atlas::GlyphAtlas` — single 1024×1024 R8Unorm
+  texture, bump-row packer, `Mutex` on `Renderer` parallel to
+  `image_cache`. Vertical overflow panics (eviction is 10b).
+- `netrender::Scene` extensions: `GlyphKey { font_id, glyph_id,
+  size_x64 }`, `GlyphRaster { width, height, bearing_x, bearing_y,
+  pixels }`, `GlyphInstance { key, x, y }`, `SceneText { glyphs,
+  color, transform_id, clip_rect }`, `Scene::push_text_run`,
+  `Scene::push_text_run_full`, `Scene::set_glyph_raster`,
+  `Scene.texts: Vec<SceneText>`, `Scene.glyph_rasters:
+  HashMap<GlyphKey, GlyphRaster>`.
+- `netrender::batch::build_text_batch` — one `DrawIntent` per text
+  run; all glyphs in a run share the run's z. Reuses
+  `write_image_instance` (the 80-byte per-instance layout matches).
+  Glyphs whose keys haven't been uploaded are silently skipped.
+- Unified `n_total = n_rects + n_images + n_gradients + n_texts`
+  z-depth assignment now extends across all four families;
+  `merge_draw_order` takes 4 lists. Rect / image / gradient batch
+  builders updated in lockstep.
+- `Renderer::prepare_direct` uploads new glyph rasters from
+  `scene.glyph_rasters` and runs `build_text_batch` after the
+  gradient builder. Tile-cache path (`render_dirty_tiles_with_transforms`)
+  intentionally untouched — text in tiled scenes is silently
+  skipped until 10a.5 wires it.
+
+Receipt — `tests/p10a_text.rs`, three tests, all green:
+
+- `p10a1_hand_authored_glyph` — golden PNG (`tests/oracle/p10a/`)
+  for a hand-authored 5×7 'A' bitmap rendered as white text on a
+  transparent 64×64 background. Tolerance 0.
+- `p10a1_pen_position_math` — programmatic pixel checks: glyph
+  crossbar at the expected device row, hole pixels are clear,
+  outside-bitmap pixels are clear. Verifies pen + bearing math
+  without depending on the goldens tooling.
+- `p10a1_run_groups_glyphs` — two-glyph run renders both glyphs at
+  the expected positions with a clear gap between them.
+
+Full test suite (22 binaries, 89 tests) green — no Phase 4-9
+regressions from the n_total expansion.
+
+**Carry-forwards for follow-up slices.**
+
+- The `merge_draw_order` 4-arg signature continues the same
+  duplication pattern as Phase 8C → 8D; if a fifth family lands
+  before 10a.5, refactor to a `Vec<Vec<DrawIntent>>` builder.
+- Tile-cache integration silently drops text (no warning, no test
+  failure) — 10a.5 receipt should include a "text in tiled scene"
+  pixel-equivalence check that would fail today, locking the gap.
+- Glyph atlas size is hardcoded `DEFAULT_GLYPH_ATLAS_SIZE = 1024`
+  in `init.rs`; promote to `NetrenderOptions` at 10a.5 alongside
+  the tile-cache plumbing.
+
 ### Phase 10b — Browser-grade text correctness
 
 10a paints glyph quads. 10b confronts the gap between "glyphs

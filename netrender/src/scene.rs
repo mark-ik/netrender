@@ -202,6 +202,75 @@ pub struct SceneGradient {
     pub clip_rect: [f32; 4],
 }
 
+/// Phase 10a.1 glyph identity. Keys uploads into the renderer-owned
+/// glyph atlas. Caller-assigned (consumer typically uses
+/// `(font_id, glyph_id, size_x64)` from its shaper / font enumeration).
+///
+/// `size_x64` is the requested pixel size in 1/64ths of a pixel (the
+/// 26.6 fixed-point convention shared by FreeType and swash). 10a.1
+/// stores it but does no rasterization itself; the consumer hands in
+/// pre-rasterized [`GlyphRaster`] bitmaps via `Scene::set_glyph_raster`.
+/// 10a.4 will extend this with a `subpixel_x: u8` dimension when the
+/// dual-source pipeline lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlyphKey {
+    pub font_id: u32,
+    pub glyph_id: u32,
+    pub size_x64: u32,
+}
+
+/// CPU-side rasterized glyph bitmap. Format: R8 coverage, row-major,
+/// tightly packed (`width` bytes per row). Premultiplication happens
+/// on the shader side (atlas sample × premultiplied tint).
+///
+/// `bearing_x` / `bearing_y` are the standard FreeType / swash glyph
+/// metrics — the offset from the pen position to the bitmap's top-left
+/// corner. `bearing_y` is positive *up* from the baseline (so a glyph
+/// that sits on the baseline has `bearing_y = 0`; a 'g' that descends
+/// has `bearing_y < 0` for its descender; an 'A' typically has
+/// `bearing_y = ascent_height`).
+#[derive(Debug, Clone)]
+pub struct GlyphRaster {
+    pub width: u32,
+    pub height: u32,
+    pub bearing_x: i32,
+    pub bearing_y: i32,
+    /// R8 coverage bytes; `len()` must equal `width * height`.
+    pub pixels: Vec<u8>,
+}
+
+/// One placed glyph in a [`SceneText`] run. The pen position is
+/// device-pixel (the baseline origin); the renderer combines it with
+/// the atlas slot's bearings to compute the per-glyph quad.
+#[derive(Debug, Clone, Copy)]
+pub struct GlyphInstance {
+    pub key: GlyphKey,
+    /// Pen position in **local space** — combined with `bearing_x` /
+    /// `bearing_y` from the atlas slot to compute the quad's bounds.
+    /// Local space is in device pixels when `transform_id == 0`.
+    pub x: f32,
+    pub y: f32,
+}
+
+/// One text run: a list of placed glyphs sharing a tint color, a
+/// transform, and a clip. Each glyph in the run becomes one
+/// per-instance quad in the `ps_text_run` draw call; quads inside a
+/// run share the run's z-depth.
+///
+/// A text run is rendered through the alpha-blended `ps_text_run`
+/// pipeline (text is always alpha-blended — coverage is in `[0, 1]`).
+#[derive(Debug, Clone)]
+pub struct SceneText {
+    pub glyphs: Vec<GlyphInstance>,
+    /// Premultiplied RGBA tint applied to every glyph in the run.
+    /// `[1, 1, 1, 1]` = white opaque text.
+    pub color: [f32; 4],
+    /// Index into `Scene::transforms`; `0` = identity.
+    pub transform_id: u32,
+    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    pub clip_rect: [f32; 4],
+}
+
 /// One textured rectangle. UV corners map the image onto the rect;
 /// the tint color is multiplied element-wise with the sampled value
 /// (premultiplied; `[1,1,1,1]` = no tint).
@@ -249,12 +318,20 @@ pub struct Scene {
     /// gradient families into one list — push order is preserved
     /// across kinds, including within-frame interleaving.
     pub gradients: Vec<SceneGradient>,
+    /// Phase 10a.1 text runs in painter order. Each run paints in
+    /// front of all rects / images / gradients (text overlays UI).
+    pub texts: Vec<SceneText>,
     /// Transform palette. Index 0 is always identity.
     pub transforms: Vec<Transform>,
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
     /// each entry is uploaded to the GPU and cached there. Subsequent
     /// frames may omit data for already-cached keys.
     pub image_sources: HashMap<ImageKey, ImageData>,
+    /// Phase 10a.1 CPU-side glyph bitmaps keyed by `GlyphKey`. On
+    /// first `prepare()`, each entry is uploaded to the renderer's
+    /// glyph atlas and cached there. Subsequent frames may omit
+    /// rasters for already-cached keys.
+    pub glyph_rasters: HashMap<GlyphKey, GlyphRaster>,
 }
 
 impl Scene {
@@ -265,8 +342,10 @@ impl Scene {
             rects: Vec::new(),
             images: Vec::new(),
             gradients: Vec::new(),
+            texts: Vec::new(),
             transforms: vec![Transform::IDENTITY], // index 0 = identity
             image_sources: HashMap::new(),
+            glyph_rasters: HashMap::new(),
         }
     }
 
@@ -489,6 +568,48 @@ impl Scene {
             uv,
             color,
             key,
+            transform_id,
+            clip_rect,
+        });
+    }
+
+    /// Phase 10a.1: register a CPU-side glyph bitmap for `key`.
+    /// Subsequent `prepare()` calls upload it to the renderer's atlas
+    /// on first observation; once cached, the renderer ignores
+    /// further entries for the same key.
+    pub fn set_glyph_raster(&mut self, key: GlyphKey, raster: GlyphRaster) {
+        self.glyph_rasters.entry(key).or_insert(raster);
+    }
+
+    /// Phase 10a.1: append one text run. The consumer hands in
+    /// pre-shaped glyph instances (positions + keys); netrender
+    /// rasterizes nothing in 10a.1 — the consumer must also call
+    /// `set_glyph_raster` for any key that hasn't already been
+    /// uploaded. 10a.3 will accept a typed font handle here.
+    pub fn push_text_run(
+        &mut self,
+        glyphs: Vec<GlyphInstance>,
+        color: [f32; 4],
+    ) {
+        self.texts.push(SceneText {
+            glyphs,
+            color,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+        });
+    }
+
+    /// Phase 10a.1 with full control over transform and clip.
+    pub fn push_text_run_full(
+        &mut self,
+        glyphs: Vec<GlyphInstance>,
+        color: [f32; 4],
+        transform_id: u32,
+        clip_rect: [f32; 4],
+    ) {
+        self.texts.push(SceneText {
+            glyphs,
+            color,
             transform_id,
             clip_rect,
         });

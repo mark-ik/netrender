@@ -42,8 +42,9 @@ use netrender_device::{
 
 use crate::batch::{
     FrameResources, GradientPipelines, build_gradient_batch, build_image_batch, build_rect_batch,
-    make_per_frame_buf_for_rect, make_transforms_buf, write_image_instance,
+    build_text_batch, make_per_frame_buf_for_rect, make_transforms_buf, write_image_instance,
 };
+use crate::glyph_atlas::GlyphAtlas;
 use crate::image_cache::ImageCache;
 use crate::scene::{GradientKind, ImageKey, Scene};
 use crate::tile_cache::{TileCache, TileCoord, aabb_intersects, world_aabb};
@@ -51,6 +52,11 @@ use crate::tile_cache::{TileCache, TileCoord, aabb_intersects, world_aabb};
 pub struct Renderer {
     pub wgpu_device: WgpuDevice,
     pub(crate) image_cache: Mutex<ImageCache>,
+    /// Phase 10a.1 glyph atlas — single R8Unorm texture, bump-row
+    /// packer. Owned by the renderer per parent §10 Q14 (atlas lives
+    /// inside the WebRender consumer). Tile-cache integration is
+    /// deferred to 10a.5.
+    pub(crate) glyph_atlas: Mutex<GlyphAtlas>,
     pub(crate) nearest_sampler: wgpu::Sampler,
     /// Bilinear-clamp sampler for blur and filter tasks in the render graph.
     pub bilinear_sampler: wgpu::Sampler,
@@ -146,6 +152,10 @@ impl Renderer {
             .ensure_brush_image_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
         // Phase 8D: one gradient pipeline per (kind, alpha_class) — 6 total.
         let gradient_pipes = self.ensure_gradient_pipelines(Self::COLOR_FORMAT);
+        // Phase 10a.1 grayscale text pipeline. Always alpha-blended.
+        let text_pipe = self
+            .wgpu_device
+            .ensure_brush_text(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
 
         let depth_tex = self.wgpu_device.core.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("netrender depth"),
@@ -176,6 +186,14 @@ impl Renderer {
             }
         }
 
+        // Phase 10a.1: upload any new glyph rasters to the atlas.
+        {
+            let mut atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
+            for (key, raster) in &scene.glyph_rasters {
+                atlas.get_or_upload(*key, raster, &self.wgpu_device.core.queue);
+            }
+        }
+
         let device = &self.wgpu_device.core.device;
         let queue = &self.wgpu_device.core.queue;
 
@@ -202,10 +220,20 @@ impl Renderer {
         let gradient_draws =
             build_gradient_batch(scene, device, queue, &gradient_pipes, &frame_res, None);
 
-        // Concat: rects → images → gradients. Each batch emits opaques
-        // first then alphas; cross-batch correctness comes from the
-        // unified z_depth assignment.
-        let draws = merge_draw_order(rect_draws, image_draws, gradient_draws);
+        // Phase 10a.1: text draws. One draw per text run; each run's
+        // glyphs share the run's z, so text overlays UI cleanly.
+        let text_draws = {
+            let atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
+            build_text_batch(
+                scene, device, queue, &text_pipe, &atlas,
+                &self.nearest_sampler, &frame_res, None,
+            )
+        };
+
+        // Concat: rects → images → gradients → texts. Each batch emits
+        // opaques first then alphas (text is alpha-only); cross-batch
+        // correctness comes from the unified z_depth assignment.
+        let draws = merge_draw_order(rect_draws, image_draws, gradient_draws, text_draws);
 
         PreparedFrame {
             draws,
@@ -625,14 +653,17 @@ impl Renderer {
 /// `n_total`-based z_depth so the front-most primitive (any family)
 /// wins the depth test. Family painter order: rects → images →
 /// gradients (linear / radial / conic interleaved by user push order
-/// inside `gradient_draws`).
+/// inside `gradient_draws`) → text runs (one draw per `SceneText`,
+/// glyphs share the run's z).
 fn merge_draw_order(
     mut rect_draws: Vec<DrawIntent>,
     image_draws: Vec<DrawIntent>,
     gradient_draws: Vec<DrawIntent>,
+    text_draws: Vec<DrawIntent>,
 ) -> Vec<DrawIntent> {
     rect_draws.extend(image_draws);
     rect_draws.extend(gradient_draws);
+    rect_draws.extend(text_draws);
     rect_draws
 }
 
