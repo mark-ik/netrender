@@ -797,9 +797,25 @@ impl GpuResources for WgpuDevice {
         // renderer's render-target-cache machinery wires through this trait.
     }
 
-    fn create_fbo(&mut self) -> Self::RenderTargetHandle { unimplemented!() }
-    fn create_fbo_for_external_texture(&mut self, _texture_id: u32) -> Self::RenderTargetHandle { unimplemented!() }
-    fn delete_fbo(&mut self, _fbo: Self::RenderTargetHandle) { unimplemented!() }
+    fn create_fbo(&mut self) -> Self::RenderTargetHandle {
+        // wgpu has no FBO concept — render passes attach a TextureView
+        // directly when started, no separate FBO object. We hand back an
+        // opaque marker; the renderer's actual render-pass attachment
+        // uses the WgpuTexture's view (P5). The handle is stable but
+        // unused at draw time.
+        WgpuRenderTargetHandle
+    }
+    fn create_fbo_for_external_texture(&mut self, _texture_id: u32) -> Self::RenderTargetHandle {
+        // Same as create_fbo. The texture_id parameter is a raw GLuint
+        // intended to tell the GL device which external texture to
+        // attach; for wgpu, external-texture interop happens through a
+        // separate path (binding a host wgpu::Texture/TextureView), not
+        // via this trait method.
+        WgpuRenderTargetHandle
+    }
+    fn delete_fbo(&mut self, _fbo: Self::RenderTargetHandle) {
+        // Marker-only; nothing to release.
+    }
 
     fn create_pbo(&mut self) -> Self::Pbo {
         WgpuPbo { buffer: None, size: 0 }
@@ -940,13 +956,29 @@ impl GpuResources for WgpuDevice {
 
     fn map_pbo_for_readback<'a>(&'a mut self, _pbo: &'a Self::Pbo) -> Option<Self::BoundPbo<'a>> { unimplemented!() }
 
-    fn attach_read_texture(&mut self, _texture: &Self::Texture) { unimplemented!() }
+    fn attach_read_texture(&mut self, _texture: &Self::Texture) {
+        // GL: binds a texture as the current GL_READ_FRAMEBUFFER attachment
+        // for subsequent glReadPixels. wgpu reads happen via
+        // copy_texture_to_buffer + buffer mapping (see
+        // upload_texture_immediate_writes_pixels test for the pattern); no
+        // long-lived "attached read texture" state exists. The renderer's
+        // calls to this method are honored implicitly by passing the right
+        // texture to its readback paths when they land (P5+).
+    }
 
     fn required_upload_size_and_stride(
         &self,
-        _size: DeviceIntSize,
-        _format: ImageFormat,
-    ) -> (usize, usize) { unimplemented!() }
+        size: DeviceIntSize,
+        format: ImageFormat,
+    ) -> (usize, usize) {
+        // Aligned-row pitch for buffer-to-texture copies: 256-byte aligned
+        // per wgpu's COPY_BYTES_PER_ROW_ALIGNMENT.
+        let bytes_per_pixel = format.bytes_per_pixel() as usize;
+        let unaligned = (size.width.max(0) as usize) * bytes_per_pixel;
+        let stride = (unaligned + 255) & !255;
+        let total = stride * (size.height.max(0) as usize);
+        (total, stride)
+    }
 }
 
 impl GpuPass for WgpuDevice {
