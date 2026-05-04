@@ -31,7 +31,8 @@ use std::hash::Hasher;
 use std::sync::Arc;
 
 use crate::scene::{
-    PathOp, Scene, SceneGradient, SceneImage, SceneRect, SceneShape, SceneStroke, Transform,
+    PathOp, Scene, SceneGlyphRun, SceneGradient, SceneImage, SceneRect, SceneShape, SceneStroke,
+    Transform,
 };
 
 /// Integer (col, row) coordinate of a tile within the cache grid.
@@ -210,6 +211,13 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
             }
         }
     }
+    for run in &scene.glyph_runs {
+        if let Some(aabb) = world_aabb_glyph_run(run, scene) {
+            if aabb_intersects(aabb, tile_rect) {
+                hash_glyph_run(&mut hasher, run);
+            }
+        }
+    }
 
     hasher.finish()
 }
@@ -248,6 +256,27 @@ fn hash_image(h: &mut DefaultHasher, i: &SceneImage) {
         h.write_u32(c.to_bits());
     }
     for c in i.clip_corner_radii {
+        h.write_u32(c.to_bits());
+    }
+}
+
+fn hash_glyph_run(h: &mut DefaultHasher, r: &SceneGlyphRun) {
+    h.write_u32(r.font_id);
+    h.write_u32(r.font_size.to_bits());
+    h.write_usize(r.glyphs.len());
+    for g in &r.glyphs {
+        h.write_u32(g.id);
+        h.write_u32(g.x.to_bits());
+        h.write_u32(g.y.to_bits());
+    }
+    for c in r.color {
+        h.write_u32(c.to_bits());
+    }
+    h.write_u32(r.transform_id);
+    for c in r.clip_rect {
+        h.write_u32(c.to_bits());
+    }
+    for c in r.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
 }
@@ -374,6 +403,29 @@ fn world_aabb_image(image: &SceneImage, scene: &Scene) -> [f32; 4] {
 
 fn world_aabb_gradient(g: &SceneGradient, scene: &Scene) -> [f32; 4] {
     world_aabb([g.x0, g.y0, g.x1, g.y1], g.transform_id, scene)
+}
+
+pub(crate) fn world_aabb_glyph_run(r: &SceneGlyphRun, scene: &Scene) -> Option<[f32; 4]> {
+    if r.glyphs.is_empty() {
+        return None;
+    }
+    // Conservative AABB: bounding box of glyph origins inflated by
+    // ±font_size on each axis to cover ascenders / descenders /
+    // wide glyph extents. Real per-glyph bounds need font metrics
+    // we don't load here; this overestimates safely.
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for g in &r.glyphs {
+        if g.x < min_x { min_x = g.x; }
+        if g.y < min_y { min_y = g.y; }
+        if g.x > max_x { max_x = g.x; }
+        if g.y > max_y { max_y = g.y; }
+    }
+    let pad = r.font_size;
+    let inflated = [min_x - pad, min_y - pad, max_x + pad, max_y + pad];
+    Some(world_aabb(inflated, r.transform_id, scene))
 }
 
 pub(crate) fn world_aabb_shape(s: &SceneShape, scene: &Scene) -> Option<[f32; 4]> {

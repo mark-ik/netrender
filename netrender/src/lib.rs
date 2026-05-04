@@ -38,9 +38,9 @@ pub use crate::render_graph::{EncodeCallback, RenderGraph, Task, TaskId};
 pub use crate::renderer::init::{NetrenderOptions, create_netrender_instance};
 pub use crate::renderer::{ColorLoad, Renderer, RendererError};
 pub use crate::scene::{
-    GradientKind, GradientStop, ImageData, ImageKey, NO_CLIP, PathOp, SHARP_CLIP, Scene,
-    SceneGradient, SceneImage, ScenePath, ScenePathStroke, SceneRect, SceneShape, SceneStroke,
-    Transform,
+    FontBlob, FontId, Glyph, GradientKind, GradientStop, ImageData, ImageKey, NO_CLIP, PathOp,
+    SHARP_CLIP, Scene, SceneGlyphRun, SceneGradient, SceneImage, ScenePath, ScenePathStroke,
+    SceneRect, SceneShape, SceneStroke, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 

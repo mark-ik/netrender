@@ -52,13 +52,13 @@ use std::sync::Arc;
 
 use vello::kurbo::{Affine, BezPath, Point, Rect, RoundedRect, RoundedRectRadii, Stroke};
 use vello::peniko::{
-    self, BlendMode, Blob, Color, ColorStop, Compose, Fill, Gradient, ImageAlphaType, ImageBrush,
-    ImageData, ImageFormat, Mix,
+    self, BlendMode, Blob, Color, ColorStop, Compose, Fill, FontData, Gradient, ImageAlphaType,
+    ImageBrush, ImageData, ImageFormat, Mix,
 };
 
 use crate::scene::{
-    GradientKind, ImageKey, NO_CLIP, PathOp, Scene, SceneGradient, SceneImage, SceneRect,
-    SceneShape, SceneStroke, Transform,
+    FontBlob, GradientKind, ImageKey, NO_CLIP, PathOp, Scene, SceneGlyphRun, SceneGradient,
+    SceneImage, SceneRect, SceneShape, SceneStroke, Transform,
 };
 
 /// Translate a netrender [`Scene`] into a [`vello::Scene`] suitable
@@ -109,6 +109,9 @@ pub fn scene_to_vello_with_overrides(
     for shape in &scene.shapes {
         emit_shape(&mut vscene, shape, &scene.transforms);
     }
+    for run in &scene.glyph_runs {
+        emit_glyph_run(&mut vscene, run, &scene.fonts, &scene.transforms);
+    }
 
     vscene
 }
@@ -154,6 +157,45 @@ fn emit_rect(vscene: &mut vello::Scene, rect: &SceneRect, transforms: &[Transfor
         push_clip_layer(vscene, rect.clip_rect, rect.clip_corner_radii);
     }
     vscene.fill(Fill::NonZero, affine, color, None, &shape);
+    if needs_clip {
+        vscene.pop_layer();
+    }
+}
+
+fn emit_glyph_run(
+    vscene: &mut vello::Scene,
+    run: &SceneGlyphRun,
+    fonts: &[FontBlob],
+    transforms: &[Transform],
+) {
+    if run.font_id == 0 || run.glyphs.is_empty() {
+        return;
+    }
+    let blob = &fonts[run.font_id as usize];
+    let font_data = FontData {
+        data: Blob::new(blob.data.clone()),
+        index: blob.index,
+    };
+    let world = transform_to_affine(&transforms[run.transform_id as usize]);
+    let color = unpremultiply_color(run.color);
+
+    let needs_clip = run.clip_rect != NO_CLIP;
+    if needs_clip {
+        push_clip_layer(vscene, run.clip_rect, run.clip_corner_radii);
+    }
+
+    let glyphs_iter = run.glyphs.iter().map(|g| vello::Glyph {
+        id: g.id,
+        x: g.x,
+        y: g.y,
+    });
+    vscene
+        .draw_glyphs(&font_data)
+        .font_size(run.font_size)
+        .transform(world)
+        .brush(color)
+        .draw(Fill::NonZero, glyphs_iter);
+
     if needs_clip {
         vscene.pop_layer();
     }

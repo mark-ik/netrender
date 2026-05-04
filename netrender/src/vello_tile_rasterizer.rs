@@ -266,6 +266,10 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
 
     let mut filtered = Scene::new(scene.viewport_width, scene.viewport_height);
     filtered.transforms = scene.transforms.clone();
+    // Fonts are cloned (Arc-shared payload — clone is cheap).
+    // Resolved by font_id in emit_glyph_run; the filtered Scene
+    // needs the same palette as the source.
+    filtered.fonts = scene.fonts.clone();
     // Image cache is supplied by the rasterizer's image_data via
     // overrides at scene_to_vello time, so we can leave
     // image_sources empty here — saves a HashMap clone.
@@ -314,6 +318,13 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
         if let Some(aabb) = crate::tile_cache::world_aabb_shape(shape, scene) {
             if aabb_intersects(aabb, tile_rect) {
                 filtered.shapes.push(shape.clone());
+            }
+        }
+    }
+    for run in &scene.glyph_runs {
+        if let Some(aabb) = crate::tile_cache::world_aabb_glyph_run(run, scene) {
+            if aabb_intersects(aabb, tile_rect) {
+                filtered.glyph_runs.push(run.clone());
             }
         }
     }

@@ -275,6 +275,65 @@ pub struct SceneStroke {
     pub clip_corner_radii: [f32; 4],
 }
 
+/// Phase 10a' opaque handle into [`Scene::fonts`]. Returned by
+/// [`Scene::push_font`]. Values are stable indices into the per-
+/// frame font palette; index `0` is reserved for "no font".
+pub type FontId = u32;
+
+/// Phase 10a' font payload. Wraps a CPU-side TTF / OTF blob plus an
+/// index for font collections (TTC). The translator builds a
+/// `peniko::FontData` from this on demand; the wrapper exists so
+/// netrender's Scene API doesn't leak peniko types.
+#[derive(Debug, Clone)]
+pub struct FontBlob {
+    /// Raw font bytes (TTF / OTF / TTC). `Arc`-shared so multiple
+    /// scenes can reference the same font without copying.
+    pub data: std::sync::Arc<Vec<u8>>,
+    /// Index within the collection. `0` for single-font files.
+    pub index: u32,
+}
+
+/// Phase 10a' single glyph entry — id + position. Matches
+/// `vello::Glyph`'s shape so the translator passes through with
+/// minimal conversion. Caller is responsible for shaping (turning
+/// strings into glyph IDs + positions); netrender doesn't do
+/// layout. See plan §4.4.
+#[derive(Debug, Clone, Copy)]
+pub struct Glyph {
+    /// Glyph index within the font's outline table.
+    pub id: u32,
+    /// Glyph origin x in local space (typically the baseline left
+    /// edge after shaping advance).
+    pub x: f32,
+    /// Glyph origin y in local space (baseline).
+    pub y: f32,
+}
+
+/// Phase 10a' glyph run primitive — a sequence of glyphs from one
+/// font, painted with one solid color. Vello's
+/// `Scene::draw_glyphs(font).font_size(s).brush(c).draw(...)`
+/// builder is the rasterization target.
+#[derive(Debug, Clone)]
+pub struct SceneGlyphRun {
+    /// Font palette index. Use [`Scene::push_font`] to register a
+    /// font and obtain this id.
+    pub font_id: FontId,
+    /// Font size in pixels per em.
+    pub font_size: f32,
+    /// Glyph sequence. Each carries an id (font-internal) and a
+    /// local-space origin position; the translator hands them to
+    /// vello unchanged.
+    pub glyphs: Vec<Glyph>,
+    /// Premultiplied RGBA brush color for the entire run.
+    pub color: [f32; 4],
+    /// Index into `Scene::transforms`; `0` = identity.
+    pub transform_id: u32,
+    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    pub clip_rect: [f32; 4],
+    /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
+    pub clip_corner_radii: [f32; 4],
+}
+
 /// Phase 11b' path operation. The `ScenePath` builder produces a
 /// `Vec<PathOp>` that the vello translator converts into a
 /// `kurbo::BezPath`. Coordinates are in local space; the
@@ -431,6 +490,13 @@ pub struct Scene {
     /// shapes for SVG-style content, custom node frames, etc.
     /// Painter order: shapes paint last, after images.
     pub shapes: Vec<SceneShape>,
+    /// Phase 10a' glyph runs — text. Painter order: glyph runs
+    /// paint after shapes (text-on-top is the typical case).
+    pub glyph_runs: Vec<SceneGlyphRun>,
+    /// Phase 10a' font palette. Index `0` is reserved (panic on
+    /// push_glyph_run with `font_id = 0`); real fonts start at
+    /// index 1.
+    pub fonts: Vec<FontBlob>,
     /// Transform palette. Index 0 is always identity.
     pub transforms: Vec<Transform>,
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
@@ -449,6 +515,13 @@ impl Scene {
             gradients: Vec::new(),
             strokes: Vec::new(),
             shapes: Vec::new(),
+            glyph_runs: Vec::new(),
+            // Index 0 reserved as a no-font sentinel; real fonts
+            // start at index 1.
+            fonts: vec![FontBlob {
+                data: std::sync::Arc::new(Vec::new()),
+                index: 0,
+            }],
             transforms: vec![Transform::IDENTITY], // index 0 = identity
             image_sources: HashMap::new(),
         }
@@ -702,6 +775,60 @@ impl Scene {
             transform_id,
             clip_rect,
             clip_corner_radii: SHARP_CLIP,
+        });
+    }
+
+    /// Phase 10a': register a font with the scene. Returns a
+    /// non-zero `FontId` that subsequent `push_glyph_run` calls
+    /// reference. Index 0 is a reserved no-font sentinel; the
+    /// first call returns 1.
+    pub fn push_font(&mut self, blob: FontBlob) -> FontId {
+        let id = self.fonts.len() as u32;
+        self.fonts.push(blob);
+        id
+    }
+
+    /// Phase 10a': append a glyph run. Caller is responsible for
+    /// shaping (turning a string into glyph IDs + positions); see
+    /// plan §4.4 for the layout-layer story.
+    pub fn push_glyph_run(
+        &mut self,
+        font_id: FontId,
+        font_size: f32,
+        glyphs: Vec<Glyph>,
+        color: [f32; 4],
+    ) {
+        self.glyph_runs.push(SceneGlyphRun {
+            font_id,
+            font_size,
+            glyphs,
+            color,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+        });
+    }
+
+    /// Phase 10a': append a glyph run with full control over
+    /// transform and clip.
+    pub fn push_glyph_run_full(
+        &mut self,
+        font_id: FontId,
+        font_size: f32,
+        glyphs: Vec<Glyph>,
+        color: [f32; 4],
+        transform_id: u32,
+        clip_rect: [f32; 4],
+        clip_corner_radii: [f32; 4],
+    ) {
+        self.glyph_runs.push(SceneGlyphRun {
+            font_id,
+            font_size,
+            glyphs,
+            color,
+            transform_id,
+            clip_rect,
+            clip_corner_radii,
         });
     }
 
