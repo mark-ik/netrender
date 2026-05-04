@@ -2,9 +2,6 @@
 members = [
     "netrender_device",
     "netrender",
-    "webrender_api",
-    "wr_malloc_size_of",
-    "peek-poke",
 ]
 resolver = "2"
 
