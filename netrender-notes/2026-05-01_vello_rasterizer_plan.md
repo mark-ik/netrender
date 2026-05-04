@@ -1129,10 +1129,26 @@ plan's Phase X.
   blocking for graphshell-shaped UI (rounded-rect is the 95%
   case). Lift if/when SVG `clipPath` or non-rectangular UI
   shapes show up in real consumer scenes.
-- ⏳ **Phase 10'**: text via `Scene::draw_glyphs` + skrifa. Layout
-  stays embedder-side per §4.4 (parley for embedders without an
-  existing layout layer). Bigger lift; needs glyph-run plumbing
-  in the netrender Scene API.
+- ✅ **Phase 10'**: text via `Scene::draw_glyphs` + skrifa. Layout
+  stays embedder-side per §4.4. Two slices delivered:
+  - 10a' Scene API plumbing — `FontBlob`, `Glyph`,
+    `SceneGlyphRun`, `Scene::push_font` + `push_glyph_run`,
+    translator `emit_glyph_run`, tile-cache hash + AABB filter.
+    Receipt: `p10prime_a_glyph_api` (5 data-structure probes).
+  - 10b' real-font GPU smoke. Loads Arial (or DejaVu / Liberation
+    on non-Windows) from a system font path, registers it,
+    renders 5 glyphs at 32px through `render_vello`, reads back
+    and verifies non-zero painted pixels. Skipped vacuously if
+    no known system font path exists. Receipt:
+    `p10prime_b_glyph_render`.
+
+  Netrender doesn't bundle a font (license / repo-size tradeoff);
+  consumers needing deterministic CI text rendering bundle a
+  permissive TTF (Roboto, Inter, etc.) under `tests/data/` per
+  their own discretion. Layout (shaping, BiDi, line breaking,
+  font fallback) stays embedder-side: Servo lowers via its
+  existing `gfx` + harfrust + inline-layout stack; embedders
+  without an existing layout layer are pointed at parley.
 - ✅ **Phase 11'**: borders / box shadows / line decorations.
   Three slices delivered:
   - 11a' rect / rounded-rect strokes (`SceneStroke` +
