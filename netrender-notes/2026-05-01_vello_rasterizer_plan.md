@@ -1167,12 +1167,40 @@ plan's Phase X.
     `make_bilinear_sampler`) were promoted from
     `tests/common/mod.rs` to the public `netrender::filter`
     module to support this helper.
-- ⏳ **Phase 12'**: compositing correctness — filter chains, nested
-  isolation, group opacity, backdrop filters. Vello does the
-  in-picture parts; render-task graph does between-picture parts.
-  Color-space contract (§6.3) constrains what's reachable here:
-  `mix-blend-mode: linear-light` and similar are upstream-blocked
-  on vello GPU compute path.
+- 🚧 **Phase 12'**: compositing correctness. **12a' scene-level
+  alpha + blend mode delivered** (2026-05-04): the new
+  `Scene.root_alpha` and `Scene.root_blend_mode: SceneBlendMode`
+  fields apply a single outer `push_layer` wrap to the master
+  scene at compose time. Maps to
+  vello's `BlendMode { mix, compose: SrcOver }` with mix variants
+  Normal / Multiply / Screen / Overlay / Darken / Lighten. No
+  outer layer is added when settings are at defaults — simple
+  scenes pay nothing. Receipt: `p12prime_a_scene_compositing` (4
+  probes: alpha fade, default no-op, multiply blend over a base
+  color, tile-cache invalidation on alpha change).
+
+  **Deferred** to a future sub-phase pending Scene API
+  architectural decisions:
+  - **Nested groups** — per-element opacity that composites a
+    stack of overlapping primitives at < 1.0 alpha as a unit
+    (distinct from per-primitive alpha which already works).
+    Requires the Scene to express nesting; today the painter
+    order is by-primitive-type, which forecloses this. Lift if
+    consumer needs whole-element fade animations on stacks of
+    overlapping content.
+  - **Backdrop filters** (`backdrop-filter: blur(...)`) — reads
+    pixels under the element. Vello's render_to_texture always
+    overwrites the entire target; backdrop filters require
+    multi-pass rendering (snapshot under-pixels → filter →
+    composite over). Architectural change.
+  - **Filter chains** beyond the existing
+    `Renderer::build_box_shadow_mask` (Phase 11c'). The render-
+    graph + insert_image_vello pattern can be extended for one-
+    off filters (drop-shadow, brightness, etc.); ergonomic
+    helpers land per consumer demand.
+  - **Color-space contract** (§6.3): `mix-blend-mode: linear-
+    light` and similar are upstream-blocked on vello's GPU
+    compute path. Tracked.
 - ⏳ **Phase 13'**: native compositor (axiom 14). Unchanged from
   parent. Lost the trivial-handoff property at Phase 7' (per §2.4);
   v1.5 fallback (whole-frame vello + post-render tile slicing for

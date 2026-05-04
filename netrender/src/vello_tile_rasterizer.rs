@@ -48,14 +48,26 @@ use std::sync::Arc;
 use vello::{
     AaConfig, AaSupport, RenderParams, Renderer, RendererOptions,
     kurbo::{Affine, Rect},
-    peniko::{Blob, Color, Fill, ImageAlphaType, ImageData, ImageFormat, Mix},
+    peniko::{BlendMode, Blob, Color, Compose, Fill, ImageAlphaType, ImageData, ImageFormat, Mix},
 };
 
 use netrender_device::WgpuHandles;
 
-use crate::scene::{ImageKey, Scene};
+use crate::scene::{ImageKey, Scene, SceneBlendMode};
 use crate::tile_cache::{TileCache, TileCoord};
 use crate::vello_rasterizer::scene_to_vello_with_overrides;
+
+fn map_blend_mode(b: SceneBlendMode) -> BlendMode {
+    let mix = match b {
+        SceneBlendMode::Normal => Mix::Normal,
+        SceneBlendMode::Multiply => Mix::Multiply,
+        SceneBlendMode::Screen => Mix::Screen,
+        SceneBlendMode::Overlay => Mix::Overlay,
+        SceneBlendMode::Darken => Mix::Darken,
+        SceneBlendMode::Lighten => Mix::Lighten,
+    };
+    BlendMode::new(mix, Compose::SrcOver)
+}
 
 /// One vello-backed tile rasterizer. Owns the vello::Renderer, the
 /// per-tile vello::Scene cache, and the per-frame peniko image data
@@ -184,7 +196,7 @@ impl VelloTileRasterizer {
         self.tile_scenes
             .retain(|coord, _| tile_cache.tile_world_rect(*coord).is_some());
 
-        let master = self.compose_master(tile_cache);
+        let master = self.compose_master(tile_cache, scene);
 
         self.vello_renderer.render_to_texture(
             &self.handles.device,
@@ -223,8 +235,32 @@ impl VelloTileRasterizer {
         }
     }
 
-    fn compose_master(&self, tile_cache: &TileCache) -> vello::Scene {
+    fn compose_master(&self, tile_cache: &TileCache, scene: &Scene) -> vello::Scene {
         let mut master = vello::Scene::new();
+
+        // Phase 12a' scene-level alpha + blend mode wrap. Skip the
+        // outer layer when settings are at their defaults
+        // (alpha = 1.0 and blend = Normal) so simple scenes don't
+        // pay an extra layer.
+        let scene_alpha = scene.root_alpha.clamp(0.0, 1.0);
+        let scene_blend = map_blend_mode(scene.root_blend_mode);
+        let needs_root_layer = scene_alpha < 1.0 || scene_blend.mix != Mix::Normal;
+        if needs_root_layer {
+            let viewport = Rect::new(
+                0.0,
+                0.0,
+                scene.viewport_width as f64,
+                scene.viewport_height as f64,
+            );
+            master.push_layer(
+                Fill::NonZero,
+                scene_blend,
+                scene_alpha,
+                Affine::IDENTITY,
+                &viewport,
+            );
+        }
+
         for (coord, tile_scene) in &self.tile_scenes {
             // Get the world rect from the tile cache. If it's not
             // present (race with eviction), skip — the retain pass
@@ -243,6 +279,11 @@ impl VelloTileRasterizer {
             master.append(tile_scene, None);
             master.pop_layer();
         }
+
+        if needs_root_layer {
+            master.pop_layer();
+        }
+
         master
     }
 

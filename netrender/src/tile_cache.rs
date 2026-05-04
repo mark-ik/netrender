@@ -180,6 +180,14 @@ impl TileCache {
 fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
     let mut hasher = DefaultHasher::new();
 
+    // Phase 12a' scene-level alpha + blend mode are global — every
+    // tile's hash includes them so a change invalidates everything
+    // (which is correct: the alpha/blend wrap affects every pixel
+    // of the master scene composite).
+    hasher.write_u32(scene.root_alpha.to_bits());
+    hasher.write_u8(scene.root_blend_mode as u8);
+
+
     for rect in &scene.rects {
         let aabb = world_aabb_rect(rect, scene);
         if aabb_intersects(aabb, tile_rect) {

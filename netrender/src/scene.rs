@@ -457,6 +457,30 @@ pub struct SceneShape {
     pub clip_corner_radii: [f32; 4],
 }
 
+/// Phase 12a' scene-level blend mode. Mirrors `peniko::Mix` with a
+/// netrender-owned enum so the Scene API stays peniko-free. Maps
+/// 1-to-1 in the translator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SceneBlendMode {
+    /// Default — straight `source-over` compositing.
+    Normal = 0,
+    /// `mix-blend-mode: multiply` — darken (component-wise product).
+    Multiply = 1,
+    /// `mix-blend-mode: screen` — lighten (1 - (1-src)*(1-dst)).
+    Screen = 2,
+    /// `mix-blend-mode: overlay`.
+    Overlay = 3,
+    /// `mix-blend-mode: darken`.
+    Darken = 4,
+    /// `mix-blend-mode: lighten`.
+    Lighten = 5,
+    // (More blend modes are exposed by peniko::Mix; add here as
+    // consumers need them. The mapping in vello_rasterizer.rs
+    // panics on unknown variants — keep this enum and the match
+    // arm in sync.)
+}
+
 /// A flat list of primitives to be rendered into one frame.
 ///
 /// Phase 3 adds `transforms` (a palette of 4×4 matrices) and per-rect
@@ -497,6 +521,16 @@ pub struct Scene {
     /// push_glyph_run with `font_id = 0`); real fonts start at
     /// index 1.
     pub fonts: Vec<FontBlob>,
+    /// Phase 12a' scene-level alpha multiplier (`1.0` = unchanged,
+    /// `0.0` = fully transparent). Implemented by wrapping the
+    /// entire master scene in a `push_layer(blend, alpha, ...)`.
+    /// Useful for whole-canvas fade transitions.
+    pub root_alpha: f32,
+    /// Phase 12a' scene-level blend mode. Default is
+    /// [`SceneBlendMode::Normal`] (plain `source-over`); other
+    /// values apply a `mix-blend-mode`-style composite over the
+    /// `base_color` / target.
+    pub root_blend_mode: SceneBlendMode,
     /// Transform palette. Index 0 is always identity.
     pub transforms: Vec<Transform>,
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
@@ -522,6 +556,8 @@ impl Scene {
                 data: std::sync::Arc::new(Vec::new()),
                 index: 0,
             }],
+            root_alpha: 1.0,
+            root_blend_mode: SceneBlendMode::Normal,
             transforms: vec![Transform::IDENTITY], // index 0 = identity
             image_sources: HashMap::new(),
         }
