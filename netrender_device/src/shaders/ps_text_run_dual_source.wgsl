@@ -1,4 +1,5 @@
-// ps_text_run_dual_source.wgsl — Phase 10a.4 subpixel-AA text shader.
+// ps_text_run_dual_source.wgsl — Phase 10a.4 / 10b.1 subpixel-AA text
+// shader.
 //
 // Requires the WGSL `dual_source_blending` extension. The pipeline
 // factory (`build_brush_text_dual_source`) only attempts to build
@@ -25,15 +26,16 @@
 // sub-pixel sees its own coverage value, tripling effective
 // horizontal resolution.
 //
-// Phase 10a.4 atlas note: today the glyph atlas is single-channel
-// R8 (10a.1). The shader reads `.r` and broadcasts it to the
-// `cov_rgb` triple, so output is bit-equivalent to the grayscale
-// `ps_text_run.wgsl` path for the same input — proving the wiring
-// without requiring a subpixel-rasterized atlas. A 10b sub-task
-// will introduce a parallel RGB(A) atlas for `Format::Subpixel`
-// rasters; the shader is already prepared to consume per-channel
-// coverage when the atlas binding's sample yields three different
-// values.
+// Phase 10b.1 atlas: glyph atlas is now `Rgba8Unorm` and stores
+// either an `Alpha`-format glyph as `(c, c, c, 255)` (broadcast) or
+// a `Subpixel`-format glyph as `(r, g, b, 255)` (per-channel
+// LCD coverage). The fragment samples `.rgb` directly: for
+// broadcast `(c, c, c)` the dual-source path is bit-equivalent to
+// the grayscale `ps_text_run.wgsl` path; for `(r, g, b)` it
+// triples horizontal resolution at the LCD subpixel level.
+//
+// `cov_avg = (r + g + b) / 3` is the standard alpha-channel coverage
+// for the dual-source equation (matches WebRender's averaging).
 
 enable dual_source_blending;
 
@@ -102,17 +104,14 @@ fn fs_main(in: VsOut) -> FsOut {
         discard;
     }
 
-    // R8Unorm sample returns (r, 0, 0, 1) — .g and .b are zero, not
-    // a copy of .r. Broadcast .r explicitly across all three channels
-    // so 10a.4's grayscale-broadcast contract is bit-equivalent to
-    // the single-source `ps_text_run` path. A future RGB(A) atlas
-    // (10b subpixel-rasterizer sub-task) would substitute a per-
-    // channel sample — likely behind an override or a sibling
-    // shader — and route its own averaging rule (e.g. GDI's
-    // `(r+g+b)/3`) into `cov_avg`.
-    let coverage = sample.r;
-    let cov_rgb = vec3<f32>(coverage);
-    let cov_avg = coverage;
+    // 10b.1 atlas is `Rgba8Unorm`. `Alpha`-format glyphs are stored as
+    // `(c, c, c, 255)` so `.rgb` reads back the broadcast triple
+    // (bit-equivalent to the grayscale `ps_text_run` path).
+    // `Subpixel`-format glyphs are stored as `(r, g, b, 255)` and
+    // `.rgb` carries the LCD per-channel coverage. The shader is
+    // format-agnostic; the atlas upload picks the right encoding.
+    let cov_rgb = sample.rgb;
+    let cov_avg = (cov_rgb.r + cov_rgb.g + cov_rgb.b) / 3.0;
 
     var out: FsOut;
     out.color = vec4<f32>(in.color.rgb * cov_rgb, in.color.a * cov_avg);

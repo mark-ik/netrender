@@ -494,57 +494,85 @@ pub(crate) fn build_gradient_batch(
     draws
 }
 
-// ── Text batch (Phase 10a.1 grayscale) ────────────────────────────────
+// ── Text batch (Phase 10a.1 grayscale, 10b.3 transform-aware) ─────────
+
+/// Per-run dispatch decision supplied by the renderer to
+/// [`build_text_batch`]. The renderer computes one of these per
+/// `SceneText`; the batch builder mechanically buckets runs into
+/// pipeline + writes their z value into per-glyph instances.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TextRunDispatch {
+    /// Phase 10b.3: route this run through the dual-source subpixel
+    /// pipeline (when `subpixel_pipe` is available). Falls back to
+    /// grayscale otherwise.
+    pub use_subpixel: bool,
+    /// Per-run depth value. The renderer chooses this differently
+    /// for direct vs. tiled paths:
+    /// - Direct path: text z fits inside the unified painter-order z
+    ///   range (text emits last so it gets the smallest z values,
+    ///   front-most).
+    /// - Tiled path (B): composite tiles draw at z=0.5; text z must
+    ///   be `< 0.5` so text overlays the composited tiles.
+    pub z: f32,
+}
 
 /// Build all [`DrawIntent`]s for `scene.texts`. Each text run becomes
-/// one `ps_text_run` draw call: the run's glyphs expand into per-quad
-/// instances sharing the run's tint color and z-depth. Glyph instances
-/// inside a run are emitted in the order they appear (left-to-right
-/// for shaped runs).
+/// per-quad instances in one of two pipeline buckets (grayscale vs.
+/// subpixel-AA dual-source); we emit one `DrawIntent` per non-empty
+/// bucket. Glyph instances inside a run are emitted in the order they
+/// appear (left-to-right for shaped runs).
 ///
-/// Z assignment: text runs occupy painter indices `[n_rects + n_images
-/// + n_gradients, n_total)`. Front-most (latest pushed) gets the
-/// smallest z and wins the depth test against earlier-drawn batches.
-/// All glyphs in one run share the run's z (text glyphs don't overlap
-/// each other meaningfully within a single run).
-///
-/// Per-frame `filter` is honored at the run level — filtered-out runs
-/// produce no quads. The batch builder skips any run whose glyph keys
-/// haven't been uploaded to the atlas yet (tests that forget
-/// `set_glyph_raster` will simply render nothing rather than crash).
+/// Per-run dispatch comes from the caller via `dispatch_per_run`
+/// (length must equal `scene.texts.len()`). All glyphs in one run
+/// share the run's `z` (text glyphs don't overlap each other
+/// meaningfully within a single run). Per-run `filter` is honored at
+/// the run level — filtered-out runs produce no quads. The batch
+/// builder skips any run whose glyph keys haven't been uploaded to
+/// the atlas yet (tests that forget `set_glyph_raster` will simply
+/// render nothing rather than crash).
 pub(crate) fn build_text_batch(
     scene: &Scene,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    pipe: &BrushTextPipeline,
+    grayscale_pipe: &BrushTextPipeline,
+    subpixel_pipe: Option<&BrushTextPipeline>,
     atlas: &GlyphAtlas,
     sampler: &wgpu::Sampler,
     frame_res: &FrameResources,
     filter: PrimFilter<'_>,
+    dispatch_per_run: &[TextRunDispatch],
 ) -> Vec<DrawIntent> {
     if scene.texts.is_empty() {
         return Vec::new();
     }
+    debug_assert_eq!(
+        dispatch_per_run.len(),
+        scene.texts.len(),
+        "dispatch_per_run length must match scene.texts",
+    );
 
-    let n_rects = scene.rects.len();
-    let n_images = scene.images.len();
-    let n_gradients = scene.gradients.len();
-    let n_total = n_rects + n_images + n_gradients + scene.texts.len();
+    let mut grayscale_bytes: Vec<u8> = Vec::new();
+    let mut grayscale_count: u32 = 0;
+    let mut subpixel_bytes: Vec<u8> = Vec::new();
+    let mut subpixel_count: u32 = 0;
 
-    // Phase 10a.1: one DrawIntent per text run. Future optimisation
-    // (10a.5+) is to coalesce runs that share the atlas + frame_res
-    // into one draw, but per-run is fine for the receipt and keeps the
-    // builder shape obvious.
-    let mut bytes: Vec<u8> = Vec::new();
-    let mut total_glyph_count: u32 = 0;
     for (i, run) in scene.texts.iter().enumerate() {
         if let Some(f) = filter {
             if !f(i) {
                 continue;
             }
         }
-        let global_idx = n_rects + n_images + n_gradients + i;
-        let z = (n_total - global_idx) as f32 / (n_total + 1) as f32;
+        let dispatch = dispatch_per_run[i];
+
+        // Bucket: subpixel when the renderer opted this run in AND the
+        // dual-source pipeline is available. Otherwise grayscale.
+        let want_subpixel = dispatch.use_subpixel && subpixel_pipe.is_some();
+        let (bytes, count) = if want_subpixel {
+            (&mut subpixel_bytes, &mut subpixel_count)
+        } else {
+            (&mut grayscale_bytes, &mut grayscale_count)
+        };
+
         for g in &run.glyphs {
             let slot = match atlas.get(g.key) {
                 Some(s) => s,
@@ -556,31 +584,78 @@ pub(crate) fn build_text_batch(
             let x1 = x0 + slot.width as f32;
             let y1 = y0 + slot.height as f32;
             write_image_instance(
-                &mut bytes,
+                bytes,
                 [x0, y0, x1, y1],
                 slot.uv_rect,
                 run.color,
                 run.clip_rect,
                 run.transform_id,
-                z,
+                dispatch.z,
             );
-            total_glyph_count += 1;
+            *count += 1;
         }
     }
-    if total_glyph_count == 0 {
+    if grayscale_count == 0 && subpixel_count == 0 {
         return Vec::new();
     }
 
+    let atlas_tex = atlas.texture();
+    let atlas_view = atlas_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let mut draws = Vec::with_capacity(2);
+    if grayscale_count > 0 {
+        draws.push(make_text_draw(
+            "ps_text_run grayscale",
+            grayscale_pipe,
+            &grayscale_bytes,
+            grayscale_count,
+            &atlas_view,
+            sampler,
+            frame_res,
+            device,
+            queue,
+        ));
+    }
+    if subpixel_count > 0 {
+        let pipe = subpixel_pipe
+            .expect("subpixel_count > 0 implies subpixel_pipe was Some when bucketing");
+        draws.push(make_text_draw(
+            "ps_text_run subpixel",
+            pipe,
+            &subpixel_bytes,
+            subpixel_count,
+            &atlas_view,
+            sampler,
+            frame_res,
+            device,
+            queue,
+        ));
+    }
+    draws
+}
+
+/// Build one text DrawIntent for a non-empty bucket of glyph instances.
+/// Both pipelines (grayscale + dual-source) share the
+/// `ps_text_run_layout` bind group layout, so the bind group shape is
+/// the same — only the pipeline pointer (and its blend state) differs.
+fn make_text_draw(
+    label: &'static str,
+    pipe: &BrushTextPipeline,
+    bytes: &[u8],
+    instance_count: u32,
+    atlas_view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+    frame_res: &FrameResources,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> DrawIntent {
     let instances_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ps_text_run instances"),
+        label: Some(label),
         size: bytes.len() as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
-    queue.write_buffer(&instances_buf, 0, &bytes);
-
-    let atlas_tex = atlas.texture();
-    let atlas_view = atlas_tex.create_view(&wgpu::TextureViewDescriptor::default());
+    queue.write_buffer(&instances_buf, 0, bytes);
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ps_text_run bind group"),
@@ -591,7 +666,7 @@ pub(crate) fn build_text_batch(
             wgpu::BindGroupEntry { binding: 2, resource: frame_res.per_frame.as_entire_binding() },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: wgpu::BindingResource::TextureView(&atlas_view),
+                resource: wgpu::BindingResource::TextureView(atlas_view),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
@@ -600,15 +675,15 @@ pub(crate) fn build_text_batch(
         ],
     });
 
-    vec![DrawIntent {
+    DrawIntent {
         pipeline: pipe.pipeline.clone(),
         bind_group,
         vertex_buffers: vec![],
         vertex_range: 0..4,
-        instance_range: 0..total_glyph_count,
+        instance_range: 0..instance_count,
         dynamic_offsets: Vec::new(),
         push_constants: Vec::new(),
-    }]
+    }
 }
 
 // ── Shared instance writers ───────────────────────────────────────────

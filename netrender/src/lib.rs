@@ -42,8 +42,8 @@ pub use crate::renderer::{
     ColorLoad, FrameTarget, PreparedFrame, Renderer, RendererError, ResourceRefs,
 };
 pub use crate::scene::{
-    GlyphInstance, GlyphKey, GlyphRaster, GradientKind, GradientStop, ImageData, ImageKey,
-    NO_CLIP, Scene, SceneGradient, SceneImage, SceneRect, SceneText, Transform,
+    GlyphFormat, GlyphInstance, GlyphKey, GlyphRaster, GradientKind, GradientStop, ImageData,
+    ImageKey, NO_CLIP, Scene, SceneGradient, SceneImage, SceneRect, SceneText, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 pub use crate::space::{ROOT_SPATIAL_NODE, SpatialTransform, SpatialTree};

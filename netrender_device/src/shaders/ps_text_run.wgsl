@@ -1,21 +1,31 @@
-// ps_text_run.wgsl — Phase 10a.1 grayscale text shader.
+// ps_text_run.wgsl — Phase 10a.1 / 10b.1 grayscale text shader.
 //
-// One per-instance quad samples a single glyph slot from the R8Unorm
-// glyph atlas. Coverage is the atlas sample; output is the
+// One per-instance quad samples a single glyph slot from the
+// `Rgba8Unorm` glyph atlas. Coverage is `sample.r`; output is the
 // premultiplied tint × coverage. Always alpha-blended.
 //
 // Bind group (group 0):
 //   0 — instances:      array<GlyphInstance>  (storage, read-only, VERTEX)
 //   1 — transforms:     array<Transform>      (storage, read-only, VERTEX)
 //   2 — per_frame:      PerFrame              (uniform, VERTEX)
-//   3 — atlas_texture:  texture_2d<f32>       (FRAGMENT, R8Unorm)
+//   3 — atlas_texture:  texture_2d<f32>       (FRAGMENT, Rgba8Unorm)
 //   4 — atlas_sampler:  sampler               (FRAGMENT, NonFiltering)
+//
+// Atlas format note (10b.1): the atlas is `Rgba8Unorm`. `Alpha`-format
+// glyphs are stored as `(c, c, c, 255)` so `.r` returns the coverage
+// byte directly; `Subpixel`-format glyphs are stored as `(r, g, b,
+// 255)` and `.r` returns just the red-channel coverage (the
+// dual-source `ps_text_run_dual_source` path consumes all three
+// channels). For the grayscale path, sampling `.r` of a subpixel
+// glyph degrades cleanly to the red-channel-only coverage — this
+// shader is the fallback when the adapter lacks
+// `Features::DUAL_SOURCE_BLENDING`, and there's no usefully
+// "averaged" interpretation that wouldn't introduce its own bias.
 //
 // Instance struct (80-byte stride, std430) — same layout as
 // `ImageInstance` so `write_image_instance` can populate it
-// unchanged. The only Phase-5-vs-10a delta is what's bound at slot 3
-// (R8 atlas vs RGBA8 image cache entry) and the fragment-side sample
-// swizzle (`.r` × tint vs. `.rgba` × tint).
+// unchanged. The only Phase-5-vs-10a delta is the fragment-side
+// sample swizzle (`.r` × tint vs. `.rgba` × tint).
 //
 //   rect          vec4<f32>  offset  0 — local-space [x0,y0,x1,y1]
 //   uv_rect       vec4<f32>  offset 16 — atlas UV [u0,v0,u1,v1]

@@ -81,6 +81,33 @@ impl Transform {
         }
     }
 
+    /// True iff this transform is pure 2D translation (or identity)
+    /// — i.e. the upper-left 3×3 rotation/scale block is the identity
+    /// and only the translation column carries non-trivial data.
+    ///
+    /// Phase 10b.3 transform-aware subpixel-AA policy uses this:
+    /// LCD subpixel coverage is only meaningful when the glyph's
+    /// horizontal axis stays aligned with the framebuffer's
+    /// horizontal axis. Translation preserves that alignment;
+    /// rotation, skew, and non-uniform scale don't. Translated-only
+    /// runs route to the dual-source pipeline; everything else falls
+    /// back to grayscale.
+    ///
+    /// Comparison is exact (no epsilon). Consumers that build
+    /// near-identity rotations from floating-point math should
+    /// snap to identity at construction time if they want them
+    /// classified as translation-only.
+    pub fn is_pure_translation_2d(&self) -> bool {
+        // Column-major: m[col*4 + row]. Pure 2D translation means
+        // columns 0/1/2 match identity and column 3's homogeneous w
+        // is 1 (translation values m[12]/m[13]/m[14] may be anything).
+        let m = &self.m;
+        m[0] == 1.0 && m[1] == 0.0 && m[2] == 0.0 && m[3] == 0.0
+            && m[4] == 0.0 && m[5] == 1.0 && m[6] == 0.0 && m[7] == 0.0
+            && m[8] == 0.0 && m[9] == 0.0 && m[10] == 1.0 && m[11] == 0.0
+            && m[15] == 1.0
+    }
+
     /// Returns the transform that applies `self` first, then `other`.
     /// Equivalent to the matrix product `other × self`.
     ///
@@ -219,9 +246,41 @@ pub struct GlyphKey {
     pub size_x64: u32,
 }
 
-/// CPU-side rasterized glyph bitmap. Format: R8 coverage, row-major,
-/// tightly packed (`width` bytes per row). Premultiplication happens
-/// on the shader side (atlas sample × premultiplied tint).
+/// Coverage layout of a [`GlyphRaster`].
+///
+/// Phase 10b carry-forward: `Subpixel` is the LCD per-channel format
+/// (3 bytes per pixel, R/G/B coverage triple) produced by
+/// `swash::scale::Render::format(zeno::Format::Subpixel)`. The atlas
+/// stores both formats in one `Rgba8Unorm` texture; the upload path
+/// expands `Alpha` to `(c, c, c, 255)` and `Subpixel` to
+/// `(r, g, b, 255)`. The dual-source `ps_text_run_dual_source` shader
+/// then sees per-channel coverage on `Subpixel` glyphs and a
+/// broadcast triple on `Alpha` glyphs (bit-equivalent to the
+/// grayscale `ps_text_run` path).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlyphFormat {
+    /// One byte per pixel, single-channel coverage. Produced by
+    /// `swash::scale::Render::format(zeno::Format::Alpha)` (the
+    /// 10a.1–10a.5 default) and by hand-authored fixtures.
+    Alpha,
+    /// Three bytes per pixel, `[r, g, b]` per-channel coverage.
+    /// Produced by `swash::scale::Render::format(zeno::Format::Subpixel)`.
+    Subpixel,
+}
+
+impl GlyphFormat {
+    /// Bytes per pixel in [`GlyphRaster::pixels`] for this format.
+    pub fn bytes_per_pixel(self) -> u32 {
+        match self {
+            GlyphFormat::Alpha => 1,
+            GlyphFormat::Subpixel => 3,
+        }
+    }
+}
+
+/// CPU-side rasterized glyph bitmap. Row-major, tightly packed; bytes
+/// per pixel depends on [`GlyphRaster::format`]. Premultiplication
+/// happens on the shader side (atlas sample × premultiplied tint).
 ///
 /// `bearing_x` / `bearing_y` are the standard FreeType / swash glyph
 /// metrics — the offset from the pen position to the bitmap's top-left
@@ -235,7 +294,11 @@ pub struct GlyphRaster {
     pub height: u32,
     pub bearing_x: i32,
     pub bearing_y: i32,
-    /// R8 coverage bytes; `len()` must equal `width * height`.
+    /// Coverage layout: see [`GlyphFormat`]. Determines how the atlas
+    /// upload expands `pixels` into the `Rgba8Unorm` storage.
+    pub format: GlyphFormat,
+    /// Coverage bytes; `len()` must equal
+    /// `width * height * format.bytes_per_pixel()`.
     pub pixels: Vec<u8>,
 }
 

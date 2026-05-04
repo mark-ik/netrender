@@ -14,12 +14,12 @@ use crate::image_cache::ImageCache;
 use crate::renderer::{Renderer, RendererError};
 use crate::tile_cache::TileCache;
 
-/// Phase 10a.1 default atlas extent. 1024×1024 R8Unorm (1 MiB) is
-/// many orders of magnitude oversized for the single-glyph receipt
-/// and is also a comfortable default for a few hundred small-to-
-/// medium glyphs. Phase 10a.5 promotes the knob to
-/// [`NetrenderOptions::glyph_atlas_size`]; this constant remains the
-/// default when the option is `None`.
+/// Phase 10a.1 / 10b.1 default atlas extent. 1024×1024 `Rgba8Unorm`
+/// (4 MiB; 10a.1 was 1 MiB R8Unorm) is many orders of magnitude
+/// oversized for the single-glyph receipt and is also a comfortable
+/// default for a few hundred small-to-medium glyphs. Phase 10a.5
+/// promoted the knob to [`NetrenderOptions::glyph_atlas_size`]; this
+/// constant remains the default when the option is `None`.
 const DEFAULT_GLYPH_ATLAS_SIZE: u32 = 1024;
 
 #[derive(Default)]
@@ -30,25 +30,29 @@ pub struct NetrenderOptions {
     /// `brush_image_alpha`). `None` keeps the direct render path used
     /// in Phases 1–6.
     pub tile_cache_size: Option<u32>,
-    /// Phase 10a.4: opt in to the subpixel-AA dual-source text
-    /// pipeline. `prepare()` will use the dual-source pipeline when
-    /// the adapter exposes `Features::DUAL_SOURCE_BLENDING` (opted
-    /// into automatically by `core::boot`'s `OPTIONAL_FEATURES`),
-    /// falling back to the grayscale path when absent. Default
-    /// `false` — grayscale always — until 10b's transform-aware
-    /// subpixel policy lands and decides per-glyph automatically.
-    /// Today's R8 atlas means the dual-source pipeline is bit-
-    /// equivalent to grayscale; the flag exists so 10a.4 can
-    /// receipt the wiring before 10b's RGB(A) atlas adds visible
-    /// per-channel coverage.
+    /// Phase 10a.4 / 10b.1: opt in to the subpixel-AA dual-source
+    /// text pipeline. `prepare()` will use the dual-source pipeline
+    /// when the adapter exposes `Features::DUAL_SOURCE_BLENDING`
+    /// (opted into automatically by `core::boot`'s
+    /// `OPTIONAL_FEATURES`), falling back to the grayscale path when
+    /// absent. Default `false` — grayscale always — until 10b's
+    /// transform-aware subpixel policy lands and decides per-glyph
+    /// automatically. With 10b.1 the atlas is `Rgba8Unorm` and stores
+    /// per-channel LCD coverage when the consumer hands in a
+    /// `GlyphFormat::Subpixel` raster (e.g. via
+    /// `BoundRaster::rasterize_subpixel`), so the dual-source path
+    /// produces visibly different output from the grayscale path on
+    /// outline fonts. Bitmap-strike fonts (Proggy) still degrade to
+    /// grayscale-equivalent output because their source bytes are
+    /// 1bpp.
     pub text_subpixel_aa: bool,
-    /// Phase 10a.5: glyph atlas dimensions (square, R8Unorm).
-    /// `None` keeps the previous hardcoded `1024 × 1024` default
-    /// (≈8000 13-px glyph slots). Consumers that ship many fonts
-    /// or large glyphs raise this; consumers that ship one tiny
-    /// font may lower it. Atlas vertical overflow panics today
-    /// (eviction is 10b); raising the size knob is the supported
-    /// pre-eviction workaround.
+    /// Phase 10a.5 / 10b.1: glyph atlas dimensions (square,
+    /// `Rgba8Unorm`). `None` keeps the previous hardcoded
+    /// `1024 × 1024` default (≈8000 13-px glyph slots). Consumers
+    /// that ship many fonts or large glyphs raise this; consumers
+    /// that ship one tiny font may lower it. Atlas vertical overflow
+    /// panics today (eviction is a separate 10b sub-task); raising
+    /// the size knob is the supported pre-eviction workaround.
     pub glyph_atlas_size: Option<u32>,
 }
 

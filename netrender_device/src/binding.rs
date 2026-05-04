@@ -173,13 +173,16 @@ pub(crate) fn brush_image_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
     })
 }
 
-/// ps_text_run bind group layout (Phase 10a.1).
+/// ps_text_run bind group layout (Phase 10a.1 / 10b.1).
 ///
 /// Five bindings, structurally identical to `brush_image_layout`: the
-/// only consumer-visible delta is what's bound at slot 3 (R8Unorm
-/// glyph atlas vs. RGBA8 image cache entry) and the shader's sample
-/// swizzle. NonFiltering sampler at slot 4; bilinear / subpixel
-/// positioning is a 10a.4 / 10b concern.
+/// consumer-visible delta is the shader's sample swizzle (text reads
+/// `.r` for grayscale or `.rgb` for dual-source; image reads `.rgba`).
+/// `TextureSampleType::Float { filterable: false }` works for both
+/// the 10a.1 R8Unorm atlas and the 10b.1 Rgba8Unorm atlas; no layout
+/// change was required when the atlas format flipped. NonFiltering
+/// sampler at slot 4; bilinear / subpixel positioning is a 10b
+/// concern.
 pub(crate) fn ps_text_run_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ps_text_run bind group layout"),
@@ -217,7 +220,7 @@ pub(crate) fn ps_text_run_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout
                 },
                 count: None,
             },
-            // 3: atlas_texture (R8Unorm, NonFiltering, FRAGMENT)
+            // 3: atlas_texture (Rgba8Unorm, NonFiltering, FRAGMENT)
             wgpu::BindGroupLayoutEntry {
                 binding: 3,
                 visibility: wgpu::ShaderStages::FRAGMENT,

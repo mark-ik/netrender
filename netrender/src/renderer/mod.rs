@@ -41,8 +41,9 @@ use netrender_device::{
 };
 
 use crate::batch::{
-    FrameResources, GradientPipelines, build_gradient_batch, build_image_batch, build_rect_batch,
-    build_text_batch, make_per_frame_buf_for_rect, make_transforms_buf, write_image_instance,
+    FrameResources, GradientPipelines, TextRunDispatch, build_gradient_batch, build_image_batch,
+    build_rect_batch, build_text_batch, make_per_frame_buf_for_rect, make_transforms_buf,
+    write_image_instance,
 };
 use crate::glyph_atlas::GlyphAtlas;
 use crate::image_cache::ImageCache;
@@ -52,10 +53,12 @@ use crate::tile_cache::{TileCache, TileCoord, aabb_intersects, world_aabb};
 pub struct Renderer {
     pub wgpu_device: WgpuDevice,
     pub(crate) image_cache: Mutex<ImageCache>,
-    /// Phase 10a.1 glyph atlas — single R8Unorm texture, bump-row
-    /// packer. Owned by the renderer per parent §10 Q14 (atlas lives
-    /// inside the WebRender consumer). Tile-cache integration is
-    /// deferred to 10a.5.
+    /// Phase 10a.1 / 10b.1 glyph atlas — single `Rgba8Unorm`
+    /// texture, bump-row packer. Stores both `Alpha` and `Subpixel`
+    /// glyph rasters (the upload path expands them to RGBA8 with
+    /// either a coverage broadcast or an LCD per-channel triple).
+    /// Owned by the renderer per parent §10 Q14 (atlas lives inside
+    /// the WebRender consumer).
     pub(crate) glyph_atlas: Mutex<GlyphAtlas>,
     pub(crate) nearest_sampler: wgpu::Sampler,
     /// Bilinear-clamp sampler for blur and filter tasks in the render graph.
@@ -158,21 +161,7 @@ impl Renderer {
             .ensure_brush_image_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
         // Phase 8D: one gradient pipeline per (kind, alpha_class) — 6 total.
         let gradient_pipes = self.ensure_gradient_pipelines(Self::COLOR_FORMAT);
-        // Phase 10a.1 grayscale text pipeline. Always alpha-blended.
-        // Phase 10a.4: when text_subpixel_aa is opted in AND the
-        // device has Features::DUAL_SOURCE_BLENDING, the dual-source
-        // pipeline replaces grayscale. Otherwise grayscale.
-        let text_pipe = if self.text_subpixel_aa {
-            self.wgpu_device
-                .ensure_brush_text_dual_source(Self::COLOR_FORMAT, Self::DEPTH_FORMAT)
-                .unwrap_or_else(|| {
-                    self.wgpu_device
-                        .ensure_brush_text(Self::COLOR_FORMAT, Self::DEPTH_FORMAT)
-                })
-        } else {
-            self.wgpu_device
-                .ensure_brush_text(Self::COLOR_FORMAT, Self::DEPTH_FORMAT)
-        };
+        let (text_grayscale_pipe, text_subpixel_pipe) = self.ensure_text_pipelines();
 
         let depth_tex = self.wgpu_device.core.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("netrender depth"),
@@ -203,9 +192,14 @@ impl Renderer {
             }
         }
 
-        // Phase 10a.1: upload any new glyph rasters to the atlas.
+        // Phase 10a.1 / 10b.2: advance the LRU frame counter and
+        // upload any new glyph rasters to the atlas. Every
+        // `get_or_upload` in this prepare bumps `last_used` to the
+        // post-`begin_frame` value, so the eviction policy can
+        // distinguish glyphs touched this frame from older ones.
         {
             let mut atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
+            atlas.begin_frame();
             for (key, raster) in &scene.glyph_rasters {
                 atlas.get_or_upload(*key, raster, &self.wgpu_device.core.queue);
             }
@@ -237,13 +231,30 @@ impl Renderer {
         let gradient_draws =
             build_gradient_batch(scene, device, queue, &gradient_pipes, &frame_res, None);
 
-        // Phase 10a.1: text draws. One draw per text run; each run's
-        // glyphs share the run's z, so text overlays UI cleanly.
+        // Phase 10a.1 / 10b.3: text draws. Up to two DrawIntents (one
+        // per pipeline bucket). Each run's glyphs share the run's z;
+        // text emits last in painter order, so it gets the smallest z
+        // values across the unified `n_total`-based assignment —
+        // front-most.
+        let n_rects = scene.rects.len();
+        let n_images = scene.images.len();
+        let n_gradients = scene.gradients.len();
+        let n_total = n_rects + n_images + n_gradients + scene.texts.len();
+        let dispatch_per_run = self.build_text_dispatch(
+            scene,
+            text_subpixel_pipe.is_some(),
+            |i| {
+                let global_idx = n_rects + n_images + n_gradients + i;
+                (n_total - global_idx) as f32 / (n_total + 1) as f32
+            },
+        );
         let text_draws = {
             let atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
             build_text_batch(
-                scene, device, queue, &text_pipe, &atlas,
-                &self.nearest_sampler, &frame_res, None,
+                scene, device, queue,
+                &text_grayscale_pipe, text_subpixel_pipe.as_ref(),
+                &atlas, &self.nearest_sampler, &frame_res, None,
+                &dispatch_per_run,
             )
         };
 
@@ -260,19 +271,50 @@ impl Renderer {
         }
     }
 
-    /// Tile-cache prepare path: invalidate + render dirty tiles, then
-    /// build one `brush_image_alpha` composite draw per cached tile.
+    /// Tile-cache prepare path: invalidate + render dirty tiles,
+    /// composite them into the framebuffer, then overlay text in a
+    /// final direct sub-pass.
+    ///
+    /// Phase 10b.6 (option B) — text bypasses the tile cache and
+    /// renders directly into the LCD-aligned sRGB framebuffer in a
+    /// final sub-pass after tile composite. This is the architecture
+    /// that lets subpixel-AA work in tiled mode: a sampled
+    /// intermediate (tile texture) collapses per-channel coverage at
+    /// the composite step, so any cache that wants subpixel needs
+    /// either separate per-channel mask textures + a dual-source
+    /// composite pipeline, or — as we do here — to skip the
+    /// intermediate entirely for text.
+    ///
+    /// Trade-off: text rebuilds its instance buffer every frame even
+    /// when nothing changes. In exchange, tile invalidation no longer
+    /// thrashes on text changes (text isn't *in* the tiles), LCD
+    /// subpixel works in tiled mode, and the path mirrors how typical
+    /// browser engines structure their text overlays.
     fn prepare_tiled(&self, scene: &Scene, tc: &mut TileCache) -> PreparedFrame {
         let device = &self.wgpu_device.core.device;
         let queue = &self.wgpu_device.core.queue;
 
+        // Phase 10b.6: atlas frame counter + glyph upload happens in
+        // prepare_tiled itself, since `render_dirty_tiles_with_transforms`
+        // no longer touches text. Single LRU bump per `prepare()` call,
+        // regardless of which prepare path runs.
+        {
+            let mut atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
+            atlas.begin_frame();
+            for (key, raster) in &scene.glyph_rasters {
+                atlas.get_or_upload(*key, raster, queue);
+            }
+        }
+
         // Build the shared transforms buffer once and reuse it across
-        // both the tile rendering pass and the composite pass.
+        // tile rendering, composite, and text-direct sub-passes.
         // wgpu::Buffer is Arc-internal so the clone into each
         // FrameResources is cheap.
         let transforms_buf = make_transforms_buf(scene, device, queue);
 
-        // Step 1: dirty tiles re-render into their cached textures.
+        // Step 1: dirty tiles re-render into their cached textures
+        // (rects / images / gradients only — text is handled in
+        // step 4 below).
         let _dirty = self.render_dirty_tiles_with_transforms(scene, tc, &transforms_buf);
 
         // Step 2: build composite draws — one brush_image_alpha per tile.
@@ -280,9 +322,8 @@ impl Renderer {
             .wgpu_device
             .ensure_brush_image_alpha(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
 
-        // Composite uses the FULL framebuffer projection (not tile-local) —
-        // each tile's rect is given in world coords, mapped through the
-        // viewport projection to the framebuffer.
+        // Full-framebuffer projection — used for both composite and
+        // the text-direct sub-pass below.
         let per_frame_buf = make_per_frame_buf_for_rect(
             [0.0, 0.0, scene.viewport_width as f32, scene.viewport_height as f32],
             device,
@@ -303,9 +344,10 @@ impl Renderer {
             }
         }
 
-        // Step 3: depth texture for the main pass (composite draws use
-        // brush_image_alpha which depth-tests but doesn't depth-write,
-        // so all tiles at z=0.5 pass against a 1.0-cleared buffer).
+        // Step 3: depth texture for the main pass. Composite draws
+        // use `brush_image_alpha` (depth-test ON, depth-write OFF) at
+        // z=0.5; text draws (alpha-blended) test at z<0.5 so they
+        // overlay the composited tiles. Both share this attachment.
         let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("netrender depth (tiled)"),
             size: wgpu::Extent3d {
@@ -322,8 +364,42 @@ impl Renderer {
         });
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Step 4: text-direct sub-pass. Runs the same direct-path
+        // text logic (both pipelines, transform-aware routing) but
+        // uses tile-mode z values that sit in front of composite
+        // tiles (z < 0.5). The atlas, frame counter, and glyph
+        // uploads were already handled at the top of this function.
+        //
+        // Tile-mode text z range: (0, 0.4]. Composite is at z=0.5;
+        // text z < 0.5 puts text in front. Front-most run (largest i)
+        // gets smallest z within the 0.4 band.
+        let (text_grayscale_pipe, text_subpixel_pipe) = self.ensure_text_pipelines();
+        let n_texts = scene.texts.len();
+        let dispatch_per_run = self.build_text_dispatch(
+            scene,
+            text_subpixel_pipe.is_some(),
+            |i| ((n_texts - i) as f32 / (n_texts + 1) as f32) * 0.4,
+        );
+
+        let frame_res = FrameResources {
+            transforms: transforms_buf.clone(),
+            per_frame: per_frame_buf,
+        };
+        let text_draws = {
+            let atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
+            build_text_batch(
+                scene, device, queue,
+                &text_grayscale_pipe, text_subpixel_pipe.as_ref(),
+                &atlas, &self.nearest_sampler, &frame_res, None,
+                &dispatch_per_run,
+            )
+        };
+
+        let mut draws = composite_draws;
+        draws.extend(text_draws);
+
         PreparedFrame {
-            draws: composite_draws,
+            draws,
             depth_tex,
             depth_view,
             retained: ResourceRefs::default(),
@@ -446,16 +522,88 @@ impl Renderer {
         self.image_cache.lock().expect("image_cache lock").insert_gpu(key, texture);
     }
 
+    /// Phase 10b.6: ensure both text pipelines for the framebuffer's
+    /// color format. The grayscale `ps_text_run` pipeline is always
+    /// built; the dual-source `ps_text_run_dual_source` pipeline is
+    /// built only when `text_subpixel_aa` is opted in AND the device
+    /// exposes `Features::DUAL_SOURCE_BLENDING`. Both prepare paths
+    /// (direct, tiled — option B) call this; tiled path's text-direct
+    /// sub-pass writes to the framebuffer just like direct, so both
+    /// share the same `COLOR_FORMAT` pipelines.
+    fn ensure_text_pipelines(
+        &self,
+    ) -> (
+        netrender_device::BrushTextPipeline,
+        Option<netrender_device::BrushTextPipeline>,
+    ) {
+        let grayscale = self
+            .wgpu_device
+            .ensure_brush_text(Self::COLOR_FORMAT, Self::DEPTH_FORMAT);
+        let subpixel = if self.text_subpixel_aa {
+            self.wgpu_device
+                .ensure_brush_text_dual_source(Self::COLOR_FORMAT, Self::DEPTH_FORMAT)
+        } else {
+            None
+        };
+        (grayscale, subpixel)
+    }
+
+    /// Phase 10b.3 / 10b.6: per-run text dispatch (subpixel decision
+    /// + z value) for `build_text_batch`. Both prepare paths use the
+    /// same transform-aware subpixel policy
+    /// (`Transform::is_pure_translation_2d`); they differ only in
+    /// the z formula, so the caller passes a closure that maps run
+    /// index to z.
+    ///
+    /// `subpixel_available` controls whether the dual-source pipeline
+    /// is even a candidate. When `false` (e.g. `text_subpixel_aa` off,
+    /// or adapter lacks `DUAL_SOURCE_BLENDING`), every run falls back
+    /// to grayscale regardless of its transform.
+    fn build_text_dispatch(
+        &self,
+        scene: &Scene,
+        subpixel_available: bool,
+        z_for_run: impl Fn(usize) -> f32,
+    ) -> Vec<TextRunDispatch> {
+        scene
+            .texts
+            .iter()
+            .enumerate()
+            .map(|(i, run)| {
+                let use_subpixel = subpixel_available && {
+                    let tx = scene
+                        .transforms
+                        .get(run.transform_id as usize)
+                        .copied()
+                        .unwrap_or(crate::scene::Transform::IDENTITY);
+                    tx.is_pure_translation_2d()
+                };
+                TextRunDispatch { use_subpixel, z: z_for_run(i) }
+            })
+            .collect()
+    }
+
     /// Phase 7B: invalidate `tile_cache` against `scene` and render every
     /// dirty tile into its cached `Arc<wgpu::Texture>`. Returns the dirty
     /// tile coords (same list `TileCache::invalidate` returned).
     ///
     /// Each dirty tile gets a fresh `Rgba8Unorm` texture and is rendered
-    /// using the existing `brush_rect_solid` / `brush_image` pipelines
-    /// with a tile-local orthographic projection. All tiles share one
-    /// `Depth32Float` texture (cleared per pass) and one `transforms`
-    /// storage buffer; only the per-frame projection differs between
-    /// tiles. Phase 7C composites these textures into the framebuffer.
+    /// using the existing `brush_rect_solid` / `brush_image` /
+    /// `brush_gradient` pipelines with a tile-local orthographic
+    /// projection. All tiles share one `Depth32Float` texture
+    /// (cleared per pass) and one `transforms` storage buffer; only
+    /// the per-frame projection differs between tiles. Phase 7C
+    /// composites these textures into the framebuffer.
+    ///
+    /// Phase 10b.6 (option B): text is **not** rendered into tiles.
+    /// It bypasses the tile cache entirely and runs in
+    /// `prepare_tiled`'s text-direct sub-pass, against the LCD-aligned
+    /// sRGB framebuffer. This method correspondingly does **not**
+    /// upload glyph rasters or advance the atlas LRU frame counter —
+    /// those happen in `prepare_tiled` proper. Consumers calling
+    /// `render_dirty_tiles` directly (e.g. tests inspecting tile
+    /// state) will see the atlas in whatever state the most recent
+    /// `prepare()` left it.
     pub fn render_dirty_tiles(
         &self,
         scene: &Scene,
@@ -486,7 +634,12 @@ impl Renderer {
         let queue = &self.wgpu_device.core.queue;
         let tile_size = tile_cache.tile_size();
 
-        // Pipelines (cached by (color_format, depth_format, alpha_blend))
+        // Pipelines (cached by (color_format, depth_format, alpha_blend)).
+        // Phase 10b.6: text is NOT in this list. Text bypasses the
+        // tile cache entirely and renders directly into the
+        // framebuffer in `prepare_tiled`'s text-direct sub-pass —
+        // the only architecture that lets LCD subpixel survive a
+        // composited render path.
         let opaque_pipe = self
             .wgpu_device
             .ensure_brush_rect_solid_opaque(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
@@ -501,29 +654,16 @@ impl Renderer {
             .ensure_brush_image_alpha(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
         // Phase 8D: 6 cached gradient pipelines for the tile format.
         let gradient_pipes = self.ensure_gradient_pipelines(Self::TILE_FORMAT);
-        // Phase 10a.5: grayscale text in the tile path. Subpixel
-        // dual-source is intentionally not exercised inside tiles
-        // (composite-then-sample blurs subpixel boundaries; the
-        // visible LCD layout is the framebuffer, not a tile cache
-        // texture). 10b will revisit if the per-channel atlas
-        // makes a tile-internal subpixel path worthwhile.
-        let text_pipe = self
-            .wgpu_device
-            .ensure_brush_text(Self::TILE_FORMAT, Self::DEPTH_FORMAT);
 
         // Upload any new image sources (matches prepare()'s contract).
+        // Glyph atlas upload happened in `prepare_tiled` before this
+        // method ran (Phase 10b.6 — atlas is owned by the prepare
+        // entry point now, since both the tile pass and the
+        // text-direct sub-pass need it).
         {
             let mut cache = self.image_cache.lock().expect("image_cache lock");
             for (key, data) in &scene.image_sources {
                 cache.get_or_upload(*key, data, device, queue);
-            }
-        }
-        // Phase 10a.5: same prepare-phase contract for glyph rasters
-        // — upload any new ones to the atlas before per-tile rendering.
-        {
-            let mut atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
-            for (key, raster) in &scene.glyph_rasters {
-                atlas.get_or_upload(*key, raster, queue);
             }
         }
 
@@ -554,9 +694,6 @@ impl Renderer {
         // Hold the image-cache lock across all tile passes; build_image_batch
         // reads it for each tile.
         let image_cache = self.image_cache.lock().expect("image_cache lock");
-        // Same for the glyph atlas — `build_text_batch` reads slot
-        // metadata for every glyph in every text run, on every tile.
-        let glyph_atlas = self.glyph_atlas.lock().expect("glyph_atlas lock");
 
         for &coord in &dirty {
             let tile_world_rect = tile_cache
@@ -612,21 +749,15 @@ impl Renderer {
                 scene, device, queue, &gradient_pipes, &frame_res,
                 Some(&gradient_filter),
             );
-            // Phase 10a.5: text runs without per-tile filtering.
-            // NDC clipping inside the shader handles overflow at
-            // the rasterizer; per-glyph AABB filtering is a 10b
-            // optimization (would need atlas-slot lookups inside
-            // the filter closure, complicating the pattern). The
-            // pixel-equivalence receipt validates that emitting
-            // every run on every tile renders correctly.
-            let text_draws = build_text_batch(
-                scene, device, queue, &text_pipe, &glyph_atlas,
-                &self.nearest_sampler, &frame_res, None,
-            );
+            // Phase 10b.6: text is intentionally absent from tile
+            // rendering. It runs directly against the framebuffer in
+            // `prepare_tiled`'s text-direct sub-pass. The tile texture
+            // is a sampled intermediate — passing text through it
+            // would collapse LCD per-channel coverage at the composite
+            // step.
             let mut draws = rect_draws;
             draws.extend(image_draws);
             draws.extend(gradient_draws);
-            draws.extend(text_draws);
 
             let tile_tex = Arc::new(device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("tile color"),
@@ -669,7 +800,6 @@ impl Renderer {
         }
 
         drop(image_cache);
-        drop(glyph_atlas);
         self.wgpu_device.submit(encoder);
 
         dirty

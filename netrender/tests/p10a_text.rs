@@ -31,8 +31,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use netrender::{
-    ColorLoad, FontHandle, FrameTarget, GlyphInstance, GlyphKey, GlyphRaster, NetrenderOptions,
-    RasterContext, Scene, boot, create_netrender_instance,
+    ColorLoad, FontHandle, FrameTarget, GlyphFormat, GlyphInstance, GlyphKey, GlyphRaster,
+    NetrenderOptions, RasterContext, Scene, boot, create_netrender_instance,
 };
 
 /// Proggy Clean — bitmap-only font, EBDT strike, included for the
@@ -83,6 +83,7 @@ fn glyph_a_5x7() -> GlyphRaster {
         // the bitmap (bearing_y=H — every row is above baseline).
         bearing_x: 0,
         bearing_y: H as i32,
+        format: GlyphFormat::Alpha,
         pixels,
     }
 }
