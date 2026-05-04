@@ -275,6 +275,129 @@ pub struct SceneStroke {
     pub clip_corner_radii: [f32; 4],
 }
 
+/// Phase 11b' path operation. The `ScenePath` builder produces a
+/// `Vec<PathOp>` that the vello translator converts into a
+/// `kurbo::BezPath`. Coordinates are in local space; the
+/// primitive's `transform_id` maps them to device pixels.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PathOp {
+    MoveTo(f32, f32),
+    LineTo(f32, f32),
+    QuadTo(f32, f32, f32, f32),
+    CubicTo(f32, f32, f32, f32, f32, f32),
+    Close,
+}
+
+/// Phase 11b' arbitrary path. Build via the move_to / line_to /
+/// quad_to / cubic_to / close methods, or construct directly
+/// with `ops`. Used by [`SceneShape`].
+#[derive(Debug, Clone, Default)]
+pub struct ScenePath {
+    pub ops: Vec<PathOp>,
+}
+
+impl ScenePath {
+    pub fn new() -> Self {
+        Self { ops: Vec::new() }
+    }
+
+    pub fn with_capacity(n: usize) -> Self {
+        Self { ops: Vec::with_capacity(n) }
+    }
+
+    pub fn move_to(&mut self, x: f32, y: f32) -> &mut Self {
+        self.ops.push(PathOp::MoveTo(x, y));
+        self
+    }
+
+    pub fn line_to(&mut self, x: f32, y: f32) -> &mut Self {
+        self.ops.push(PathOp::LineTo(x, y));
+        self
+    }
+
+    pub fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) -> &mut Self {
+        self.ops.push(PathOp::QuadTo(cx, cy, x, y));
+        self
+    }
+
+    pub fn cubic_to(
+        &mut self,
+        c1x: f32, c1y: f32,
+        c2x: f32, c2y: f32,
+        x: f32, y: f32,
+    ) -> &mut Self {
+        self.ops.push(PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y));
+        self
+    }
+
+    pub fn close(&mut self) -> &mut Self {
+        self.ops.push(PathOp::Close);
+        self
+    }
+
+    /// Local-space axis-aligned bounding box of the path's control
+    /// points. Used by the tile-cache filter; conservative (the
+    /// actual path stays inside the convex hull of the control
+    /// points, so this is an upper bound).
+    pub fn local_aabb(&self) -> Option<[f32; 4]> {
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        let mut got_any = false;
+        for op in &self.ops {
+            let mut update = |x: f32, y: f32| {
+                got_any = true;
+                if x < min_x { min_x = x; }
+                if y < min_y { min_y = y; }
+                if x > max_x { max_x = x; }
+                if y > max_y { max_y = y; }
+            };
+            match *op {
+                PathOp::MoveTo(x, y) | PathOp::LineTo(x, y) => update(x, y),
+                PathOp::QuadTo(cx, cy, x, y) => { update(cx, cy); update(x, y); }
+                PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y) => {
+                    update(c1x, c1y); update(c2x, c2y); update(x, y);
+                }
+                PathOp::Close => {}
+            }
+        }
+        if got_any {
+            Some([min_x, min_y, max_x, max_y])
+        } else {
+            None
+        }
+    }
+}
+
+/// Phase 11b' stroke style. `width` in device pixels; future fields
+/// (cap / join / dash / miter limit) when consumers need them.
+#[derive(Debug, Clone, Copy)]
+pub struct ScenePathStroke {
+    pub color: [f32; 4],
+    pub width: f32,
+}
+
+/// Phase 11b' arbitrary-path primitive. Carries both an optional
+/// fill and an optional stroke so a single push can produce a CSS /
+/// SVG-style "filled then stroked" shape without duplicating the
+/// path data. At least one of `fill_color` or `stroke` must be set
+/// or the shape is silently no-op.
+#[derive(Debug, Clone)]
+pub struct SceneShape {
+    pub path: ScenePath,
+    /// Premultiplied RGBA fill color. `None` skips the fill.
+    pub fill_color: Option<[f32; 4]>,
+    /// Stroke style. `None` skips the stroke.
+    pub stroke: Option<ScenePathStroke>,
+    /// Index into `Scene::transforms`; `0` = identity.
+    pub transform_id: u32,
+    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    pub clip_rect: [f32; 4],
+    /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
+    pub clip_corner_radii: [f32; 4],
+}
+
 /// A flat list of primitives to be rendered into one frame.
 ///
 /// Phase 3 adds `transforms` (a palette of 4×4 matrices) and per-rect
@@ -304,6 +427,10 @@ pub struct Scene {
     /// after rects but before gradients/images, matching natural
     /// CSS render order (background → border → contents).
     pub strokes: Vec<SceneStroke>,
+    /// Phase 11b' arbitrary-path primitives — filled + stroked
+    /// shapes for SVG-style content, custom node frames, etc.
+    /// Painter order: shapes paint last, after images.
+    pub shapes: Vec<SceneShape>,
     /// Transform palette. Index 0 is always identity.
     pub transforms: Vec<Transform>,
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
@@ -321,6 +448,7 @@ impl Scene {
             images: Vec::new(),
             gradients: Vec::new(),
             strokes: Vec::new(),
+            shapes: Vec::new(),
             transforms: vec![Transform::IDENTITY], // index 0 = identity
             image_sources: HashMap::new(),
         }
@@ -573,6 +701,44 @@ impl Scene {
             key,
             transform_id,
             clip_rect,
+            clip_corner_radii: SHARP_CLIP,
+        });
+    }
+
+    /// Phase 11b': append a `SceneShape` directly. For most cases
+    /// the convenience helpers `push_shape_filled` /
+    /// `push_shape_stroked` are easier to use.
+    pub fn push_shape(&mut self, shape: SceneShape) {
+        self.shapes.push(shape);
+    }
+
+    /// Phase 11b': append an arbitrary path filled with a single
+    /// solid color. Identity transform, no clip.
+    pub fn push_shape_filled(&mut self, path: ScenePath, color: [f32; 4]) {
+        self.shapes.push(SceneShape {
+            path,
+            fill_color: Some(color),
+            stroke: None,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+        });
+    }
+
+    /// Phase 11b': append an arbitrary path stroked with a single
+    /// solid color and line width. Identity transform, no clip.
+    pub fn push_shape_stroked(
+        &mut self,
+        path: ScenePath,
+        color: [f32; 4],
+        stroke_width: f32,
+    ) {
+        self.shapes.push(SceneShape {
+            path,
+            fill_color: None,
+            stroke: Some(ScenePathStroke { color, width: stroke_width }),
+            transform_id: 0,
+            clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
         });
     }

@@ -30,7 +30,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-use crate::scene::{Scene, SceneGradient, SceneImage, SceneRect, SceneStroke, Transform};
+use crate::scene::{
+    PathOp, Scene, SceneGradient, SceneImage, SceneRect, SceneShape, SceneStroke, Transform,
+};
 
 /// Integer (col, row) coordinate of a tile within the cache grid.
 /// Tile (cx, cy) covers world rect `(cx*T, cy*T, (cx+1)*T, (cy+1)*T)`.
@@ -201,6 +203,13 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
             hash_stroke(&mut hasher, stroke);
         }
     }
+    for shape in &scene.shapes {
+        if let Some(aabb) = world_aabb_shape(shape, scene) {
+            if aabb_intersects(aabb, tile_rect) {
+                hash_shape(&mut hasher, shape);
+            }
+        }
+    }
 
     hasher.finish()
 }
@@ -241,6 +250,50 @@ fn hash_image(h: &mut DefaultHasher, i: &SceneImage) {
     for c in i.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
+}
+
+fn hash_shape(h: &mut DefaultHasher, s: &SceneShape) {
+    h.write_usize(s.path.ops.len());
+    for op in &s.path.ops {
+        match *op {
+            PathOp::MoveTo(x, y) => {
+                h.write_u8(0);
+                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+            }
+            PathOp::LineTo(x, y) => {
+                h.write_u8(1);
+                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+            }
+            PathOp::QuadTo(cx, cy, x, y) => {
+                h.write_u8(2);
+                h.write_u32(cx.to_bits()); h.write_u32(cy.to_bits());
+                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+            }
+            PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y) => {
+                h.write_u8(3);
+                h.write_u32(c1x.to_bits()); h.write_u32(c1y.to_bits());
+                h.write_u32(c2x.to_bits()); h.write_u32(c2y.to_bits());
+                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+            }
+            PathOp::Close => h.write_u8(4),
+        }
+    }
+    if let Some(c) = s.fill_color {
+        h.write_u8(1);
+        for v in c { h.write_u32(v.to_bits()); }
+    } else {
+        h.write_u8(0);
+    }
+    if let Some(stroke) = s.stroke {
+        h.write_u8(1);
+        for v in stroke.color { h.write_u32(v.to_bits()); }
+        h.write_u32(stroke.width.to_bits());
+    } else {
+        h.write_u8(0);
+    }
+    h.write_u32(s.transform_id);
+    for c in s.clip_rect { h.write_u32(c.to_bits()); }
+    for c in s.clip_corner_radii { h.write_u32(c.to_bits()); }
 }
 
 fn hash_stroke(h: &mut DefaultHasher, s: &SceneStroke) {
@@ -321,6 +374,15 @@ fn world_aabb_image(image: &SceneImage, scene: &Scene) -> [f32; 4] {
 
 fn world_aabb_gradient(g: &SceneGradient, scene: &Scene) -> [f32; 4] {
     world_aabb([g.x0, g.y0, g.x1, g.y1], g.transform_id, scene)
+}
+
+pub(crate) fn world_aabb_shape(s: &SceneShape, scene: &Scene) -> Option<[f32; 4]> {
+    let local = s.path.local_aabb()?;
+    // Inflate by half stroke width if a stroke is present, same
+    // reasoning as world_aabb_stroke.
+    let half = s.stroke.map_or(0.0, |st| st.width * 0.5);
+    let inflated = [local[0] - half, local[1] - half, local[2] + half, local[3] + half];
+    Some(world_aabb(inflated, s.transform_id, scene))
 }
 
 fn world_aabb_stroke(s: &SceneStroke, scene: &Scene) -> [f32; 4] {

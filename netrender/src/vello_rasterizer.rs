@@ -50,15 +50,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vello::kurbo::{Affine, Point, Rect, RoundedRect, RoundedRectRadii, Stroke};
+use vello::kurbo::{Affine, BezPath, Point, Rect, RoundedRect, RoundedRectRadii, Stroke};
 use vello::peniko::{
     self, BlendMode, Blob, Color, ColorStop, Compose, Fill, Gradient, ImageAlphaType, ImageBrush,
     ImageData, ImageFormat, Mix,
 };
 
 use crate::scene::{
-    GradientKind, ImageKey, NO_CLIP, Scene, SceneGradient, SceneImage, SceneRect, SceneStroke,
-    Transform,
+    GradientKind, ImageKey, NO_CLIP, PathOp, Scene, SceneGradient, SceneImage, SceneRect,
+    SceneShape, SceneStroke, Transform,
 };
 
 /// Translate a netrender [`Scene`] into a [`vello::Scene`] suitable
@@ -106,6 +106,9 @@ pub fn scene_to_vello_with_overrides(
     for image in &scene.images {
         emit_image(&mut vscene, image, &scene.transforms, &images);
     }
+    for shape in &scene.shapes {
+        emit_shape(&mut vscene, shape, &scene.transforms);
+    }
 
     vscene
 }
@@ -151,6 +154,54 @@ fn emit_rect(vscene: &mut vello::Scene, rect: &SceneRect, transforms: &[Transfor
         push_clip_layer(vscene, rect.clip_rect, rect.clip_corner_radii);
     }
     vscene.fill(Fill::NonZero, affine, color, None, &shape);
+    if needs_clip {
+        vscene.pop_layer();
+    }
+}
+
+fn build_bez_path(path: &crate::scene::ScenePath) -> BezPath {
+    let mut bp = BezPath::new();
+    for op in &path.ops {
+        match *op {
+            PathOp::MoveTo(x, y) => bp.move_to(Point::new(x as f64, y as f64)),
+            PathOp::LineTo(x, y) => bp.line_to(Point::new(x as f64, y as f64)),
+            PathOp::QuadTo(cx, cy, x, y) => bp.quad_to(
+                Point::new(cx as f64, cy as f64),
+                Point::new(x as f64, y as f64),
+            ),
+            PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y) => bp.curve_to(
+                Point::new(c1x as f64, c1y as f64),
+                Point::new(c2x as f64, c2y as f64),
+                Point::new(x as f64, y as f64),
+            ),
+            PathOp::Close => bp.close_path(),
+        }
+    }
+    bp
+}
+
+fn emit_shape(vscene: &mut vello::Scene, shape: &SceneShape, transforms: &[Transform]) {
+    if shape.fill_color.is_none() && shape.stroke.is_none() {
+        return; // Nothing to paint.
+    }
+    let bp = build_bez_path(&shape.path);
+    let affine = transform_to_affine(&transforms[shape.transform_id as usize]);
+
+    let needs_clip = shape.clip_rect != NO_CLIP;
+    if needs_clip {
+        push_clip_layer(vscene, shape.clip_rect, shape.clip_corner_radii);
+    }
+
+    if let Some(color) = shape.fill_color {
+        let fill = unpremultiply_color(color);
+        vscene.fill(Fill::NonZero, affine, fill, None, &bp);
+    }
+    if let Some(stroke) = shape.stroke {
+        let style = Stroke::new(stroke.width as f64);
+        let color = unpremultiply_color(stroke.color);
+        vscene.stroke(&style, affine, color, None, &bp);
+    }
+
     if needs_clip {
         vscene.pop_layer();
     }

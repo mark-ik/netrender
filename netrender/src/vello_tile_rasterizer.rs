@@ -310,6 +310,13 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
             filtered.strokes.push(stroke.clone());
         }
     }
+    for shape in &scene.shapes {
+        if let Some(aabb) = crate::tile_cache::world_aabb_shape(shape, scene) {
+            if aabb_intersects(aabb, tile_rect) {
+                filtered.shapes.push(shape.clone());
+            }
+        }
+    }
 
     filtered
 }
