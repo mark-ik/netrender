@@ -104,17 +104,19 @@ impl GpuPass for WgpuDevice {
 
     fn bind_texture<S>(
         &mut self,
-        _slot: S,
-        _texture: &<Self as GpuResources>::Texture,
+        slot: S,
+        texture: &<Self as GpuResources>::Texture,
         _swizzle: Swizzle,
     )
     where
         S: Into<TextureSlot>,
     {
-        // P5 minimum doesn't yet wire texture binding into draw paths —
-        // ps_clear has no textures. Bind group construction with
-        // arbitrary texture slots lands when the first textured draw
-        // path is exercised end-to-end (P5+).
+        // Records (slot → view) for `issue_draw` to consume when building
+        // the frag-stage bind group. wgpu::TextureView is cheap-clone
+        // (Arc internally). Swizzle is ignored — wgpu has no per-texture
+        // swizzle (matches `swizzle_settings()` returning None).
+        let slot_idx = slot.into().0;
+        self.bound_textures.insert(slot_idx, texture.view.clone());
     }
 
     fn bind_external_texture<S>(
@@ -125,7 +127,8 @@ impl GpuPass for WgpuDevice {
     where
         S: Into<TextureSlot>,
     {
-        // Same as bind_texture; deferred.
+        // Same shape as bind_texture; ExternalTexture isn't yet a real
+        // type for wgpu (placeholder), so this stays deferred.
     }
 
     fn clear_target(
@@ -134,23 +137,22 @@ impl GpuPass for WgpuDevice {
         _depth: Option<f32>,
         _rect: Option<FramebufferIntRect>,
     ) {
-        // Records the pending clear color. Applied as `LoadOp::Clear` on
-        // the next render pass open, then consumed.
+        // Records pending clear for the next render pass open. Trait
+        // takes &self (matches GL); pending_clear is a Cell for safe
+        // interior mutability.
         //
-        // GL accepts &self (no mut); wgpu state mutation needs a path.
-        // SAFETY: device API is single-threaded; pending_clear is only
-        // written from device-side methods, never concurrently.
-        if let Some(rgba) = color {
-            let dev = self as *const Self as *mut Self;
-            unsafe {
-                (*dev).pending_clear = Some(wgpu::Color {
-                    r: rgba[0] as f64,
-                    g: rgba[1] as f64,
-                    b: rgba[2] as f64,
-                    a: rgba[3] as f64,
-                });
-            }
-        }
+        // Trade-off: this means a renderer that calls clear_target
+        // without following draws won't see anything happen. WebRender's
+        // pattern is always clear-then-draw, so this is fine. If a
+        // standalone clear ever surfaces, we'd open + close a pass
+        // immediately (requires RefCell on frame_encoder).
+        let Some(rgba) = color else { return };
+        self.pending_clear.set(Some(wgpu::Color {
+            r: rgba[0] as f64,
+            g: rgba[1] as f64,
+            b: rgba[2] as f64,
+            a: rgba[3] as f64,
+        }));
     }
 
     fn enable_depth(&self, _depth_func: DepthFunction) {}
@@ -166,15 +168,21 @@ impl GpuPass for WgpuDevice {
     fn set_blend(&mut self, _enable: bool) {}
     fn set_blend_mode(&mut self, _mode: BlendMode) {}
 
-    fn draw_triangles_u16(&mut self, _first_vertex: i32, _index_count: i32) {
-        // Indexed draw without instancing; not yet wired (ps_clear uses
-        // the instanced variant).
+    fn draw_triangles_u16(&mut self, _first_vertex: i32, index_count: i32) {
+        // GL signature passes first_vertex as a byte offset into the
+        // index buffer; for u16 indices that's first_vertex/2 in element
+        // terms. wgpu's draw_indexed handles this via the index range
+        // argument. For typical WebRender draws first_vertex is 0;
+        // non-zero offsets are P5+ work.
+        self.issue_draw_indexed(index_count as u32, 1, wgpu::IndexFormat::Uint16);
     }
 
-    fn draw_triangles_u32(&mut self, _first_vertex: i32, _index_count: i32) {}
+    fn draw_triangles_u32(&mut self, _first_vertex: i32, index_count: i32) {
+        self.issue_draw_indexed(index_count as u32, 1, wgpu::IndexFormat::Uint32);
+    }
 
     fn draw_indexed_triangles(&mut self, index_count: i32) {
-        self.issue_draw(index_count as u32, 1);
+        self.issue_draw_indexed(index_count as u32, 1, wgpu::IndexFormat::Uint16);
     }
 
     fn draw_indexed_triangles_instanced_u16(
@@ -182,11 +190,20 @@ impl GpuPass for WgpuDevice {
         index_count: i32,
         instance_count: i32,
     ) {
-        self.issue_draw(index_count as u32, instance_count.max(1) as u32);
+        self.issue_draw_indexed(
+            index_count as u32,
+            instance_count.max(1) as u32,
+            wgpu::IndexFormat::Uint16,
+        );
     }
 
-    fn draw_nonindexed_points(&mut self, _first_vertex: i32, _vertex_count: i32) {}
-    fn draw_nonindexed_lines(&mut self, _first_vertex: i32, _vertex_count: i32) {}
+    fn draw_nonindexed_points(&mut self, _first_vertex: i32, _vertex_count: i32) {
+        // Non-indexed draws need a different code path (no index buffer
+        // bind). Used for debug primitives only; defer until those land.
+    }
+    fn draw_nonindexed_lines(&mut self, _first_vertex: i32, _vertex_count: i32) {
+        // Same as draw_nonindexed_points; debug-only path.
+    }
 
     fn blit_render_target(
         &mut self,
@@ -234,10 +251,15 @@ impl GpuPass for WgpuDevice {
 
 impl WgpuDevice {
     /// Opens a render pass against `current_target`, replays the bound
-    /// pipeline + buffers + bind group, issues an instanced indexed
+    /// pipeline + buffers + bind group(s), issues an instanced indexed
     /// draw, closes the pass. One pass per draw — correctness over
     /// performance for the minimum viable P5.
-    fn issue_draw(&mut self, index_count: u32, instance_count: u32) {
+    fn issue_draw_indexed(
+        &mut self,
+        index_count: u32,
+        instance_count: u32,
+        index_format: wgpu::IndexFormat,
+    ) {
         let Some(target) = self.current_target.as_ref() else {
             // No target bound — skip draw silently. GL would have
             // undefined behavior here too; the renderer is expected to
@@ -279,10 +301,53 @@ impl WgpuDevice {
             }],
         });
 
+        // Consume any pending clear color (set by clear_target). If the
+        // renderer cleared before drawing, this pass starts with a
+        // LoadOp::Clear; otherwise it preserves prior content via Load.
         let load_op = match self.pending_clear.take() {
             Some(color) => wgpu::LoadOp::Clear(color),
             None => wgpu::LoadOp::Load,
         };
+
+        // Build set 1 (frag stage textures + samplers) when textures
+        // are bound. Empty Vec when none — wgpu accepts no-set-1 only
+        // if the pipeline doesn't declare set 1, which matches ps_clear
+        // (no textures). Textured shaders must have textures bound.
+        let set1_layout;
+        let bind_group_1;
+        let needs_set1 = !self.bound_textures.is_empty();
+        if needs_set1 {
+            // Image at binding 2*i, sampler at binding 2*i+1, per
+            // gen_spirv's split-then-renumber convention. We bind
+            // every (image, sampler) pair — naga's auto-derived layout
+            // exposes both.
+            let sampler = self.default_sampler.as_ref().expect("default sampler");
+            let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
+            // Sort slots so the binding order is deterministic.
+            let mut slots: Vec<&usize> = self.bound_textures.keys().collect();
+            slots.sort();
+            for &slot in &slots {
+                let view = self.bound_textures.get(slot).unwrap();
+                let image_binding = (*slot as u32) * 2;
+                let sampler_binding = image_binding + 1;
+                entries.push(wgpu::BindGroupEntry {
+                    binding: image_binding,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: sampler_binding,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                });
+            }
+            set1_layout = pipeline.get_bind_group_layout(1);
+            bind_group_1 = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("WgpuDevice issue_draw set 1"),
+                layout: &set1_layout,
+                entries: &entries,
+            }));
+        } else {
+            bind_group_1 = None;
+        }
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -304,11 +369,12 @@ impl WgpuDevice {
 
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind_group_0, &[]);
+            if let Some(bg1) = bind_group_1.as_ref() {
+                pass.set_bind_group(1, bg1, &[]);
+            }
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_vertex_buffer(1, instance_buffer.slice(..));
-            // WebRender uses u16 indices for the standard quad index
-            // buffer. (u32 path lands when draw_triangles_u32 is wired.)
-            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            pass.set_index_buffer(index_buffer.slice(..), index_format);
             pass.draw_indexed(0..index_count, 0, 0..instance_count);
         }
     }

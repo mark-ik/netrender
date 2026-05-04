@@ -77,8 +77,10 @@ pub struct WgpuDevice {
     /// opened against this view.
     pub(super) current_target: Option<types::WgpuDrawTarget>,
     /// Pending clear color applied as `LoadOp::Clear` on the next render
-    /// pass open; consumed (set to `None`) on first draw.
-    pub(super) pending_clear: Option<wgpu::Color>,
+    /// pass open; consumed (set to `None`) by the draw that opens the
+    /// pass. `Cell` for &self interior mutability — `clear_target` is
+    /// `&self` per the GL trait signature.
+    pub(super) pending_clear: std::cell::Cell<Option<wgpu::Color>>,
     /// Currently bound pipeline (from `bind_program`).
     pub(super) bound_pipeline: Option<wgpu::RenderPipeline>,
     /// Uniform buffer of the currently bound program (for bind group
@@ -88,6 +90,15 @@ pub struct WgpuDevice {
     pub(super) bound_vertex_buffer: Option<wgpu::Buffer>,
     pub(super) bound_instance_buffer: Option<wgpu::Buffer>,
     pub(super) bound_index_buffer: Option<wgpu::Buffer>,
+    /// Textures bound by `bind_texture`, keyed by raw slot index. Cleared
+    /// at end_frame; consumed by `issue_draw` to build the frag-stage
+    /// bind group (set 1).
+    pub(super) bound_textures: std::collections::HashMap<usize, wgpu::TextureView>,
+    /// Default sampler used for every textured binding. wgpu requires a
+    /// sampler at each `OpTypeSampler` binding; we use one sampler for
+    /// all (linear filter, clamp-to-edge) until per-texture sampler
+    /// configuration matters.
+    pub(super) default_sampler: Option<wgpu::Sampler>,
 }
 
 impl WgpuDevice {
@@ -102,6 +113,16 @@ impl WgpuDevice {
         surface_format: Option<wgpu::TextureFormat>,
     ) -> Self {
         let capabilities = derive_capabilities(&adapter, &device);
+        let default_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("WgpuDevice default sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
         WgpuDevice {
             instance,
             adapter,
@@ -114,12 +135,14 @@ impl WgpuDevice {
             upload_method: UploadMethod::Immediate,
             frame_encoder: None,
             current_target: None,
-            pending_clear: None,
+            pending_clear: std::cell::Cell::new(None),
             bound_pipeline: None,
             bound_uniform_buffer: None,
             bound_vertex_buffer: None,
             bound_instance_buffer: None,
             bound_index_buffer: None,
+            bound_textures: std::collections::HashMap::new(),
+            default_sampler: Some(default_sampler),
         }
     }
 
@@ -229,12 +252,13 @@ impl GpuFrame for WgpuDevice {
             self.queue.submit([encoder.finish()]);
         }
         self.current_target = None;
-        self.pending_clear = None;
+        self.pending_clear.set(None);
         self.bound_pipeline = None;
         self.bound_uniform_buffer = None;
         self.bound_vertex_buffer = None;
         self.bound_instance_buffer = None;
         self.bound_index_buffer = None;
+        self.bound_textures.clear();
     }
 
     fn reset_state(&mut self) {
