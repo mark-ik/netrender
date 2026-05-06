@@ -1107,6 +1107,57 @@ impl Scene {
         self.push_layer(SceneLayer::clip(clip));
     }
 
+    /// Roadmap B2 — open a scroll frame: a rect-clipped layer in
+    /// parent space paired with a fresh `Transform` palette entry
+    /// that translates content by `-scroll_offset`.
+    ///
+    /// Returns the `transform_id` the caller should pass to
+    /// `push_rect_transformed` / `push_image_transformed` / etc. for
+    /// any primitive that should scroll inside this frame. Primitives
+    /// pushed with `transform_id = 0` (identity) do not move with the
+    /// scroll — useful for sticky chrome.
+    ///
+    /// Pair with [`Scene::pop_scroll_frame`] when done. The "scroll
+    /// transform + clip layer" bundle replaces three explicit calls
+    /// (`push_transform`, `push_layer` with a rect clip, then later
+    /// `pop_layer`) with two — without changing the underlying op
+    /// model.
+    ///
+    /// `clip_rect` is in parent (pre-scroll) coordinates;
+    /// `scroll_offset` is `[dx, dy]` (positive = pan content
+    /// up/left, matching CSS scroll semantics).
+    pub fn push_scroll_frame(
+        &mut self,
+        clip_rect: [f32; 4],
+        scroll_offset: [f32; 2],
+    ) -> u32 {
+        let xf_id = self.push_transform(Transform::translate_2d(
+            -scroll_offset[0],
+            -scroll_offset[1],
+        ));
+        self.push_layer(SceneLayer {
+            clip: SceneClip::Rect {
+                rect: clip_rect,
+                radii: SHARP_CLIP,
+            },
+            alpha: 1.0,
+            blend_mode: SceneBlendMode::Normal,
+            // Clip is in parent space; identity transform_id keeps
+            // it positioned correctly regardless of the inner
+            // content's scroll transform.
+            transform_id: 0,
+        });
+        xf_id
+    }
+
+    /// Roadmap B2 — close the scroll frame opened by
+    /// [`Scene::push_scroll_frame`]. Equivalent to
+    /// [`Scene::pop_layer`]; named for symmetry so reading sites can
+    /// grep for `pop_scroll_frame` to find scroll-frame boundaries.
+    pub fn pop_scroll_frame(&mut self) {
+        self.pop_layer();
+    }
+
     /// Drop every draw op without touching `fonts`, `transforms`, or
     /// `image_sources`. Useful for the "rebuild scene per frame but
     /// reuse the asset palette" pattern: a streaming consumer

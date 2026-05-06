@@ -77,7 +77,7 @@ fn netrender_text_01_shaped_paragraph_paints() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 
@@ -108,7 +108,7 @@ fn netrender_text_01_shaped_paragraph_paints() {
 
     let mut layout: Layout<[f32; 4]> = builder.build(text);
     layout.break_all_lines(Some(DIM as f32));
-    layout.align(Some(DIM as f32), Alignment::Start, AlignmentOptions::default());
+    layout.align(Alignment::Start, AlignmentOptions::default());
     let layout_height = layout.height();
     assert!(layout_height > 0.0, "parley laid out zero height");
 
@@ -188,7 +188,7 @@ fn netrender_text_02_font_deduped_within_layout() {
 
     let mut layout: Layout<[f32; 4]> = builder.build(text);
     layout.break_all_lines(Some(DIM as f32));
-    layout.align(Some(DIM as f32), Alignment::Start, AlignmentOptions::default());
+    layout.align(Alignment::Start, AlignmentOptions::default());
 
     let mut scene = Scene::new(DIM, DIM);
     netrender_text::push_layout(&mut scene, &layout, [16.0, 16.0]);
@@ -254,7 +254,7 @@ fn netrender_text_03_decorations_emit_rects() {
 
     let mut layout: Layout<[f32; 4]> = builder.build(text);
     layout.break_all_lines(Some(DIM as f32));
-    layout.align(Some(DIM as f32), Alignment::Start, AlignmentOptions::default());
+    layout.align(Alignment::Start, AlignmentOptions::default());
 
     let mut scene = Scene::new(DIM, DIM);
     netrender_text::push_layout(&mut scene, &layout, [16.0, 32.0]);

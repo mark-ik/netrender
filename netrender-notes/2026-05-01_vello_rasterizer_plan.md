@@ -1693,6 +1693,33 @@ Closed in one batch:
 
 105 tests passing across the workspace; 0 failures.
 
+### 11.18 Color emoji / COLR fonts (2026-05-06) — **CLEARED**
+
+Roadmap [B3 verification probe](2026-05-04_feature_roadmap.md):
+*"vello + skrifa already handle COLR layer rendering on the glyph
+path; we likely get this for free."*
+
+**Verified.** A probe loading Segoe UI Emoji on Windows
+(`C:\Windows\Fonts\seguiemj.ttf`, 12.4 MB), shaping `"😀🎉🌈"` via
+parley at 48 px, rendering through `Renderer::render_vello`, and
+reading back pixels measures **91% chromatic ratio** (4118 of 4524
+painted pixels have channel divergence > 32 / 255). That is
+overwhelmingly above the 5% threshold separating "COLR layers
+honored" from "achromatic silhouette only." vello's GPU glyph
+path renders peniko's COLR-decoded layers without any netrender-
+side work.
+
+Receipt at
+[`netrender_text/tests/pb3_color_emoji_probe.rs`](../netrender_text/tests/pb3_color_emoji_probe.rs).
+Skipped vacuously on hosts without one of the canonical emoji
+font paths (Segoe UI Emoji / Apple Color Emoji / Noto Color
+Emoji); CI that wants to enforce this should bundle Noto under
+`tests/data/`.
+
+No netrender-side work item. Re-run the probe on text-stack
+changes (vello / skrifa / parley bumps) as a cheap regression
+canary.
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here

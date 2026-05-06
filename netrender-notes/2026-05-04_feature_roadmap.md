@@ -227,18 +227,14 @@ caret in composers, scrolling in feed readers).
   method call instead of three. No architectural commitment — just
   ergonomics over existing primitives.
 
-- [ ] **B3. Verify: color emoji / COLR fonts** — vello + skrifa
-  already handle COLR layer rendering on the glyph path; we likely
-  get this for free. Verification probe, not a build item.
-  *Trigger:* none — run on the next text-stack work pass.
-  *Outcome A (verified):* file as a CLEARED §11.x finding; no further
-  work.
-  *Outcome B (regression found):* demote to a real work item with
-  scope set against the actual gap (which upstream piece is missing).
-  *Done condition:* load an emoji-bearing font (Segoe UI Emoji on
-  Win, Apple Color Emoji on Mac, Noto Color Emoji on Linux), shape a
-  string with emoji, render — emoji appear in color, not as black
-  silhouettes.
+- [x] **B3. Verify: color emoji / COLR fonts** — **CLEARED 2026-05-06**.
+  Verification probe at
+  [`netrender_text/tests/pb3_color_emoji_probe.rs`](../netrender_text/tests/pb3_color_emoji_probe.rs)
+  measured a 91% chromatic ratio rendering Segoe UI Emoji through
+  the vello path. Full finding:
+  [rasterizer plan §11.18](2026-05-01_vello_rasterizer_plan.md).
+  No netrender-side work item; re-run the probe on text-stack bumps
+  as a regression canary.
 
 ---
 
