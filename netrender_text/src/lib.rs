@@ -173,6 +173,69 @@ pub fn push_layout_with_registry(
     }
 }
 
+// ── B1 selection + caret helpers ─────────────────────────────────────
+
+/// Roadmap B1 — emit selection rectangles for a byte range over a
+/// shaped parley layout, in scene-space (post-`origin` translation
+/// the consumer applies at paint time).
+///
+/// Returns one rect per visual line that the selection touches; rects
+/// are `[x0, y0, x1, y1]` in layout-local coordinates. Multi-line
+/// selections produce multiple rects (one per visual-line band);
+/// collapsed ranges return an empty vec.
+///
+/// Painting is consumer-side: blit a translucent solid-color rect at
+/// each entry under the glyph run, or behind it via a `PushLayer`,
+/// or however the design wants. netrender_text does not opine on
+/// color, alpha, or paint order.
+///
+/// Wraps `parley::Selection::geometry`; bidi selections are handled
+/// natively by parley (RTL runs produce the correct line-anchored
+/// rect bands). The line index from parley is dropped — re-derive
+/// from the rects' `y0` if needed.
+pub fn selection_rects<B: parley::style::Brush>(
+    layout: &parley::Layout<B>,
+    range: core::ops::Range<usize>,
+) -> Vec<[f32; 4]> {
+    use parley::{Affinity, Cursor, Selection};
+    if range.start >= range.end {
+        return Vec::new();
+    }
+    let anchor = Cursor::from_byte_index(layout, range.start, Affinity::Downstream);
+    let focus = Cursor::from_byte_index(layout, range.end, Affinity::Upstream);
+    Selection::new(anchor, focus)
+        .geometry(layout)
+        .into_iter()
+        .map(|(bb, _line_idx)| {
+            [bb.x0 as f32, bb.y0 as f32, bb.x1 as f32, bb.y1 as f32]
+        })
+        .collect()
+}
+
+/// Roadmap B1 — emit a caret rectangle for a byte position in a
+/// shaped layout. `width` is the caret thickness in device pixels
+/// (typically 1.0–2.0).
+///
+/// Caret blink is consumer-side: alternate paint / no-paint at the
+/// platform's cursor-blink cadence. netrender_text returns the rect
+/// shape; the consumer chooses the paint cadence and color.
+///
+/// Wraps `parley::Cursor::geometry`; bidi affinity is honoured (use
+/// `Affinity::Upstream` for the caret on the trailing edge of the
+/// previous cluster, `Downstream` for the leading edge of the next —
+/// matters at line breaks and bidi boundaries).
+pub fn caret_rect<B: parley::style::Brush>(
+    layout: &parley::Layout<B>,
+    byte_index: usize,
+    affinity: parley::Affinity,
+    width: f32,
+) -> [f32; 4] {
+    use parley::Cursor;
+    let cursor = Cursor::from_byte_index(layout, byte_index, affinity);
+    let bb = cursor.geometry(layout, width);
+    [bb.x0 as f32, bb.y0 as f32, bb.x1 as f32, bb.y1 as f32]
+}
+
 /// Re-export parley so consumers can build layouts without taking a
 /// direct dependency on a possibly-different parley version. Use as
 /// `netrender_text::parley::{FontContext, LayoutContext, …}`.

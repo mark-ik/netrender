@@ -207,17 +207,17 @@ the Mere workspace (`mere/crates/nematic`); each protocol surfaces
 slightly different demands on the renderer (selection in viewers,
 caret in composers, scrolling in feed readers).
 
-- [ ] **B1. Selection highlight + caret emission** — the next thing
-  nematic will pull on once it has shaped text. Concrete first uses:
-  Gemini / Gopher / Scroll viewer selection-to-quote, Markdown
-  editor caret, feed-reader excerpt selection.
-  *Trigger:* nematic ships shaped text via parley (Gemini/Gopher
-  viewer first) and asks for selection rects.
-  *Done condition:* `netrender_text` exposes
-  `selection_rects(layout, range) -> Vec<[f32; 4]>` (one rect per
-  visual line in the selection), and a thin caret helper that emits a
-  blink-friendly thin rect at a `parley::Cursor`. Caret blink is
-  consumer-side; netrender paints the rect.
+- [x] **B1. Selection highlight + caret emission** — **CLEARED 2026-05-06**.
+  `netrender_text::selection_rects(layout, range)` and
+  `netrender_text::caret_rect(layout, byte_index, affinity, width)`
+  ship as thin wrappers over `parley::Selection::geometry` /
+  `parley::Cursor::geometry`. Both pure CPU; bidi handled natively
+  by parley. Receipts at
+  [`netrender_text/tests/pb1_selection_and_caret.rs`](../netrender_text/tests/pb1_selection_and_caret.rs)
+  (7/7). Trigger framing was protective rather than technical —
+  parley's selection API was already in shape, so the wrap was
+  ship-now-no-speculation. Full finding:
+  [rasterizer plan §11.19](2026-05-01_vello_rasterizer_plan.md).
 
 - [ ] **B2. Scrolling convenience** —
   `Scene::push_scroll_frame(clip_rect, scroll_offset)` macro that

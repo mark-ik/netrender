@@ -1720,6 +1720,39 @@ No netrender-side work item. Re-run the probe on text-stack
 changes (vello / skrifa / parley bumps) as a cheap regression
 canary.
 
+### 11.19 Selection rects + caret helpers (2026-05-06) — **CLEARED**
+
+Roadmap [B1](2026-05-04_feature_roadmap.md): selection highlight +
+caret emission for nematic's Gemini/Gopher/Scroll viewers,
+Markdown editors, and feed readers.
+
+`netrender_text` now exposes:
+
+- `selection_rects(&Layout, Range<usize>) -> Vec<[f32; 4]>` — one
+  rect per visual line that the byte range touches; thin wrapper
+  over `parley::Selection::geometry`. Bidi-correct (RTL runs
+  produce the right line-anchored bands by parley's own logic).
+- `caret_rect(&Layout, byte_index, Affinity, width) -> [f32; 4]` —
+  caret rectangle at a byte position; thin wrapper over
+  `parley::Cursor::geometry`. Caret blink is consumer-side
+  (alternate paint / no-paint at the platform's cadence); we just
+  return the shape.
+
+Both pure CPU, no GPU dependency. Receipts at
+[`netrender_text/tests/pb1_selection_and_caret.rs`](../netrender_text/tests/pb1_selection_and_caret.rs)
+cover collapsed ranges (empty), single-line bands, multi-line
+bands ordered top-to-bottom, caret position at start, monotonic
+caret advance through text, stable caret height across the same
+line, and partial-vs-full line widths.
+
+The roadmap had B1 framed as consumer-pull-gated ("nematic ships
+shaped text via parley and asks for selection rects"). Closer
+look at parley's API showed the trigger was protective rather
+than technical: `parley::Selection::geometry` and
+`parley::Cursor::geometry` already exposed exactly the right
+shape, so wrapping them as netrender_text helpers was a
+no-speculation ~30-line job.
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here
