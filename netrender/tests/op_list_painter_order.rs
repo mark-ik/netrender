@@ -73,7 +73,7 @@ fn op_order_01_rect_after_image_paints_on_top() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 
@@ -112,7 +112,7 @@ fn op_order_02_image_after_rect_paints_on_top() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 

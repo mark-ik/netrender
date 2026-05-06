@@ -28,6 +28,7 @@
 
 pub mod filter;
 pub mod hit_test;
+pub mod profiling;
 pub mod registry;
 pub mod render_graph;
 mod renderer;

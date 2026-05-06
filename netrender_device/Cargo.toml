@@ -5,7 +5,16 @@ license = "MPL-2.0"
 description = "wgpu-native device foundation for netrender (Phase 0.5 split per netrender-notes/2026-04-30_netrender_design_plan.md)"
 edition = "2021"
 
+[features]
+default = []
+# Roadmap A2 — Scene capture / replay support. Adds serde derives to
+# the netrender_device types embedded in `netrender::scene::Scene`
+# (`SurfaceKey`, `GradientKind`). Pulled in transitively by
+# `netrender`'s matching `serde` feature.
+serde = ["dep:serde"]
+
 [dependencies]
 log = "0.4"
 wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "0.4"
+serde = { version = "1", features = ["derive"], optional = true }

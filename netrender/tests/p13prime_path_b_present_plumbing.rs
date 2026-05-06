@@ -157,6 +157,7 @@ fn make_renderer() -> netrender::Renderer {
         NetrenderOptions {
             tile_cache_size: Some(TILE_SIZE),
             enable_vello: true,
+            ..Default::default()
         },
     )
     .expect("create_netrender_instance")

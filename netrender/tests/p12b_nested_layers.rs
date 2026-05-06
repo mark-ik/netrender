@@ -57,7 +57,7 @@ fn render_to_bytes(scene: &Scene) -> Vec<u8> {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
     let (target, view) = make_target(&handles.device);

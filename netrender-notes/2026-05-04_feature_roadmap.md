@@ -51,7 +51,8 @@ activates the fix, and the done condition. Move into a
   approximation is enough for "click on this label" UI but imprecise
   around descenders and kerning gaps.
   *Trigger:* a consumer reports caret/selection mis-targets at
-  descenders or kerning gaps, or middlenet wires a text editor.
+  descenders or kerning gaps, or nematic's Markdown/Scroll text
+  composer needs caret precision.
   *Done condition:* `hit_test` on a glyph run with descenders
   (e.g. `g`, `y`) returns the glyph index that the click pixel
   actually overlaps, verified against `skrifa::metrics::GlyphMetrics`
@@ -186,7 +187,8 @@ Order within Phase A is by value-to-cost ratio, smallest first.
   *Done condition:* an `enable_tile_dirty_overlay: bool` flag on
   `NetrenderOptions`; when on, dirty tiles get a translucent red wash
   on top of the rendered output (per-tile `last_dirty_frame` field on
-  `TileCache`). Bites first when middlenet performance gets weird.
+  `TileCache`). Bites first when nematic's Gemini/Gopher rendering
+  starts behaving weirdly under tile invalidation pressure.
 
 - [ ] **A4. Frame profiler** — per-phase timings: scene build, tile
   invalidate, vello encode, GPU submit, readback.
@@ -198,12 +200,19 @@ Order within Phase A is by value-to-cost ratio, smallest first.
 
 ## Phase B — Consumer-pull-imminent
 
-Things smolweb / middlenet will surface as parley wiring stabilizes
-and graphshell-shaped consumers wire in.
+Things nematic (Gemini, Gopher, Scroll, Markdown, feeds, Finger) and
+serval (full web) will surface as parley wiring stabilizes and
+graphshell-shaped consumers wire in. Nematic is the smolweb engine in
+the Mere workspace (`mere/crates/nematic`); each protocol surfaces
+slightly different demands on the renderer (selection in viewers,
+caret in composers, scrolling in feed readers).
 
 - [ ] **B1. Selection highlight + caret emission** — the next thing
-  middlenet will pull on once it has shaped text.
-  *Trigger:* middlenet wires shaped text and asks for selection.
+  nematic will pull on once it has shaped text. Concrete first uses:
+  Gemini / Gopher / Scroll viewer selection-to-quote, Markdown
+  editor caret, feed-reader excerpt selection.
+  *Trigger:* nematic ships shaped text via parley (Gemini/Gopher
+  viewer first) and asks for selection rects.
   *Done condition:* `netrender_text` exposes
   `selection_rects(layout, range) -> Vec<[f32; 4]>` (one rect per
   visual line in the selection), and a thin caret helper that emits a

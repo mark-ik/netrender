@@ -60,7 +60,7 @@ fn p11c_01_card_with_drop_shadow() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 
@@ -186,7 +186,7 @@ fn p11c_02_blur_radius_extends_halo() {
         let handles = boot().expect("wgpu boot");
         let renderer = create_netrender_instance(
             handles.clone(),
-            NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true },
+            NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
         )
         .expect("create_netrender_instance");
 

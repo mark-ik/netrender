@@ -65,7 +65,7 @@ fn render_with_clear(scene: &Scene, clear: wgpu::Color) -> Vec<u8> {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true, ..Default::default() },
     )
     .expect("renderer");
     let (target, view) = make_target(&handles.device);

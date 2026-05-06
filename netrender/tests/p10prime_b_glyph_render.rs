@@ -87,7 +87,7 @@ fn p10b_01_render_real_font_glyph() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(TILE_SIZE), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 

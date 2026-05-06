@@ -102,6 +102,7 @@ fn render_through_renderer(scene: &Scene) -> Vec<u8> {
         NetrenderOptions {
             tile_cache_size: Some(TILE_SIZE),
             enable_vello: true,
+            ..Default::default()
         },
     )
     .expect("create_netrender_instance");
@@ -162,6 +163,7 @@ fn p7prime_renderer_two_frames_share_state() {
         NetrenderOptions {
             tile_cache_size: Some(TILE_SIZE),
             enable_vello: true,
+            ..Default::default()
         },
     )
     .expect("create_netrender_instance");

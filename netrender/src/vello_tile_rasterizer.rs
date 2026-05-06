@@ -44,7 +44,7 @@ use std::collections::{HashMap, HashSet};
 use vello::{
     AaConfig, AaSupport, RenderParams, Renderer, RendererOptions,
     kurbo::{Affine, Rect},
-    peniko::{BlendMode, Color, Compose, Fill, ImageAlphaType, ImageData, ImageFormat, Mix},
+    peniko::{BlendMode, Brush, Color, Compose, Fill, ImageAlphaType, ImageData, ImageFormat, Mix},
 };
 
 use netrender_device::compositor::{LayerPresent, SurfaceKey};
@@ -98,7 +98,7 @@ pub struct VelloTileRasterizer {
     /// Retained from the most recent `tile_cache.invalidate(scene)`
     /// call, used by `build_layer_presents` to compute per-surface
     /// tile-intersection dirty bits. Cleared back to empty by
-    /// `build_master_scene` on each frame before being repopulated.
+    /// `build_master_scene_timed` on each frame before being repopulated.
     last_dirty_tiles: Vec<TileCoord>,
     /// Path (b′) compositor handoff: cached internal master texture,
     /// reused frame-to-frame when `(width, height, format)` matches.
@@ -111,6 +111,16 @@ pub struct VelloTileRasterizer {
     master_allocations: usize,
     /// Per-surface state across frames for the four-source dirty OR.
     compositor_state: CompositorState,
+    /// Roadmap A3 — when true, `compose_master` appends a translucent
+    /// red wash for tiles dirtied within `dirty_overlay_window_frames`.
+    dirty_overlay_enabled: bool,
+    /// Roadmap A3 — fade window in frames; opacity decays linearly
+    /// from `OVERLAY_PEAK_ALPHA` at `age = 0` to `0` at `age = window`.
+    dirty_overlay_window_frames: u32,
+    /// Roadmap A4 — most recent frame's per-phase timings, captured
+    /// in `render` / `render_to_internal_master` / `compose_into`.
+    /// Cleared back to `None` on `clear_last_timings`.
+    last_timings: Option<crate::profiling::FrameTimings>,
 }
 
 struct MasterEntry {
@@ -145,7 +155,36 @@ impl VelloTileRasterizer {
             master_pool: None,
             master_allocations: 0,
             compositor_state: CompositorState::default(),
+            dirty_overlay_enabled: false,
+            dirty_overlay_window_frames: 30,
+            last_timings: None,
         })
+    }
+
+    /// Roadmap A4 — return the per-phase timings captured by the most
+    /// recent render call (`render` / `render_to_internal_master` /
+    /// `compose_into`). `None` until the first render call returns.
+    pub fn last_timings(&self) -> Option<&crate::profiling::FrameTimings> {
+        self.last_timings.as_ref()
+    }
+
+    /// Roadmap A3 — toggle the tile-dirty overlay. When `enabled`,
+    /// `compose_master` appends a translucent red wash on top of every
+    /// tile that's been reported dirty within the last `window_frames`.
+    /// `window_frames` is clamped to `>= 1` (zero would never paint).
+    pub fn set_dirty_overlay(&mut self, enabled: bool, window_frames: u32) {
+        self.dirty_overlay_enabled = enabled;
+        self.dirty_overlay_window_frames = window_frames.max(1);
+    }
+
+    /// Roadmap A3 — read the current overlay flag (introspection helper).
+    pub fn dirty_overlay_enabled(&self) -> bool {
+        self.dirty_overlay_enabled
+    }
+
+    /// Roadmap A3 — read the current fade window in frames.
+    pub fn dirty_overlay_window_frames(&self) -> u32 {
+        self.dirty_overlay_window_frames
     }
 
     /// Number of times the master-texture pool allocated a fresh
@@ -341,9 +380,14 @@ impl VelloTileRasterizer {
         target_view: &wgpu::TextureView,
         base_color: Color,
     ) -> Result<(), vello::Error> {
-        let master = self.build_master_scene(scene, tile_cache);
+        use crate::profiling::{FrameTimings, Span};
+        let total_span = Span::start("total");
+        let mut timings = FrameTimings::empty();
 
-        self.vello_renderer.render_to_texture(
+        let master = self.build_master_scene_timed(scene, tile_cache, &mut timings);
+
+        let vello_span = Span::start("vello_render");
+        let result = self.vello_renderer.render_to_texture(
             &self.handles.device,
             &self.handles.queue,
             &master,
@@ -354,7 +398,12 @@ impl VelloTileRasterizer {
                 height: scene.viewport_height,
                 antialiasing_method: AaConfig::Area,
             },
-        )
+        );
+        vello_span.stop_recording(&mut timings);
+
+        timings.total = total_span.stop();
+        self.last_timings = Some(timings);
+        result
     }
 
     /// Path (b′) entry point — render `scene` into an internal
@@ -384,13 +433,17 @@ impl VelloTileRasterizer {
         master_format: wgpu::TextureFormat,
         base_color: Color,
     ) -> Result<(&wgpu::Texture, &WgpuHandles), vello::Error> {
+        use crate::profiling::{FrameTimings, Span};
+        let total_span = Span::start("total");
+        let mut timings = FrameTimings::empty();
+
         self.ensure_master_texture(
             scene.viewport_width,
             scene.viewport_height,
             master_format,
         );
 
-        let master_scene = self.build_master_scene(scene, tile_cache);
+        let master_scene = self.build_master_scene_timed(scene, tile_cache, &mut timings);
 
         // The master_pool entry is guaranteed by ensure_master_texture above.
         let entry = self
@@ -401,7 +454,8 @@ impl VelloTileRasterizer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.vello_renderer.render_to_texture(
+        let vello_span = Span::start("vello_render");
+        let result = self.vello_renderer.render_to_texture(
             &self.handles.device,
             &self.handles.queue,
             &master_scene,
@@ -412,7 +466,12 @@ impl VelloTileRasterizer {
                 height: scene.viewport_height,
                 antialiasing_method: AaConfig::Area,
             },
-        )?;
+        );
+        vello_span.stop_recording(&mut timings);
+        result?;
+
+        timings.total = total_span.stop();
+        self.last_timings = Some(timings);
 
         Ok((
             &self.master_pool.as_ref().unwrap().texture,
@@ -486,25 +545,42 @@ impl VelloTileRasterizer {
         master: &mut vello::Scene,
         transform: Affine,
     ) {
-        let local_master = self.build_master_scene(scene, tile_cache);
+        use crate::profiling::{FrameTimings, Span};
+        let total_span = Span::start("total");
+        let mut timings = FrameTimings::empty();
+
+        let local_master = self.build_master_scene_timed(scene, tile_cache, &mut timings);
+
+        let append_span = Span::start("master_append");
         let xform = if transform == Affine::IDENTITY {
             None
         } else {
             Some(transform)
         };
         master.append(&local_master, xform);
+        append_span.stop_recording(&mut timings);
+
+        timings.total = total_span.stop();
+        self.last_timings = Some(timings);
     }
 
-    /// Internal: tile-cache update + master-scene composition.
-    /// Shared by [`Self::render`] and [`Self::compose_into`]; the
-    /// only difference between the two paths is what they do with
-    /// the returned master.
-    fn build_master_scene(
+    /// Internal: tile-cache update + master-scene composition with
+    /// A4 timing instrumentation. Shared by [`Self::render`],
+    /// [`Self::render_to_internal_master`], and
+    /// [`Self::compose_into`]; each caller wraps this in its own
+    /// outer total + per-format spans (vello_render, master_append,
+    /// etc.) and finalises `self.last_timings`.
+    fn build_master_scene_timed(
         &mut self,
         scene: &Scene,
         tile_cache: &mut TileCache,
+        timings: &mut crate::profiling::FrameTimings,
     ) -> vello::Scene {
+        use crate::profiling::Span;
+
+        let refresh_span = Span::start("refresh_image_data");
         self.refresh_image_data(scene);
+        refresh_span.stop_recording(timings);
 
         // Build the merged Path A + Path B image map once per frame
         // (Path B overrides win on key collision). Previously this
@@ -515,10 +591,13 @@ impl VelloTileRasterizer {
             merged_images.insert(*key, image.clone());
         }
 
+        let invalidate_span = Span::start("tile_invalidate");
         let dirty = tile_cache.invalidate(scene);
+        invalidate_span.stop_recording(timings);
         self.last_dirty_count = dirty.len();
         self.last_dirty_tiles = dirty.clone();
 
+        let rebuild_span = Span::start("dirty_tile_rebuild");
         for &coord in &dirty {
             let world_rect = tile_cache
                 .tile_world_rect(coord)
@@ -533,8 +612,12 @@ impl VelloTileRasterizer {
         // frames).
         self.tile_scenes
             .retain(|coord, _| tile_cache.tile_world_rect(*coord).is_some());
+        rebuild_span.stop_recording(timings);
 
-        self.compose_master(tile_cache, scene)
+        let compose_span = Span::start("master_compose");
+        let master = self.compose_master(tile_cache, scene);
+        compose_span.stop_recording(timings);
+        master
     }
 
     fn refresh_image_data(&mut self, scene: &Scene) {
@@ -628,7 +711,53 @@ impl VelloTileRasterizer {
             master.pop_layer();
         }
 
+        // Roadmap A3 — translucent red wash on tiles dirtied within
+        // the configured fade window. Painted *after* the root layer
+        // pop so the overlay is not subject to scene-level alpha or
+        // blend-mode wraps.
+        if self.dirty_overlay_enabled {
+            self.paint_dirty_overlay(&mut master, tile_cache);
+        }
+
         master
+    }
+
+    /// Roadmap A3 — append a translucent red wash on top of every
+    /// tile dirtied within `dirty_overlay_window_frames`. Opacity
+    /// fades linearly with age. Caller decides whether to call this
+    /// (gated on `dirty_overlay_enabled`).
+    fn paint_dirty_overlay(&self, master: &mut vello::Scene, tile_cache: &TileCache) {
+        // Peak alpha at age 0; decays to 0 at age = window. 0.4 is a
+        // bright-enough wash to be visible over typical content
+        // without obscuring it. Tune via fork if profiles surface a
+        // legibility concern.
+        const OVERLAY_PEAK_ALPHA: f32 = 0.4;
+
+        let recent = tile_cache.recent_dirty_tiles(self.dirty_overlay_window_frames as u64);
+        if recent.is_empty() {
+            return;
+        }
+        for (rect, age_frac) in recent {
+            let alpha = OVERLAY_PEAK_ALPHA * (1.0 - age_frac);
+            let alpha_u8 = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+            if alpha_u8 == 0 {
+                continue;
+            }
+            let color = Color::from_rgba8(255, 0, 0, alpha_u8);
+            let shape = Rect::new(
+                rect[0] as f64,
+                rect[1] as f64,
+                rect[2] as f64,
+                rect[3] as f64,
+            );
+            master.fill(
+                Fill::NonZero,
+                Affine::IDENTITY,
+                &Brush::Solid(color),
+                None,
+                &shape,
+            );
+        }
     }
 
     /// Borrow the underlying vello::Renderer for advanced uses

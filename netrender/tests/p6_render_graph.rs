@@ -172,7 +172,7 @@ fn p6_02_drop_shadow() {
     let queue = handles.queue.clone();
     let renderer = create_netrender_instance(
         handles,
-        NetrenderOptions { tile_cache_size: Some(64), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(64), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance");
 

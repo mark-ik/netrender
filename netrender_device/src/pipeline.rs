@@ -15,6 +15,7 @@
 /// preserved for any future ABI that might re-introduce a WGSL
 /// gradient pipeline; do not renumber.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GradientKind {
     Linear = 0,
     Radial = 1,

@@ -388,6 +388,30 @@ impl Renderer {
         Some(rast.master_allocations())
     }
 
+    /// Roadmap A4 — return the per-phase timings captured by the
+    /// most recent `render_vello` / `render_with_compositor` /
+    /// `compose_into` call. Returns `None` if `enable_vello` was
+    /// false or no timed render has run yet.
+    ///
+    /// Spans currently captured:
+    ///
+    /// - `refresh_image_data` — Path A image cache refresh.
+    /// - `tile_invalidate` — `TileCache::invalidate(scene)`.
+    /// - `dirty_tile_rebuild` — per-dirty-tile filter + WGSL-style
+    ///   translation into per-tile vello scenes.
+    /// - `master_compose` — building the master `vello::Scene`.
+    /// - `vello_render` (only on render paths that submit to GPU)
+    ///   — `vello::Renderer::render_to_texture`.
+    /// - `master_append` (only on `compose_into`) —
+    ///   `vello::Scene::append`.
+    ///
+    /// Plus a `total` wall-clock duration on `FrameTimings` itself.
+    pub fn last_frame_timings(&self) -> Option<crate::profiling::FrameTimings> {
+        let rast_mutex = self.vello_rasterizer.as_ref()?;
+        let rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        rast.last_timings().cloned()
+    }
+
     /// Path (b′) entry point — render `scene` into an internal
     /// master texture (pool-allocated by `(width, height,
     /// master_format)` on the rasterizer), forward declare/destroy

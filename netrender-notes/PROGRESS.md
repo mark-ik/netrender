@@ -56,15 +56,10 @@ These two are the source of truth for the live architecture.
 - [`2026-05-06_webgl_over_wgpu_plan.md`](2026-05-06_webgl_over_wgpu_plan.md)
   — WebGL-over-wgpu companion lane. G0–G6 sequence, gated on
   Serval/Pelt consumer pull. Roadmap entry: G.
-- [`draw_context_plan.md`](draw_context_plan.md)
-- [`typed_pipeline_metadata_plan.md`](typed_pipeline_metadata_plan.md)
-- [`texture_cache_cleanup_plan.md`](texture_cache_cleanup_plan.md)
 - [`wasm-portability-checklist.md`](wasm-portability-checklist.md)
   — note: this is for the WebRender wgpu-backend branch (separate
   project), retained for reference. A netrender-specific portability
   list will be authored when F2 (wasm) triggers.
-- [`servo_wgpu_integration.md`](servo_wgpu_integration.md)
-  — downstream Servo integration notes; host/device-sharing shape
 
 ## Historical / superseded — archived
 
@@ -116,6 +111,24 @@ historical context, not for guidance.
 - `archive/2026-04-28_session_brief.md` — historical session note.
 - `archive/2026-03-01_webrender_wgpu_renderer_implementation_plan.md` —
   the original convergence history, no longer canonical.
+
+**Pre-vello-pivot small-scope plans (WebRender wgpu-backend lane,
+code no longer in this repo):**
+
+- `archive/draw_context_plan.md` — `WgpuDrawContext` + encoder
+  batching plan against `webrender/src/device/wgpu_device.rs` and
+  `webrender/src/renderer/mod.rs`. WebRender lane.
+- `archive/typed_pipeline_metadata_plan.md` — flat
+  `WgpuShaderVariant` enum to replace `(name, config)` string-tuple
+  pipeline keys. WebRender lane.
+- `archive/texture_cache_cleanup_plan.md` — WebRender wgpu-backend
+  texture subsystem cleanup (`WgpuFrameDataTextures`, dither,
+  unsafe-byte-slice utility, mali workaround). WebRender lane.
+- `archive/servo_wgpu_integration.md` — Servo + WebRender
+  wgpu-backend integration guide (DPR=1/2 confirmed 2026-04-02).
+  Pre-vello-pivot. The active netrender-side Servo integration
+  story now lives in the path (b′) plan and the WebGL-over-wgpu
+  plan; this guide documents the historical lane.
 
 ## Local-only
 

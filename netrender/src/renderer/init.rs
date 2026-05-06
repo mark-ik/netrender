@@ -26,6 +26,19 @@ pub struct NetrenderOptions {
     /// [`VelloTileRasterizer`] and route [`Renderer::render_vello`]
     /// through it. Requires `tile_cache_size = Some(_)`.
     pub enable_vello: bool,
+    /// Roadmap A3 — when `true`, the renderer paints a translucent
+    /// red wash on top of any tile that was reported dirty within
+    /// the last `tile_dirty_overlay_window_frames` frames. Useful
+    /// for visually debugging tile invalidation on dynamic scenes.
+    /// No-op when `enable_vello = false` (overlay is rendered as
+    /// part of the master vello scene composition).
+    pub enable_tile_dirty_overlay: bool,
+    /// Roadmap A3 — fade window for the tile-dirty overlay. Tiles
+    /// dirtied within the last `N` frames stay visible; opacity
+    /// decays linearly with age. `0` (default) is treated as a
+    /// reasonable preset (~30 frames ≈ 0.5s at 60 Hz) when
+    /// `enable_tile_dirty_overlay` is on; set to override.
+    pub tile_dirty_overlay_window_frames: u32,
 }
 
 /// Construct a wgpu-only `Renderer`. The embedder owns the wgpu
@@ -51,8 +64,16 @@ pub fn create_netrender_instance(
             return Err(RendererError::VelloRequiresTileCache);
         }
         let handles = wgpu_device.core.clone();
-        let rast = VelloTileRasterizer::new(handles)
+        let mut rast = VelloTileRasterizer::new(handles)
             .map_err(|e| RendererError::VelloInit(format!("{:?}", e)))?;
+        if options.enable_tile_dirty_overlay {
+            let window = if options.tile_dirty_overlay_window_frames == 0 {
+                30 // default ~0.5s at 60 Hz
+            } else {
+                options.tile_dirty_overlay_window_frames
+            };
+            rast.set_dirty_overlay(true, window);
+        }
         Some(Mutex::new(rast))
     } else {
         None

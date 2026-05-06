@@ -5,11 +5,34 @@ license = "MPL-2.0"
 description = "wgpu-native renderer shell (Phase 0.5 split per netrender-notes/2026-04-30_netrender_design_plan.md)"
 edition = "2021"
 
+[features]
+default = []
+# Roadmap A2 — Scene capture / replay support. Adds serde derives to
+# Scene types and exposes `Scene::snapshot_postcard` /
+# `replay_postcard` (small/fast binary fixtures) and
+# `Scene::snapshot_json` / `replay_json` (human-readable, cross-tool).
+# Both formats round-trip identically; choose by audience.
+serde = [
+    "dep:serde",
+    "dep:serde_json",
+    "dep:postcard",
+    "dep:peniko",
+    "netrender_device/serde",
+]
+
 [dependencies]
 log = "0.4"
 wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 netrender_device = { path = "../netrender_device" }
 vello = { git = "https://github.com/linebender/vello", branch = "main", version = "0.8.0", default-features = false, features = ["wgpu"] }
+# Direct peniko dep with the `serde` feature, used only when this crate's
+# `serde` feature is on. Vello pulls peniko transitively but does not forward
+# its serde feature; we re-import the same version with `serde` enabled so
+# `peniko::Blob` round-trips through our custom (de)serializer.
+peniko = { version = "0.1", features = ["serde"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+postcard = { version = "1", features = ["alloc"], optional = true }
 
 [dev-dependencies]
 png = "0.17"

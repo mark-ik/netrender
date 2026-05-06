@@ -21,6 +21,7 @@ use crate::core::WgpuHandles;
 /// Survives across frames; the consumer owns the keyspace and chooses
 /// how it maps to its native textures.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SurfaceKey(pub u64);
 
 /// One compositor surface's per-frame present payload.

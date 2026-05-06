@@ -47,12 +47,18 @@ const RETAIN_FRAMES: u64 = 4;
 const FRESH_HASH_SENTINEL: u64 = 0xDEAD_BEEF_DEAD_BEEF;
 
 /// One tile's bookkeeping: the world rect this tile covers, the last
-/// computed dependency hash, and the frame stamp.
+/// computed dependency hash, the last-seen frame stamp, and the most
+/// recent frame the tile was reported dirty by `invalidate`.
+///
+/// `last_dirty_frame` powers the A3 tile-dirty visualizer (see
+/// [`TileCache::recent_dirty_tiles`]); it lags `last_seen_frame` by
+/// any number of frames in which the tile was unchanged.
 #[derive(Clone)]
 pub(crate) struct Tile {
     pub world_rect: [f32; 4],
     pub last_hash: u64,
     pub last_seen_frame: u64,
+    pub last_dirty_frame: u64,
 }
 
 /// Picture-cache state. One instance per cached picture (Phase 7A ships
@@ -97,6 +103,34 @@ impl TileCache {
         self.tiles.len()
     }
 
+    /// Roadmap A3 — return tiles that became dirty within the last
+    /// `window_frames` invalidate calls, paired with an `age_frac` in
+    /// `[0.0, 1.0]` where `0.0` means dirtied this frame and `1.0`
+    /// means just exiting the window. Used by the tile-dirty
+    /// visualizer to fade overlay opacity with age.
+    ///
+    /// Tiles never dirtied (or dirtied longer than `window_frames`
+    /// ago) are excluded. `window_frames = 0` returns an empty Vec.
+    pub fn recent_dirty_tiles(&self, window_frames: u64) -> Vec<([f32; 4], f32)> {
+        if window_frames == 0 {
+            return Vec::new();
+        }
+        let now = self.current_frame;
+        let mut out = Vec::new();
+        for tile in self.tiles.values() {
+            if tile.last_dirty_frame == 0 {
+                continue;
+            }
+            let age = now.saturating_sub(tile.last_dirty_frame);
+            if age >= window_frames {
+                continue;
+            }
+            let age_frac = age as f32 / window_frames as f32;
+            out.push((tile.world_rect, age_frac));
+        }
+        out
+    }
+
     /// World-space rect for the named tile, or `None` if the tile is
     /// not in the cache.
     pub fn tile_world_rect(&self, coord: TileCoord) -> Option<[f32; 4]> {
@@ -135,6 +169,7 @@ impl TileCache {
                     world_rect,
                     last_hash: FRESH_HASH_SENTINEL,
                     last_seen_frame: 0,
+                    last_dirty_frame: 0,
                 });
 
                 let is_new = tile.last_seen_frame == 0;
@@ -142,6 +177,7 @@ impl TileCache {
 
                 if is_new || changed {
                     tile.last_hash = new_hash;
+                    tile.last_dirty_frame = frame;
                     dirty.push(coord);
                 }
                 tile.last_seen_frame = frame;

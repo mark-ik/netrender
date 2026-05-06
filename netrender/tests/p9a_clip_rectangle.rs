@@ -38,7 +38,7 @@ fn make_renderer() -> Renderer {
     let handles = boot().expect("wgpu boot");
     create_netrender_instance(
         handles,
-        NetrenderOptions { tile_cache_size: Some(64), enable_vello: true },
+        NetrenderOptions { tile_cache_size: Some(64), enable_vello: true, ..Default::default() },
     )
     .expect("create_netrender_instance")
 }

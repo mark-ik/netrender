@@ -30,6 +30,7 @@ pub use netrender_device::SurfaceKey;
 /// In WGSL this maps directly to `mat4x4<f32>` in a storage buffer
 /// (same column-major layout, 64 bytes per element, align 16).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Transform {
     /// Column-major: `m[col*4 + row]`.
     pub m: [f32; 16],
@@ -114,6 +115,7 @@ impl Transform {
 /// `transform_id == 0` (identity) the coordinates are device-pixel
 /// coordinates directly (backward-compatible with Phase 2).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneRect {
     /// Local-space left / top / right / bottom.
     pub x0: f32,
@@ -126,6 +128,7 @@ pub struct SceneRect {
     pub transform_id: u32,
     /// Axis-aligned clip rectangle in device pixels `[x0, y0, x1, y1]`.
     /// `[NEG_INFINITY, NEG_INFINITY, INFINITY, INFINITY]` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner radii in device pixels: `[top_left, top_right,
     /// bottom_right, bottom_left]`. All zeros = sharp axis-aligned
@@ -160,12 +163,14 @@ pub type ImageKey = u64;
 /// coordination story; the data unification is the necessary
 /// condition for it to work.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ImageData {
     pub width: u32,
     pub height: u32,
     /// Raw RGBA8 bytes wrapped in a peniko `Blob`. Use
     /// [`ImageData::from_bytes`] for the common
     /// "I have a `Vec<u8>`" construction path.
+    #[cfg_attr(feature = "serde", serde(with = "blob_serde"))]
     pub data: vello::peniko::Blob<u8>,
 }
 
@@ -199,6 +204,7 @@ impl ImageData {
 /// vec; consecutive entries with offsets `[a, b]` define a segment
 /// over which the color interpolates linearly.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GradientStop {
     /// Position along the gradient parameter `t`, in `[0, 1]`.
     pub offset: f32,
@@ -228,6 +234,7 @@ pub struct GradientStop {
 /// A gradient is rendered through the opaque pipeline iff every stop
 /// color has `alpha >= 1.0`; otherwise the alpha pipeline runs.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneGradient {
     /// Local-space rect bounds.
     pub x0: f32,
@@ -245,6 +252,7 @@ pub struct SceneGradient {
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
@@ -254,6 +262,7 @@ pub struct SceneGradient {
 /// the tint color is multiplied element-wise with the sampled value
 /// (premultiplied; `[1,1,1,1]` = no tint).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneImage {
     /// Local-space corners (same coordinate system as `SceneRect`).
     pub x0: f32,
@@ -270,6 +279,7 @@ pub struct SceneImage {
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
@@ -286,6 +296,7 @@ pub struct SceneImage {
 /// `clip_corner_radii` clip the stroke output the same way they do
 /// for fills — orthogonal to the path geometry.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneStroke {
     /// Local-space rect bounds of the stroked path.
     pub x0: f32,
@@ -305,6 +316,7 @@ pub struct SceneStroke {
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
@@ -323,10 +335,12 @@ pub type FontId = u32;
 /// frame defeats that dedup; consumers should hold their `FontBlob`
 /// across frames and clone it rather than rebuild from raw bytes.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FontBlob {
     /// Font bytes (TTF / OTF / TTC) wrapped in a peniko `Blob`. The
     /// blob's id is the cross-frame identity vello uses to dedup
     /// font uploads.
+    #[cfg_attr(feature = "serde", serde(with = "blob_serde"))]
     pub data: vello::peniko::Blob<u8>,
     /// Index within the collection. `0` for single-font files.
     pub index: u32,
@@ -338,6 +352,7 @@ pub struct FontBlob {
 /// strings into glyph IDs + positions); netrender doesn't do
 /// layout. See plan §4.4.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Glyph {
     /// Glyph index within the font's outline table.
     pub id: u32,
@@ -353,6 +368,7 @@ pub struct Glyph {
 /// `Scene::draw_glyphs(font).font_size(s).brush(c).draw(...)`
 /// builder is the rasterization target.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneGlyphRun {
     /// Font palette index. Use [`Scene::push_font`] to register a
     /// font and obtain this id.
@@ -368,6 +384,7 @@ pub struct SceneGlyphRun {
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
@@ -378,6 +395,7 @@ pub struct SceneGlyphRun {
 /// `kurbo::BezPath`. Coordinates are in local space; the
 /// primitive's `transform_id` maps them to device pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PathOp {
     MoveTo(f32, f32),
     LineTo(f32, f32),
@@ -390,6 +408,7 @@ pub enum PathOp {
 /// quad_to / cubic_to / close methods, or construct directly
 /// with `ops`. Used by [`SceneShape`].
 #[derive(Debug, Clone, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ScenePath {
     pub ops: Vec<PathOp>,
 }
@@ -471,6 +490,7 @@ impl ScenePath {
 /// Phase 11b' stroke style. `width` in device pixels; future fields
 /// (cap / join / dash / miter limit) when consumers need them.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ScenePathStroke {
     pub color: [f32; 4],
     pub width: f32,
@@ -482,6 +502,7 @@ pub struct ScenePathStroke {
 /// path data. At least one of `fill_color` or `stroke` must be set
 /// or the shape is silently no-op.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneShape {
     pub path: ScenePath,
     /// Premultiplied RGBA fill color. `None` skips the fill.
@@ -491,6 +512,7 @@ pub struct SceneShape {
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
@@ -500,6 +522,7 @@ pub struct SceneShape {
 /// netrender-owned enum so the Scene API stays peniko-free. Maps
 /// 1-to-1 in the translator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum SceneBlendMode {
     /// Default — straight `source-over` compositing.
@@ -527,6 +550,7 @@ pub enum SceneBlendMode {
 /// vello's fast rounded-rect path for the common rounded case, or
 /// fall back to a `BezPath` for SVG-style `clipPath` (Phase 9b').
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SceneClip {
     /// No clip: the layer covers the viewport. Useful for layers
     /// whose effect is alpha or blend-mode only.
@@ -552,6 +576,7 @@ pub enum SceneClip {
 ///   - `clip-path` / `overflow: hidden border-radius`: `clip = Rect/Path`
 ///   - `filter`: composes with these via additional layers
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneLayer {
     /// Clip shape for the layer. See [`SceneClip`].
     pub clip: SceneClip,
@@ -592,6 +617,7 @@ impl SceneLayer {
 /// helpers ([`Scene::iter_rects`], etc.) over manual matching;
 /// they're filter-iterator wrappers over `self.ops`.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SceneOp {
     /// A solid-color rectangle. See [`SceneRect`].
     Rect(SceneRect),
@@ -634,6 +660,7 @@ pub enum SceneOp {
 /// image. Op-list painter order makes consumer intent the source
 /// of truth.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Scene {
     /// Viewport size in device pixels.
     pub viewport_width: u32,
@@ -661,6 +688,7 @@ pub struct Scene {
     /// CPU-side pixel data keyed by `ImageKey`. On first `prepare()`,
     /// each entry is uploaded to the GPU and cached there. Subsequent
     /// frames may omit data for already-cached keys.
+    #[cfg_attr(feature = "serde", serde(with = "image_sources_serde"))]
     pub image_sources: HashMap<ImageKey, ImageData>,
     /// Native-compositor surfaces declared by the consumer. Order is
     /// z-order (first declared is bottom-most), matching the same
@@ -686,6 +714,7 @@ pub struct Scene {
 /// or update; the helper preserves insertion order on repeat
 /// declares (updates fields in place).
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CompositorSurface {
     pub key: SurfaceKey,
     pub bounds: [f32; 4],
@@ -720,11 +749,14 @@ impl Scene {
             viewport_height,
             ops: Vec::new(),
             // Index 0 reserved as a no-font sentinel; real fonts
-            // start at index 1. Sentinel uses an empty Blob — its
-            // id is irrelevant because emit_glyph_run skips runs
-            // with font_id == 0.
+            // start at index 1. Sentinel uses an empty Blob with a
+            // **fixed id (`u64::MAX`)** rather than peniko's mint —
+            // emit_glyph_run skips runs with font_id == 0 so the id
+            // is functionally irrelevant, but keeping it deterministic
+            // means two `Scene::new()` calls produce byte-identical
+            // snapshots (A2 round-trip determinism).
             fonts: vec![FontBlob {
-                data: vello::peniko::Blob::new(std::sync::Arc::new(Vec::new())),
+                data: sentinel_blob(),
                 index: 0,
             }],
             root_alpha: 1.0,
@@ -1088,6 +1120,64 @@ impl Scene {
         self.ops.clear();
     }
 
+    /// Roadmap A1 — pretty-print the op list for debugging.
+    ///
+    /// Returns a multi-line string with one header line summarising the
+    /// scene (viewport, palette sizes, op count) followed by one line
+    /// per [`SceneOp`] in painter order. Each op line shows the op
+    /// kind, the key geometry / color fields, and any non-default
+    /// `transform_id` / `clip_rect` / `clip_corner_radii`.
+    /// `PushLayer` / `PopLayer` pairs nest the indentation by two
+    /// spaces per level — ops between them visibly belong to the
+    /// layer scope.
+    ///
+    /// Output is for human reading; format is **not** stable. Don't
+    /// parse it, snapshot-test it, or treat it as a contract.
+    pub fn dump_ops(&self) -> String {
+        use std::fmt::Write;
+
+        let mut out = String::new();
+        writeln!(
+            out,
+            "Scene {}x{}  transforms={}  fonts={}  images={}  surfaces={}  ops={}",
+            self.viewport_width,
+            self.viewport_height,
+            self.transforms.len(),
+            self.fonts.len(),
+            self.image_sources.len(),
+            self.compositor_surfaces.len(),
+            self.ops.len(),
+        )
+        .ok();
+
+        if self.root_alpha != 1.0 || self.root_blend_mode != SceneBlendMode::Normal {
+            writeln!(
+                out,
+                "  root_alpha={}  root_blend_mode={:?}",
+                self.root_alpha, self.root_blend_mode,
+            )
+            .ok();
+        }
+
+        let mut depth: usize = 0;
+        for (i, op) in self.ops.iter().enumerate() {
+            // PopLayer un-indents *before* its own line so the pop
+            // visually closes the scope it ends.
+            if matches!(op, SceneOp::PopLayer) {
+                depth = depth.saturating_sub(1);
+            }
+            let pad = "  ".repeat(depth + 1);
+            write!(out, "  {:04}{}", i, pad).ok();
+            dump_op(&mut out, op);
+            writeln!(out).ok();
+            if matches!(op, SceneOp::PushLayer(_)) {
+                depth += 1;
+            }
+        }
+
+        out
+    }
+
     /// Iterate the rect ops of the scene in painter order. Other op
     /// variants are filtered out.
     pub fn iter_rects(&self) -> impl Iterator<Item = &SceneRect> + '_ {
@@ -1343,5 +1433,245 @@ fn two_stop_gradient(
         transform_id,
         clip_rect,
         clip_corner_radii: SHARP_CLIP,
+    }
+}
+
+/// Reserved id for the no-font sentinel `fonts[0]`. Picked at
+/// `u64::MAX` so it never collides with peniko's
+/// monotonically-incrementing counter (started at 0). See
+/// `Scene::new` for the rationale.
+const SENTINEL_FONT_BLOB_ID: u64 = u64::MAX;
+
+fn sentinel_blob() -> vello::peniko::Blob<u8> {
+    use std::sync::Arc;
+    let arc: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(Vec::<u8>::new());
+    vello::peniko::Blob::from_raw_parts(arc, SENTINEL_FONT_BLOB_ID)
+}
+
+// ── A2 capture/replay helpers (gated on `serde`) ─────────────────────
+
+/// Custom (de)serialization for `clip_rect: [f32; 4]` fields. The
+/// in-memory `NO_CLIP` sentinel uses `±f32::INFINITY`, which JSON
+/// represents as `null` (and refuses to deserialize back as `f32`).
+/// Map `NO_CLIP` to `None` on the wire and any finite rect to
+/// `Some([..])` so JSON round-trip is lossless. Postcard handles
+/// infinities natively but uses the same encoding for symmetry.
+#[cfg(feature = "serde")]
+mod clip_rect_serde {
+    use super::NO_CLIP;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(rect: &[f32; 4], ser: S) -> Result<S::Ok, S::Error> {
+        if *rect == NO_CLIP {
+            None::<[f32; 4]>.serialize(ser)
+        } else {
+            Some(*rect).serialize(ser)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[f32; 4], D::Error> {
+        let opt: Option<[f32; 4]> = Deserialize::deserialize(de)?;
+        Ok(opt.unwrap_or(NO_CLIP))
+    }
+}
+
+/// Custom (de)serialization for `peniko::Blob<u8>` fields that
+/// **preserves the blob id across round-trip**. Peniko's built-in
+/// serde impl serializes only the bytes and mints a fresh id on
+/// deserialize via the global `ID_COUNTER`; we bypass that and emit
+/// `(bytes, id)` so a captured Scene's atlas-dedup identity survives
+/// a snapshot/replay cycle.
+///
+/// Note that `Blob::PartialEq` is id-based (peniko/blob.rs:54-58),
+/// so preserving the id is also what makes
+/// `assert_eq!(original, replayed)` work in receipt tests.
+///
+/// Caveat: an unrelated `Blob::new(same_bytes)` call elsewhere in
+/// the process still mints a fresh counter id and will not equal a
+/// captured Blob with the same bytes — that's by peniko design.
+#[cfg(feature = "serde")]
+mod blob_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::Arc;
+    use vello::peniko::Blob;
+
+    pub fn serialize<S: Serializer>(blob: &Blob<u8>, ser: S) -> Result<S::Ok, S::Error> {
+        let bytes: &[u8] = blob.data();
+        let id: u64 = blob.id();
+        (bytes, id).serialize(ser)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Blob<u8>, D::Error> {
+        let (bytes, id): (Vec<u8>, u64) = Deserialize::deserialize(de)?;
+        let arc: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(bytes);
+        Ok(Blob::from_raw_parts(arc, id))
+    }
+}
+
+/// Custom (de)serialization for `Scene::image_sources` that emits a
+/// **sorted Vec** of entries instead of relying on `HashMap`'s
+/// non-deterministic iteration order. Without this, two snapshots of
+/// the same Scene could produce different byte sequences, which
+/// breaks the `snapshot → replay → snapshot` byte-equality determinism
+/// receipt the roadmap calls for.
+#[cfg(feature = "serde")]
+mod image_sources_serde {
+    use super::{ImageData, ImageKey};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+
+    pub fn serialize<S: Serializer>(
+        map: &HashMap<ImageKey, ImageData>,
+        ser: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut entries: Vec<(&ImageKey, &ImageData)> = map.iter().collect();
+        entries.sort_by_key(|(k, _)| **k);
+        entries.serialize(ser)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        de: D,
+    ) -> Result<HashMap<ImageKey, ImageData>, D::Error> {
+        let entries: Vec<(ImageKey, ImageData)> = Deserialize::deserialize(de)?;
+        Ok(entries.into_iter().collect())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Scene {
+    /// Roadmap A2 — postcard binary snapshot. Small (no-overhead
+    /// varint encoding) and fast; the right pick for production
+    /// fixtures and high-volume replay. Blob ids are preserved (see
+    /// `blob_serde`).
+    ///
+    /// Round-trip determinism: `replay_postcard(scene.snapshot_postcard())`
+    /// produces a Scene whose own `snapshot_postcard()` is byte-equal
+    /// to the original (modulo the iteration-order normalisation
+    /// applied in `image_sources_serde`).
+    pub fn snapshot_postcard(&self) -> Vec<u8> {
+        postcard::to_allocvec(self)
+            .expect("Scene::snapshot_postcard: serialization should not fail on owned data")
+    }
+
+    /// Roadmap A2 — postcard binary replay. Returns the deserialised
+    /// Scene or a `postcard::Error` if the bytes are malformed /
+    /// version-mismatched.
+    pub fn replay_postcard(bytes: &[u8]) -> Result<Self, postcard::Error> {
+        postcard::from_bytes(bytes)
+    }
+
+    /// Roadmap A2 — JSON text snapshot. Roughly 3–5× larger than
+    /// postcard but human-readable, cross-tool inspectable, and
+    /// diff-friendly in git. Use for fixtures that benefit from being
+    /// readable in code review or for cross-language consumers.
+    pub fn snapshot_json(&self) -> String {
+        serde_json::to_string(self)
+            .expect("Scene::snapshot_json: serialization should not fail on owned data")
+    }
+
+    /// Roadmap A2 — JSON text replay. Returns the deserialised Scene
+    /// or a `serde_json::Error` if the JSON is malformed.
+    pub fn replay_json(s: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(s)
+    }
+}
+
+// ── A1 op-list inspector helpers ─────────────────────────────────────
+
+fn dump_op(out: &mut String, op: &SceneOp) {
+    use std::fmt::Write;
+    match op {
+        SceneOp::Rect(r) => {
+            write!(out, "Rect      [{:.1}..{:.1}, {:.1}..{:.1}]  color={}",
+                r.x0, r.x1, r.y0, r.y1, fmt_color(r.color)).ok();
+            dump_modifiers(out, r.transform_id, r.clip_rect, r.clip_corner_radii);
+        }
+        SceneOp::Stroke(s) => {
+            write!(out, "Stroke    [{:.1}..{:.1}, {:.1}..{:.1}]  width={}  color={}",
+                s.x0, s.x1, s.y0, s.y1, s.stroke_width, fmt_color(s.color)).ok();
+            if s.stroke_corner_radii != SHARP_CLIP {
+                write!(out, "  stroke_radii={:?}", s.stroke_corner_radii).ok();
+            }
+            dump_modifiers(out, s.transform_id, s.clip_rect, s.clip_corner_radii);
+        }
+        SceneOp::Gradient(g) => {
+            write!(out, "Gradient  [{:.1}..{:.1}, {:.1}..{:.1}]  kind={:?}  stops={}",
+                g.x0, g.x1, g.y0, g.y1, g.kind, g.stops.len()).ok();
+            dump_modifiers(out, g.transform_id, g.clip_rect, g.clip_corner_radii);
+        }
+        SceneOp::Image(i) => {
+            write!(out, "Image     [{:.1}..{:.1}, {:.1}..{:.1}]  key={}",
+                i.x0, i.x1, i.y0, i.y1, i.key).ok();
+            if i.color != [1.0, 1.0, 1.0, 1.0] {
+                write!(out, "  tint={}", fmt_color(i.color)).ok();
+            }
+            if i.uv != [0.0, 0.0, 1.0, 1.0] {
+                write!(out, "  uv={:?}", i.uv).ok();
+            }
+            dump_modifiers(out, i.transform_id, i.clip_rect, i.clip_corner_radii);
+        }
+        SceneOp::Shape(s) => {
+            let aabb = s.path.local_aabb();
+            write!(out, "Shape     ops={}", s.path.ops.len()).ok();
+            if let Some([x0, y0, x1, y1]) = aabb {
+                write!(out, "  aabb=[{:.1}..{:.1}, {:.1}..{:.1}]", x0, x1, y0, y1).ok();
+            }
+            if let Some(c) = s.fill_color {
+                write!(out, "  fill={}", fmt_color(c)).ok();
+            }
+            if let Some(stk) = s.stroke {
+                write!(out, "  stroke={}@{}", fmt_color(stk.color), stk.width).ok();
+            }
+            dump_modifiers(out, s.transform_id, s.clip_rect, s.clip_corner_radii);
+        }
+        SceneOp::GlyphRun(g) => {
+            write!(out, "GlyphRun  font={}  size={}  glyphs={}  color={}",
+                g.font_id, g.font_size, g.glyphs.len(), fmt_color(g.color)).ok();
+            dump_modifiers(out, g.transform_id, g.clip_rect, g.clip_corner_radii);
+        }
+        SceneOp::PushLayer(l) => {
+            write!(out, "PushLayer alpha={}  blend={:?}  clip={}",
+                l.alpha, l.blend_mode, fmt_clip(&l.clip)).ok();
+            if l.transform_id != 0 {
+                write!(out, "  transform={}", l.transform_id).ok();
+            }
+        }
+        SceneOp::PopLayer => {
+            write!(out, "PopLayer").ok();
+        }
+    }
+}
+
+fn dump_modifiers(out: &mut String, transform_id: u32, clip_rect: [f32; 4], radii: [f32; 4]) {
+    use std::fmt::Write;
+    if transform_id != 0 {
+        write!(out, "  transform={}", transform_id).ok();
+    }
+    if clip_rect != NO_CLIP {
+        write!(out, "  clip=[{:.1}..{:.1}, {:.1}..{:.1}]",
+            clip_rect[0], clip_rect[2], clip_rect[1], clip_rect[3]).ok();
+    }
+    if radii != SHARP_CLIP {
+        write!(out, "  radii={:?}", radii).ok();
+    }
+}
+
+fn fmt_color(c: [f32; 4]) -> String {
+    format!("[{:.2},{:.2},{:.2},{:.2}]", c[0], c[1], c[2], c[3])
+}
+
+fn fmt_clip(c: &SceneClip) -> String {
+    match c {
+        SceneClip::None => "None".to_string(),
+        SceneClip::Rect { rect, radii } => {
+            if *radii == SHARP_CLIP {
+                format!("Rect[{:.1}..{:.1}, {:.1}..{:.1}]",
+                    rect[0], rect[2], rect[1], rect[3])
+            } else {
+                format!("Rect[{:.1}..{:.1}, {:.1}..{:.1}]+radii{:?}",
+                    rect[0], rect[2], rect[1], rect[3], radii)
+            }
+        }
+        SceneClip::Path(p) => format!("Path(ops={})", p.ops.len()),
     }
 }
