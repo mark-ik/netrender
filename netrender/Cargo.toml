@@ -33,6 +33,11 @@ log = "0.4"
 wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 netrender_device = { path = "../netrender_device" }
 vello = { git = "https://github.com/linebender/vello", branch = "main", version = "0.8.0", default-features = false, features = ["wgpu"] }
+# Roadmap R1 — per-glyph hit testing uses skrifa::metrics::GlyphMetrics
+# to query real font-supplied glyph bounds instead of the em-box
+# approximation. Pinned at the same minor as vello's transitive
+# pull (0.42) so cargo unifies the version.
+skrifa = "0.42"
 # Direct peniko dep with the `serde` feature, used only when this crate's
 # `serde` feature is on. Vello pulls peniko transitively but does not forward
 # its serde feature; we re-import the same version with `serde` enabled so

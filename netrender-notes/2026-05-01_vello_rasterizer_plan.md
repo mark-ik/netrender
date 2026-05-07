@@ -1868,6 +1868,152 @@ the LinearSrgb-equals-default invariant breaks.
 R9 itself remains [open on the roadmap](2026-05-04_feature_roadmap.md)
 — this entry only clears the trigger-detector wiring.
 
+### 11.23 Per-glyph hit testing via skrifa metrics (2026-05-06) — **CLEARED**
+
+Roadmap [R1](2026-05-04_feature_roadmap.md): replace the em-box
+approximation in `glyph_run_per_glyph_hit` with real font-supplied
+glyph bounds.
+
+`hit_test::glyph_run_per_glyph_hit` now opens the font via
+`skrifa::FontRef::from_index(blob.data.data(), blob.index)` and
+queries `GlyphMetrics::bounds(GlyphId)` per glyph. Bounds come back
+in font (y-up) space; we mirror around the glyph origin's y to
+match netrender's screen (y-down) convention.
+
+Em-box fallback covers three cases: the `font_id == 0` sentinel,
+font-parse failures (corrupt or empty bytes), and glyphs without
+outline bounds (notably COLR emoji where the outline table is
+empty — color emoji glyphs still hit the run-level AABB and the
+em-box fallback is fine for those).
+
+Added `skrifa = "0.42"` as a direct netrender dep (matching the
+version vello pulls transitively).
+
+Receipt at
+[`netrender/tests/pr1_per_glyph_hit_metrics.rs`](../netrender/tests/pr1_per_glyph_hit_metrics.rs)
+(3/3): a probe at the descender tail of a real 'g' hits under real
+metrics where it would have missed under em-box; an above-glyph
+point misses; a sentinel-font glyph still hits via em-box.
+
+### 11.24 Image cache for the simple rasterizer (2026-05-06) — **CLEARED**
+
+Roadmap [R4](2026-05-04_feature_roadmap.md): mirror
+`VelloTileRasterizer::image_data` for the simple (non-tile) path.
+
+New `vello_rasterizer::VelloRasterizer` struct holds
+`image_data: HashMap<ImageKey, ImageData>` and
+`image_overrides: HashMap<ImageKey, ImageData>` across calls.
+`scene_to_vello(&mut self, scene)` refreshes the cache against
+`scene.image_sources` (insert new, evict missing, no work for
+unchanged keys), merges Path A + Path B, and calls a new
+`scene_to_vello_with_cache` (extracted from
+`scene_to_vello_with_overrides`).
+
+Same Path B `register_texture` / `unregister_texture` interface as
+the tile rasterizer. Existing `scene_to_vello` /
+`scene_to_vello_with_overrides` free functions are unchanged
+(back-compat).
+
+Receipt at
+[`netrender/tests/pr4_simple_rasterizer_image_cache.rs`](../netrender/tests/pr4_simple_rasterizer_image_cache.rs)
+(7/7): cache fills on first call, stays stable across identical
+calls, grows on new keys, evicts dropped keys, register/unregister
+round-trips.
+
+### 11.25 Stroke decorations (2026-05-06) — **CLEARED**
+
+Roadmap [C1](2026-05-04_feature_roadmap.md): line caps, joins, and
+dash patterns plumbed through to kurbo's stroke.
+
+`SceneStroke` gained `cap: SceneStrokeCap`, `join: SceneStrokeJoin`,
+`dash_pattern: Vec<f32>`, and `dash_offset: f32`. New netrender-
+owned enums (`SceneStrokeCap` = Butt / Round / Square,
+`SceneStrokeJoin` = Bevel / Miter / Round) keep peniko/kurbo out of
+the Scene API. Mapped 1:1 to `kurbo::Stroke::with_caps` /
+`with_join` / `with_dashes` in `emit_stroke`. Existing helper
+constructors (`push_stroke`, `push_stroke_rounded`,
+`push_stroke_full`) default to Butt / Miter / no-dashes. New
+`Scene::push_stroke_decorated` takes cap / join / dash_pattern as
+explicit arguments.
+
+Tile-cache `hash_stroke` extended to include cap, join, dash
+pattern, and dash offset — changes to any of these invalidate
+covered tiles.
+
+Receipt at
+[`netrender/tests/pc1_stroke_decorations.rs`](../netrender/tests/pc1_stroke_decorations.rs)
+(8/8): defaults documented, push_stroke_decorated applies args,
+each of cap / join / dash_pattern / dash_offset triggers tile
+invalidation, unchanged decorations keep tiles clean.
+
+### 11.26 SceneOp::Pattern (2026-05-06) — **CLEARED**
+
+Roadmap [C2](2026-05-04_feature_roadmap.md): repeated-tile fill
+primitive.
+
+New `ScenePattern { tile: ImageKey, extent: [f32; 4], scale: f32,
+transform_id, clip_rect, clip_corner_radii }` struct, exposed as
+`SceneOp::Pattern(ScenePattern)`. New `Scene::push_pattern(tile,
+extent, scale)` helper.
+
+Translation: `emit_pattern` builds an
+`ImageBrush::new(img).with_extend(Extend::Repeat)` and fills the
+extent rect. The `scale` is threaded as a brush_transform
+(`Affine::scale(scale)`), so a unit step in image-pixel space
+becomes `scale` units in scene-local space — a tile is
+`image_size * scale` wide. Negative or zero `scale` clamps to 1.0
+defensively.
+
+Hit testing: `HitOpKind::Pattern` added; `op_contains_point` uses
+the AABB of the extent rect.
+
+Tile-cache: `hash_pattern` includes tile key, extent, scale,
+transform, clip. `filter_scene_to_tile` intersects on extent
+world-AABB. `dump_ops` (A1 inspector) labels the new op.
+
+Receipt at
+[`netrender/tests/pc2_pattern_op.rs`](../netrender/tests/pc2_pattern_op.rs)
+(8/8): push appends a Pattern op, iter_images / iter_rects don't
+see it, tile/extent/scale changes invalidate, hit-testing reports
+Pattern, dump_ops labels it.
+
+### 11.27 Variable fonts axis interpolation (2026-05-06) — **CLEARED**
+
+Roadmap [C4](2026-05-04_feature_roadmap.md): thread variable-font
+axis values through to vello's glyph path.
+
+`SceneGlyphRun` gained `font_axis_values: Vec<(SceneFontAxisTag,
+f32)>` where `SceneFontAxisTag = [u8; 4]` (ASCII bytes per the
+OpenType spec; e.g., `*b"wght"` for the weight axis). User-space
+values (e.g., 100, 400, 700 for weight) flow into the new
+`compute_normalized_coords` helper which:
+
+1. Parses the font with `skrifa::FontRef`.
+2. Calls `font.axes().location(settings)` to do user→normalized
+   conversion (skrifa's existing path; respects each axis's
+   user-space range and avar mapping).
+3. Extracts the `F2Dot14` coords as raw `i16` bits — the
+   representation `vello::NormalizedCoord` (= i16) consumes.
+
+`DrawGlyphs::normalized_coords` then receives the slice when
+non-empty; empty axis values keep the font at its default location
+(common case, no overhead).
+
+New `Scene::push_glyph_run_variable` helper takes axis values
+explicitly. `Scene::push_glyph_run` and `push_glyph_run_full`
+default the field to empty.
+
+Tile-cache `hash_glyph_run` includes axis values so weight / width
+animations invalidate covered tiles.
+
+Receipt at
+[`netrender/tests/pc4_variable_fonts.rs`](../netrender/tests/pc4_variable_fonts.rs)
+(7/7): default empty-axis-values, push_glyph_run_variable
+applies args, each of value/tag/add invalidates, unchanged keeps
+tiles clean. Plus a GPU smoke that loads Bahnschrift on Windows,
+renders 'B' at wght = 300 / 400 / 700, and asserts bold paints
+visibly more ink than light (the receipt the roadmap asked for).
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here

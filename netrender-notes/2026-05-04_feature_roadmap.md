@@ -44,20 +44,17 @@ Each entry says what the wart is, when it bites, what specific signal
 activates the fix, and the done condition. Move into a
 `§11.x — CLEARED` finding in the rasterizer plan when landed.
 
-- [ ] **R1. Real font-metric per-glyph hit testing**
-  (rasterizer plan §11.15).
-  *Bites when:* a consumer needs precise click-on-character behaviour
-  (text editors, selection caret placement). Today's em-box
-  approximation is enough for "click on this label" UI but imprecise
-  around descenders and kerning gaps.
-  *Trigger:* a consumer reports caret/selection mis-targets at
-  descenders or kerning gaps, or nematic's Markdown/Scroll text
-  composer needs caret precision.
-  *Done condition:* `hit_test` on a glyph run with descenders
-  (e.g. `g`, `y`) returns the glyph index that the click pixel
-  actually overlaps, verified against `skrifa::metrics::GlyphMetrics`
-  (parley already pulls skrifa transitively). Receipt: extend
-  `per_glyph_hit_returns_glyph_index`.
+- [x] **R1. Real font-metric per-glyph hit testing** —
+  **CLEARED 2026-05-06**.
+  `glyph_run_per_glyph_hit` now uses `skrifa::metrics::GlyphMetrics`
+  for real glyph bounds; em-box fallback only for the no-font
+  sentinel, font-parse failures, and glyphs with empty outline
+  bounds (e.g., COLR emoji whose outline table is empty).
+  Receipt at
+  [`netrender/tests/pr1_per_glyph_hit_metrics.rs`](../netrender/tests/pr1_per_glyph_hit_metrics.rs)
+  — clicks on a 'g' descender hit under real metrics where
+  em-box would have missed. Full finding:
+  [rasterizer plan §11.23](2026-05-01_vello_rasterizer_plan.md).
 
 - [x] **R2. Per-segment point-in-polygon for `SceneOp::Shape`** —
   **CLEARED 2026-05-06**.
@@ -78,21 +75,16 @@ activates the fix, and the done condition. Move into a
   check. Non-invertible transforms remain AABB-conservative. Full
   finding: [rasterizer plan §11.20](2026-05-01_vello_rasterizer_plan.md).
 
-- [ ] **R4. Image cache for the simple (non-tile) rasterizer**
-  (rasterizer plan §11.9-equivalent open item; the unification finding
-  is §11.9).
-  *Bites when:* a consumer uses the simple `scene_to_vello` path
-  (non-tile) on image-heavy scenes. The simple path's
-  `build_image_cache` rebuilds peniko `ImageData` blobs every call
-  because it has no state to hold them in.
-  *Trigger:* a simple-path consumer reports a per-frame allocation
-  hot spot in image rebuild, or A4 frame profiler surfaces it.
-  *Done condition:* an image-heavy scene rendered twice through the
-  simple path reuses the cached `peniko::ImageData` blobs on the
-  second call, via a stateful wrapper struct (mirror of
-  `VelloTileRasterizer::image_data`) or by lifting the cache to the
-  caller. Receipt: probe asserts allocation count is flat across N
-  calls.
+- [x] **R4. Image cache for the simple (non-tile) rasterizer** —
+  **CLEARED 2026-05-06**.
+  New `VelloRasterizer` struct mirrors `VelloTileRasterizer`'s
+  `image_data` cache for the simple path. Stateful: cache fills on
+  first call, subsequent calls only update for added/removed keys.
+  Same Path B `register_texture` / `unregister_texture` interface.
+  Receipt at
+  [`netrender/tests/pr4_simple_rasterizer_image_cache.rs`](../netrender/tests/pr4_simple_rasterizer_image_cache.rs)
+  (7/7). Full finding:
+  [rasterizer plan §11.24](2026-05-01_vello_rasterizer_plan.md).
 
 - [ ] **R5. Downscale-blur-upscale for very large blurs**
   (rasterizer plan §11.10).
@@ -240,22 +232,28 @@ New op variants / extensions that genuinely expand what the API can
 express. Each is an additive change to `SceneOp`; the rasterizer
 gains one match arm per item.
 
-- [ ] **C1. Stroke decorations** — line caps (`butt` / `round` /
-  `square`), joins (`miter` / `round` / `bevel`), dash patterns.
-  *Trigger:* a consumer needs CSS `border-style: dashed`, or
-  graphshell-shaped consumers want stylized edges.
-  *Done condition:* `SceneStroke` gains optional `cap`, `join`,
-  `dash_pattern` fields; the rasterizer plumbs them through to
-  `kurbo::Stroke`. CSS `border-style: dashed` becomes expressible.
+- [x] **C1. Stroke decorations** — **CLEARED 2026-05-06**.
+  `SceneStroke` gained `cap`, `join`, `dash_pattern`, `dash_offset`
+  fields with `SceneStrokeCap` (Butt/Round/Square) and
+  `SceneStrokeJoin` (Bevel/Miter/Round) enums. Mapped 1:1 to
+  `kurbo::Stroke::with_caps` / `with_join` / `with_dashes`. New
+  `Scene::push_stroke_decorated` helper. Tile-cache hash includes
+  the new fields.
+  Receipt at
+  [`netrender/tests/pc1_stroke_decorations.rs`](../netrender/tests/pc1_stroke_decorations.rs)
+  (8/8). Full finding:
+  [rasterizer plan §11.25](2026-05-01_vello_rasterizer_plan.md).
 
-- [ ] **C2. `SceneOp::Pattern`** — repeated-tile fill (CSS
-  `background-image` with `repeat`).
-  *Trigger:* a consumer renders repeating backgrounds and pushes 16
-  copies by hand once.
-  *Done condition:* `SceneOp::Pattern { tile: ImageKey, extent:
-  [f32; 4], scale, transform_id, clip_rect, clip_corner_radii }`
-  variant lands; tiling a 64×64 image across a 256×256 area takes one
-  push call instead of 16.
+- [x] **C2. `SceneOp::Pattern`** — **CLEARED 2026-05-06**.
+  New `ScenePattern { tile, extent, scale, transform_id, clip_rect,
+  clip_corner_radii }` op variant tiles an `ImageKey` across an
+  extent rect via vello's `Extend::Repeat`. New `Scene::push_pattern`
+  helper. Hit-testing reports `HitOpKind::Pattern`. Tile-cache hash
+  invalidates on tile/extent/scale changes.
+  Receipt at
+  [`netrender/tests/pc2_pattern_op.rs`](../netrender/tests/pc2_pattern_op.rs)
+  (8/8). Full finding:
+  [rasterizer plan §11.26](2026-05-01_vello_rasterizer_plan.md).
 
 - [ ] **C3. Mask-image fills** — using one image as an alpha mask for
   another fill (any `SceneOp` body).
@@ -266,13 +264,19 @@ gains one match arm per item.
   WGSL helper or a vello layer trick). Decouples mask from fill so
   the consumer doesn't have to pre-bake.
 
-- [ ] **C4. Variable fonts axis interpolation** — parley + skrifa
-  support this; the scene needs to thread axis values through to
-  vello's `draw_glyphs`.
-  *Trigger:* a consumer ships a variable font and wants animated
-  weight/width.
-  *Done condition:* a single font rendered at three different `wght`
-  axis values produces three visibly distinct weights in one frame.
+- [x] **C4. Variable fonts axis interpolation** — **CLEARED 2026-05-06**.
+  `SceneGlyphRun` gained `font_axis_values: Vec<(SceneFontAxisTag,
+  f32)>` (4-byte ASCII tags + user-space values, e.g.,
+  `(*b"wght", 700.0)`). `emit_glyph_run` resolves user→normalized
+  via `skrifa::Axes::location` and threads through to vello's
+  `DrawGlyphs::normalized_coords`. New `Scene::push_glyph_run_variable`
+  helper. Tile-cache hash includes axis values.
+  Receipt at
+  [`netrender/tests/pc4_variable_fonts.rs`](../netrender/tests/pc4_variable_fonts.rs)
+  (7/7) — including a GPU smoke that renders Bahnschrift at three
+  weights and verifies bold paints visibly more ink than light. Full
+  finding:
+  [rasterizer plan §11.27](2026-05-01_vello_rasterizer_plan.md).
 
 ---
 

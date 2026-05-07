@@ -30,8 +30,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
 
 use crate::scene::{
-    PathOp, Scene, SceneGlyphRun, SceneGradient, SceneImage, SceneOp, SceneRect, SceneShape,
-    SceneStroke, Transform,
+    PathOp, Scene, SceneGlyphRun, SceneGradient, SceneImage, SceneOp, ScenePattern, SceneRect,
+    SceneShape, SceneStroke, Transform,
 };
 
 /// Integer (col, row) coordinate of a tile within the cache grid.
@@ -228,6 +228,12 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
                     hash_image(&mut hasher, image);
                 }
             }
+            SceneOp::Pattern(pattern) => {
+                let aabb = world_aabb(pattern.extent, pattern.transform_id, scene);
+                if aabb_intersects(aabb, tile_rect) {
+                    hash_pattern(&mut hasher, pattern);
+                }
+            }
             SceneOp::Gradient(grad) => {
                 let aabb = world_aabb_gradient(grad, scene);
                 if aabb_intersects(aabb, tile_rect) {
@@ -322,7 +328,30 @@ fn hash_glyph_run(h: &mut DefaultHasher, r: &SceneGlyphRun) {
     for c in r.clip_rect {
         h.write_u32(c.to_bits());
     }
+
     for c in r.clip_corner_radii {
+        h.write_u32(c.to_bits());
+    }
+    // Roadmap C4 — variable-font axis values change the rendered
+    // glyph shape; include in the tile hash.
+    h.write_usize(r.font_axis_values.len());
+    for (tag, value) in &r.font_axis_values {
+        h.write(tag);
+        h.write_u32(value.to_bits());
+    }
+}
+
+fn hash_pattern(h: &mut DefaultHasher, p: &ScenePattern) {
+    h.write_u64(p.tile);
+    for c in p.extent {
+        h.write_u32(c.to_bits());
+    }
+    h.write_u32(p.scale.to_bits());
+    h.write_u32(p.transform_id);
+    for c in p.clip_rect {
+        h.write_u32(c.to_bits());
+    }
+    for c in p.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
 }
@@ -390,6 +419,15 @@ fn hash_stroke(h: &mut DefaultHasher, s: &SceneStroke) {
     for c in s.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
+    // Roadmap C1 — cap / join / dash are part of the stroke's
+    // visible geometry; changing them must invalidate the tile.
+    h.write_u8(s.cap as u8);
+    h.write_u8(s.join as u8);
+    h.write_usize(s.dash_pattern.len());
+    for v in &s.dash_pattern {
+        h.write_u32(v.to_bits());
+    }
+    h.write_u32(s.dash_offset.to_bits());
 }
 
 fn hash_gradient(h: &mut DefaultHasher, g: &SceneGradient) {

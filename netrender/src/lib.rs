@@ -50,9 +50,10 @@ pub use crate::renderer::{ColorLoad, Renderer, RendererError};
 pub use vello::peniko;
 pub use crate::scene::{
     CompositorSurface, FontBlob, FontId, Glyph, GradientKind, GradientStop, ImageData, ImageKey,
-    NO_CLIP, PathOp, SHARP_CLIP, Scene, SceneBlendMode, SceneClip, SceneGlyphRun, SceneGradient,
-    SceneImage, SceneLayer, SceneOp, ScenePath, ScenePathStroke, SceneRect, SceneShape,
-    SceneStroke, SurfaceKey, Transform,
+    NO_CLIP, PathOp, SHARP_CLIP, Scene, SceneBlendMode, SceneClip, SceneFontAxisTag,
+    SceneGlyphRun, SceneGradient, SceneImage, SceneLayer, SceneOp, ScenePath, ScenePathStroke,
+    ScenePattern, SceneRect, SceneShape, SceneStroke, SceneStrokeCap, SceneStrokeJoin,
+    SurfaceKey, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 

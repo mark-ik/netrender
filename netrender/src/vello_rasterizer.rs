@@ -49,17 +49,35 @@
 
 use std::collections::HashMap;
 
-use vello::kurbo::{Affine, BezPath, Point, Rect, RoundedRect, RoundedRectRadii, Stroke};
+use vello::kurbo::{Affine, BezPath, Cap, Join, Point, Rect, RoundedRect, RoundedRectRadii, Stroke};
 use vello::peniko::{
-    self, BlendMode, Color, ColorStop, Compose, Fill, FontData, Gradient, ImageAlphaType,
+    self, BlendMode, Color, ColorStop, Compose, Extend, Fill, FontData, Gradient, ImageAlphaType,
     ImageBrush, ImageData, ImageFormat, Mix,
 };
 
 use crate::scene::{
     FontBlob, GradientKind, ImageKey, NO_CLIP, PathOp, Scene, SceneBlendMode, SceneClip,
-    SceneGlyphRun, SceneGradient, SceneImage, SceneLayer, SceneOp, SceneRect, SceneShape,
-    SceneStroke, Transform,
+    SceneGlyphRun, SceneGradient, SceneImage, SceneLayer, SceneOp, ScenePattern, SceneRect,
+    SceneShape, SceneStroke, SceneStrokeCap, SceneStrokeJoin, Transform,
 };
+
+/// Map a netrender [`SceneStrokeCap`] to a kurbo [`Cap`].
+fn map_stroke_cap(c: SceneStrokeCap) -> Cap {
+    match c {
+        SceneStrokeCap::Butt => Cap::Butt,
+        SceneStrokeCap::Round => Cap::Round,
+        SceneStrokeCap::Square => Cap::Square,
+    }
+}
+
+/// Map a netrender [`SceneStrokeJoin`] to a kurbo [`Join`].
+fn map_stroke_join(j: SceneStrokeJoin) -> Join {
+    match j {
+        SceneStrokeJoin::Bevel => Join::Bevel,
+        SceneStrokeJoin::Miter => Join::Miter,
+        SceneStrokeJoin::Round => Join::Round,
+    }
+}
 
 /// Map a netrender [`SceneBlendMode`] to a vello [`BlendMode`].
 pub(crate) fn map_blend_mode(b: SceneBlendMode) -> peniko::BlendMode {
@@ -103,9 +121,20 @@ pub fn scene_to_vello_with_overrides(
     scene: &Scene,
     image_overrides: &HashMap<ImageKey, ImageData>,
 ) -> vello::Scene {
-    let mut vscene = vello::Scene::new();
-
     let images = build_image_cache(scene, image_overrides);
+    scene_to_vello_with_cache(scene, &images)
+}
+
+/// Translate a [`Scene`] into a [`vello::Scene`] using a
+/// caller-supplied pre-built image cache. Same body as
+/// [`scene_to_vello_with_overrides`] minus the
+/// [`build_image_cache`] step; exposed for [`VelloRasterizer`] to
+/// reuse a persistent image cache across calls.
+pub fn scene_to_vello_with_cache(
+    scene: &Scene,
+    images: &HashMap<ImageKey, ImageData>,
+) -> vello::Scene {
+    let mut vscene = vello::Scene::new();
 
     // Single pass over the unified op list — painter order = consumer
     // push order. (Pre-2026-05-04 op-list refactor this dispatched
@@ -121,7 +150,8 @@ pub fn scene_to_vello_with_overrides(
             SceneOp::Rect(rect) => emit_rect(&mut vscene, rect, &scene.transforms),
             SceneOp::Stroke(stroke) => emit_stroke(&mut vscene, stroke, &scene.transforms),
             SceneOp::Gradient(gradient) => emit_gradient(&mut vscene, gradient, &scene.transforms),
-            SceneOp::Image(image) => emit_image(&mut vscene, image, &scene.transforms, &images),
+            SceneOp::Image(image) => emit_image(&mut vscene, image, &scene.transforms, images),
+            SceneOp::Pattern(pattern) => emit_pattern(&mut vscene, pattern, &scene.transforms, images),
             SceneOp::Shape(shape) => emit_shape(&mut vscene, shape, &scene.transforms),
             SceneOp::GlyphRun(run) => {
                 emit_glyph_run(&mut vscene, run, &scene.fonts, &scene.transforms)
@@ -145,6 +175,96 @@ pub fn scene_to_vello_with_overrides(
     );
 
     vscene
+}
+
+/// Roadmap R4 — stateful wrapper around the simple
+/// (non-tile) translator that caches the per-frame image map
+/// across calls. Mirror of [`crate::vello_tile_rasterizer::VelloTileRasterizer`]'s
+/// `image_data` field for the simple-path consumer.
+///
+/// A streaming consumer that drives [`scene_to_vello`] once per
+/// frame pays an O(N_image_sources) HashMap rebuild every call —
+/// each entry constructs a fresh `peniko::ImageData` struct around
+/// the shared `peniko::Blob`. With `VelloRasterizer`, cached
+/// entries persist across frames and only the diff (newly added or
+/// dropped keys) touches the cache. Path B (`register_texture`)
+/// uses the same interface as the tile rasterizer.
+pub struct VelloRasterizer {
+    image_data: HashMap<ImageKey, ImageData>,
+    image_overrides: HashMap<ImageKey, ImageData>,
+}
+
+impl VelloRasterizer {
+    /// Construct an empty rasterizer. Cache fills on the first
+    /// `scene_to_vello` call.
+    pub fn new() -> Self {
+        Self {
+            image_data: HashMap::new(),
+            image_overrides: HashMap::new(),
+        }
+    }
+
+    /// Number of CPU-side `ImageData` entries currently held in the
+    /// cache (one per `ImageKey` present in the most recent
+    /// scene's `image_sources`). Stable across consecutive
+    /// `scene_to_vello` calls on the same scene; updates as the
+    /// consumer adds or removes image sources.
+    pub fn cached_image_count(&self) -> usize {
+        self.image_data.len()
+    }
+
+    /// Register a Path B [`peniko::ImageData`] (typically the
+    /// result of `vello::Renderer::register_texture`) under the
+    /// given key. Path B overrides win over `scene.image_sources`
+    /// on key collision.
+    pub fn register_texture(&mut self, key: ImageKey, image: ImageData) {
+        self.image_overrides.insert(key, image);
+    }
+
+    /// Drop a previously-registered Path B entry. Returns the
+    /// dropped value if present, `None` otherwise.
+    pub fn unregister_texture(&mut self, key: ImageKey) -> Option<ImageData> {
+        self.image_overrides.remove(&key)
+    }
+
+    /// Translate `scene` into a fresh [`vello::Scene`], using and
+    /// updating the cached image map.
+    ///
+    /// Cache invariant: after this call, `self.image_data` contains
+    /// exactly the keys present in `scene.image_sources` (unchanged
+    /// keys keep their existing `ImageData`; new keys are inserted;
+    /// keys absent from the scene are evicted).
+    pub fn scene_to_vello(&mut self, scene: &Scene) -> vello::Scene {
+        self.refresh_image_data(scene);
+        // Merged cache: Path A (cached) + Path B (overrides win).
+        // The clone is per-entry Arc bumps + HashMap insert; cheap.
+        let mut merged = self.image_data.clone();
+        for (key, image) in &self.image_overrides {
+            merged.insert(*key, image.clone());
+        }
+        scene_to_vello_with_cache(scene, &merged)
+    }
+
+    fn refresh_image_data(&mut self, scene: &Scene) {
+        for (key, data) in &scene.image_sources {
+            self.image_data.entry(*key).or_insert_with(|| ImageData {
+                data: data.data.clone(),
+                format: ImageFormat::Rgba8,
+                alpha_type: ImageAlphaType::Alpha,
+                width: data.width,
+                height: data.height,
+            });
+        }
+        // Evict keys that disappeared from the scene.
+        self.image_data
+            .retain(|key, _| scene.image_sources.contains_key(key));
+    }
+}
+
+impl Default for VelloRasterizer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn build_image_cache(
@@ -224,16 +344,65 @@ fn emit_glyph_run(
         x: g.x,
         y: g.y,
     });
-    vscene
+
+    // Roadmap C4 — variable-font axis values. When non-empty,
+    // resolve user-space settings to normalized coords via skrifa
+    // and pass to vello via `normalized_coords`. Empty axis values
+    // (the common case) keep the font at its default location.
+    let normalized_coords: Vec<vello::NormalizedCoord> = if run.font_axis_values.is_empty() {
+        Vec::new()
+    } else {
+        compute_normalized_coords(blob, &run.font_axis_values)
+    };
+
+    let mut draw = vscene
         .draw_glyphs(&font_data)
         .font_size(run.font_size)
         .transform(world)
-        .brush(color)
-        .draw(Fill::NonZero, glyphs_iter);
+        .brush(color);
+    if !normalized_coords.is_empty() {
+        draw = draw.normalized_coords(&normalized_coords);
+    }
+    draw.draw(Fill::NonZero, glyphs_iter);
 
     if needs_clip {
         vscene.pop_layer();
     }
+}
+
+/// Roadmap C4 — convert user-space variable-font axis settings to
+/// the normalized i16 coords vello consumes. Reads the font's axis
+/// table via skrifa; tags that don't match an axis are silently
+/// ignored (matches skrifa's `location_to_slice` semantics).
+/// Returns an empty Vec on font-parse failure (caller treats this
+/// as "default location").
+fn compute_normalized_coords(
+    blob: &FontBlob,
+    user_settings: &[(crate::scene::SceneFontAxisTag, f32)],
+) -> Vec<vello::NormalizedCoord> {
+    use skrifa::MetadataProvider;
+    let Ok(font) = skrifa::FontRef::from_index(blob.data.data(), blob.index) else {
+        return Vec::new();
+    };
+    let axes = font.axes();
+    if axes.len() == 0 {
+        return Vec::new();
+    }
+    // Build (&str, f32) tuples for skrifa. ASCII tag bytes only;
+    // non-UTF-8 tag bytes (consumer error) are skipped.
+    let settings: Vec<(&str, f32)> = user_settings
+        .iter()
+        .filter_map(|(tag, value)| {
+            std::str::from_utf8(tag).ok().map(|s| (s, *value))
+        })
+        .collect();
+    // skrifa returns coords as F2Dot14; vello wants raw i16 of the
+    // same fixed-point representation. F2Dot14 wraps i16 directly.
+    axes.location(settings)
+        .coords()
+        .iter()
+        .map(|c| c.to_bits())
+        .collect()
 }
 
 pub(crate) fn build_bez_path(path: &crate::scene::ScenePath) -> BezPath {
@@ -293,7 +462,16 @@ fn emit_stroke(vscene: &mut vello::Scene, stroke: &SceneStroke, transforms: &[Tr
         stroke.y1 as f64,
     );
     let color = unpremultiply_color(stroke.color);
-    let style = Stroke::new(stroke.stroke_width as f64);
+    // Roadmap C1 — apply cap / join / dash decorations.
+    let mut style = Stroke::new(stroke.stroke_width as f64)
+        .with_caps(map_stroke_cap(stroke.cap))
+        .with_join(map_stroke_join(stroke.join));
+    if !stroke.dash_pattern.is_empty() {
+        style = style.with_dashes(
+            stroke.dash_offset as f64,
+            stroke.dash_pattern.iter().map(|&v| v as f64),
+        );
+    }
 
     let needs_clip = stroke.clip_rect != NO_CLIP;
     if needs_clip {
@@ -549,6 +727,49 @@ fn emit_image(
         vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
     }
 
+    if needs_clip {
+        vscene.pop_layer();
+    }
+}
+
+/// Roadmap C2 — emit a tiling [`ScenePattern`] op. Repeats the
+/// `tile` image (extended via `Extend::Repeat` on both axes) across
+/// the `extent` rectangle. `scale` shapes the tile size: native
+/// image pixels span `image_size * scale` in scene-local space.
+fn emit_pattern(
+    vscene: &mut vello::Scene,
+    pattern: &ScenePattern,
+    transforms: &[Transform],
+    cache: &HashMap<ImageKey, ImageData>,
+) {
+    let img = cache
+        .get(&pattern.tile)
+        .expect("scene_to_vello: ScenePattern references unknown ImageKey");
+
+    // Negative or zero scale gets clamped to 1.0 (the API contract
+    // says "treated as 1.0"); avoid divide-by-zero in the brush
+    // transform.
+    let scale = if pattern.scale > 0.0 { pattern.scale as f64 } else { 1.0 };
+
+    let brush = ImageBrush::new(img.clone()).with_extend(Extend::Repeat);
+    // Brush-space → scene-space: scale by `scale` so a unit step in
+    // the image's pixel space becomes `scale` units in scene-local
+    // space (a tile is `image_size * scale` wide).
+    let brush_xform = Affine::scale(scale);
+
+    let target = Rect::new(
+        pattern.extent[0] as f64,
+        pattern.extent[1] as f64,
+        pattern.extent[2] as f64,
+        pattern.extent[3] as f64,
+    );
+    let world = transform_to_affine(&transforms[pattern.transform_id as usize]);
+
+    let needs_clip = pattern.clip_rect != NO_CLIP;
+    if needs_clip {
+        push_clip_layer(vscene, pattern.clip_rect, pattern.clip_corner_radii);
+    }
+    vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
     if needs_clip {
         vscene.pop_layer();
     }

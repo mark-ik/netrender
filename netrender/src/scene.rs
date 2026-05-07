@@ -258,6 +258,41 @@ pub struct SceneGradient {
     pub clip_corner_radii: [f32; 4],
 }
 
+/// Roadmap C2 — repeated-tile fill primitive (CSS
+/// `background-image` with `repeat`). The image identified by
+/// `tile` is rendered at its native size scaled by `scale`,
+/// repeating to cover the `extent` rectangle.
+///
+/// Tiling parameters:
+///
+/// - `tile`: [`ImageKey`] of the image to repeat.
+/// - `extent`: `[x0, y0, x1, y1]` rectangle in local space; the
+///   tiled fill covers this entire rect.
+/// - `scale`: tile-size multiplier (1.0 = native pixel size; 2.0
+///   doubles the tile size). Negative or zero values are treated
+///   as 1.0 by the rasterizer.
+///
+/// Compared to pushing N `SceneImage` ops by hand, one
+/// `SceneOp::Pattern` covers a 256×256 area with a 64×64 tile in a
+/// single push.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ScenePattern {
+    /// Image to repeat.
+    pub tile: ImageKey,
+    /// `[x0, y0, x1, y1]` in local space.
+    pub extent: [f32; 4],
+    /// Tile size multiplier (1.0 = native pixel size).
+    pub scale: f32,
+    /// Index into `Scene::transforms`; `0` = identity.
+    pub transform_id: u32,
+    /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
+    #[cfg_attr(feature = "serde", serde(with = "clip_rect_serde"))]
+    pub clip_rect: [f32; 4],
+    /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
+    pub clip_corner_radii: [f32; 4],
+}
+
 /// One textured rectangle. UV corners map the image onto the rect;
 /// the tint color is multiplied element-wise with the sampled value
 /// (premultiplied; `[1,1,1,1]` = no tint).
@@ -295,6 +330,39 @@ pub struct SceneImage {
 /// itself (CSS `border-radius` behaviour). `clip_rect` /
 /// `clip_corner_radii` clip the stroke output the same way they do
 /// for fills — orthogonal to the path geometry.
+/// Roadmap C1 — line-cap style for stroked paths. Maps 1:1 to
+/// `kurbo::Cap`. Default `Butt` matches CSS `stroke-linecap: butt`
+/// and the kurbo default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SceneStrokeCap {
+    /// No extension past the path endpoint. CSS `butt`.
+    #[default]
+    Butt,
+    /// Half-circle past the endpoint with radius `width / 2`.
+    /// CSS `round`.
+    Round,
+    /// Square extension by `width / 2`. CSS `square`.
+    Square,
+}
+
+/// Roadmap C1 — line-join style for stroked paths at corners. Maps
+/// 1:1 to `kurbo::Join`. Default `Miter` matches CSS
+/// `stroke-linejoin: miter` and the kurbo default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum SceneStrokeJoin {
+    /// Bevel join — corner is filled with a triangle. CSS `bevel`.
+    Bevel,
+    /// Miter join — extend outer edges to a sharp point. CSS
+    /// `miter`.
+    #[default]
+    Miter,
+    /// Round join — fill the corner with a circular arc. CSS
+    /// `round`.
+    Round,
+}
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneStroke {
@@ -320,6 +388,19 @@ pub struct SceneStroke {
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
+    /// Roadmap C1 — line-cap style for stroke endpoints. Default
+    /// [`SceneStrokeCap::Butt`].
+    pub cap: SceneStrokeCap,
+    /// Roadmap C1 — line-join style for stroke corners. Default
+    /// [`SceneStrokeJoin::Miter`].
+    pub join: SceneStrokeJoin,
+    /// Roadmap C1 — dash pattern in device pixels (alternating
+    /// on / off lengths). Empty means a solid stroke. Maps to
+    /// `kurbo::Stroke::with_dashes`.
+    pub dash_pattern: Vec<f32>,
+    /// Roadmap C1 — phase offset into the dash pattern in device
+    /// pixels. Ignored when `dash_pattern` is empty.
+    pub dash_offset: f32,
 }
 
 /// Phase 10a' opaque handle into [`Scene::fonts`]. Returned by
@@ -367,6 +448,10 @@ pub struct Glyph {
 /// font, painted with one solid color. Vello's
 /// `Scene::draw_glyphs(font).font_size(s).brush(c).draw(...)`
 /// builder is the rasterization target.
+/// Roadmap C4 — 4-byte font-variation axis tag (e.g., `*b"wght"`,
+/// `*b"wdth"`, `*b"slnt"`). Bytes are ASCII per OpenType spec.
+pub type SceneFontAxisTag = [u8; 4];
+
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SceneGlyphRun {
@@ -388,6 +473,14 @@ pub struct SceneGlyphRun {
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
+    /// Roadmap C4 — variable-font axis values in user space (e.g.,
+    /// `(*b"wght", 700.0)` for weight 700). Empty means "use the
+    /// font's default location." Tag bytes that don't match any
+    /// axis in the font are ignored; unset axes get the font's
+    /// default. Threaded through to vello via
+    /// `DrawGlyphs::normalized_coords` after skrifa-side
+    /// user→normalized-space conversion.
+    pub font_axis_values: Vec<(SceneFontAxisTag, f32)>,
 }
 
 /// Phase 11b' path operation. The `ScenePath` builder produces a
@@ -627,6 +720,9 @@ pub enum SceneOp {
     Gradient(SceneGradient),
     /// A textured rectangle (image fill).
     Image(SceneImage),
+    /// Roadmap C2 — repeated-tile fill (CSS `background-image:
+    /// repeat`). See [`ScenePattern`].
+    Pattern(ScenePattern),
     /// An arbitrary path (filled or stroked).
     Shape(SceneShape),
     /// A run of positioned glyphs in one font + size + color.
@@ -996,6 +1092,26 @@ impl Scene {
         )));
     }
 
+    /// Roadmap C2 — append a repeated-tile pattern fill. The image
+    /// at `tile` repeats at `image_size * scale` to cover `extent`.
+    /// Identity transform, no clip; for richer construction build
+    /// the [`ScenePattern`] struct directly and push it.
+    pub fn push_pattern(
+        &mut self,
+        tile: ImageKey,
+        extent: [f32; 4],
+        scale: f32,
+    ) {
+        self.ops.push(SceneOp::Pattern(ScenePattern {
+            tile,
+            extent,
+            scale,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+        }));
+    }
+
     /// Append an image rect with full control over UV, tint, transform,
     /// and clip.
     pub fn push_image_full(
@@ -1046,6 +1162,34 @@ impl Scene {
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
+            font_axis_values: Vec::new(),
+        }));
+    }
+
+    /// Roadmap C4 — append a glyph run with explicit variable-font
+    /// axis values. Each `(tag, value)` pair sets the user-space
+    /// position on a font axis (e.g., `(*b"wght", 700.0)` for
+    /// weight 700). Tag bytes that don't match an axis in the font
+    /// are silently ignored; unset axes get the font's default.
+    /// All other fields default — for richer construction, build the
+    /// [`SceneGlyphRun`] struct directly and push it.
+    pub fn push_glyph_run_variable(
+        &mut self,
+        font_id: FontId,
+        font_size: f32,
+        glyphs: Vec<Glyph>,
+        color: [f32; 4],
+        font_axis_values: Vec<(SceneFontAxisTag, f32)>,
+    ) {
+        self.ops.push(SceneOp::GlyphRun(SceneGlyphRun {
+            font_id,
+            font_size,
+            glyphs,
+            color,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+            font_axis_values,
         }));
     }
 
@@ -1069,6 +1213,7 @@ impl Scene {
             transform_id,
             clip_rect,
             clip_corner_radii,
+            font_axis_values: Vec::new(),
         }));
     }
 
@@ -1324,6 +1469,10 @@ impl Scene {
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
+            cap: SceneStrokeCap::default(),
+            join: SceneStrokeJoin::default(),
+            dash_pattern: Vec::new(),
+            dash_offset: 0.0,
         }));
     }
 
@@ -1346,6 +1495,10 @@ impl Scene {
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
+            cap: SceneStrokeCap::default(),
+            join: SceneStrokeJoin::default(),
+            dash_pattern: Vec::new(),
+            dash_offset: 0.0,
         }));
     }
 
@@ -1369,6 +1522,41 @@ impl Scene {
             transform_id,
             clip_rect,
             clip_corner_radii,
+            cap: SceneStrokeCap::default(),
+            join: SceneStrokeJoin::default(),
+            dash_pattern: Vec::new(),
+            dash_offset: 0.0,
+        }));
+    }
+
+    /// Roadmap C1 — append a dashed stroked rect with explicit
+    /// cap / join / dash pattern. `dash_pattern` is alternating
+    /// on/off lengths in device pixels; `dash_offset` shifts the
+    /// pattern phase. Empty `dash_pattern` produces a solid stroke.
+    /// All other fields default to identity transform / no clip /
+    /// sharp corners — for richer construction, build the
+    /// [`SceneStroke`] struct directly and push it.
+    pub fn push_stroke_decorated(
+        &mut self,
+        x0: f32, y0: f32, x1: f32, y1: f32,
+        color: [f32; 4],
+        stroke_width: f32,
+        cap: SceneStrokeCap,
+        join: SceneStrokeJoin,
+        dash_pattern: Vec<f32>,
+    ) {
+        self.ops.push(SceneOp::Stroke(SceneStroke {
+            x0, y0, x1, y1,
+            color,
+            stroke_width,
+            stroke_corner_radii: SHARP_CLIP,
+            transform_id: 0,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+            cap,
+            join,
+            dash_pattern,
+            dash_offset: 0.0,
         }));
     }
 
@@ -1660,6 +1848,14 @@ fn dump_op(out: &mut String, op: &SceneOp) {
                 write!(out, "  uv={:?}", i.uv).ok();
             }
             dump_modifiers(out, i.transform_id, i.clip_rect, i.clip_corner_radii);
+        }
+        SceneOp::Pattern(p) => {
+            write!(
+                out,
+                "Pattern   [{:.1}..{:.1}, {:.1}..{:.1}]  tile={}  scale={}",
+                p.extent[0], p.extent[2], p.extent[1], p.extent[3], p.tile, p.scale,
+            ).ok();
+            dump_modifiers(out, p.transform_id, p.clip_rect, p.clip_corner_radii);
         }
         SceneOp::Shape(s) => {
             let aabb = s.path.local_aabb();

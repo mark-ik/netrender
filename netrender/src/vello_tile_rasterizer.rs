@@ -807,6 +807,10 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
                 ),
                 tile_rect,
             ),
+            SceneOp::Pattern(pattern) => aabb_intersects(
+                world_aabb(pattern.extent, pattern.transform_id, scene),
+                tile_rect,
+            ),
             SceneOp::Stroke(stroke) => {
                 // Inflate by half stroke width so strokes whose pen
                 // reaches a tile aren't filtered out when their path

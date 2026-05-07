@@ -81,6 +81,8 @@ pub enum HitOpKind {
     Stroke,
     Gradient,
     Image,
+    /// Roadmap C2 — repeated-tile fill (`SceneOp::Pattern`).
+    Pattern,
     Shape,
     GlyphRun,
 }
@@ -250,18 +252,26 @@ fn clip_aabb_contains_point(
 }
 
 /// Per-glyph hit test inside a [`SceneGlyphRun`]. Returns the index
-/// of the glyph whose approximate AABB contains `point`, or `None`
-/// if the point is in the run's overall AABB but doesn't land on
-/// any individual glyph.
+/// of the glyph whose AABB contains `point`, or `None` if the
+/// point is in the run's overall AABB but doesn't land on any
+/// individual glyph.
 ///
-/// Approximation: glyph AABB in run-local space is
-///   `(x, y - font_size, x + advance, y + font_size * 0.25)`
-/// where `advance` is the distance to the next glyph's x (or
-/// `font_size` for the last glyph). This sketches an em-box: a
-/// box from the ascender (≈ font_size above baseline) to a
-/// shallow descender (≈ font_size/4 below baseline). Real font
-/// metrics would tighten the box; this is enough for "click on
-/// this character" UI without pulling in skrifa as a direct dep.
+/// Roadmap R1 — uses real font-supplied glyph bounds via
+/// `skrifa::metrics::GlyphMetrics` when the font parses cleanly.
+/// Falls back to an em-box approximation when:
+///
+/// - the font palette entry is the sentinel (`font_id == 0`),
+/// - skrifa can't parse the font bytes (empty / corrupt),
+/// - the glyph id has no outline bounds in the font (e.g., COLR
+///   emoji glyphs where the outline table is empty — the glyph
+///   still rasterizes via color layers, but skrifa's bounds
+///   query returns `None`).
+///
+/// The em-box fallback sketches `(x, y - font_size) → (x +
+/// advance, y + font_size * 0.25)` — ascender to shallow
+/// descender — which is conservative (over-includes) rather than
+/// tight. UI use cases (clicking a character) prefer
+/// over-inclusive misses to under-inclusive ones.
 fn glyph_run_per_glyph_hit(
     run: &crate::scene::SceneGlyphRun,
     point: [f32; 2],
@@ -271,24 +281,29 @@ fn glyph_run_per_glyph_hit(
     if run.glyphs.is_empty() {
         return None;
     }
-    let n = run.glyphs.len();
-    for (i, g) in run.glyphs.iter().enumerate() {
-        let advance = if i + 1 < n {
-            (run.glyphs[i + 1].x - g.x).max(0.0)
-        } else {
-            run.font_size
-        };
-        // Effective advance — use font_size as a floor so very
-        // narrow glyphs (combining marks, fi-ligatures stripping)
-        // still get a clickable box.
-        let advance = advance.max(run.font_size * 0.25);
 
-        let local = [
-            g.x,
-            g.y - run.font_size,
-            g.x + advance,
-            g.y + run.font_size * 0.25,
-        ];
+    // Try to load real metrics. `font_id == 0` is the no-font
+    // sentinel; skip directly to em-box. For real fonts, parse the
+    // blob via skrifa and build a GlyphMetrics at the run's font
+    // size. If anything fails, `metrics` stays None and every
+    // glyph falls back to em-box.
+    use skrifa::MetadataProvider;
+    let metrics: Option<skrifa::metrics::GlyphMetrics<'_>> = if run.font_id == 0 {
+        None
+    } else {
+        let blob = &scene.fonts[run.font_id as usize];
+        skrifa::FontRef::from_index(blob.data.data(), blob.index)
+            .ok()
+            .map(|font| {
+                font.glyph_metrics(
+                    skrifa::instance::Size::new(run.font_size),
+                    skrifa::instance::LocationRef::default(),
+                )
+            })
+    };
+
+    for (i, g) in run.glyphs.iter().enumerate() {
+        let local = glyph_local_aabb(run, i, g, metrics.as_ref());
         let world = world_aabb(local, run.transform_id, scene);
         if world[0] <= point[0]
             && point[0] <= world[2]
@@ -301,6 +316,44 @@ fn glyph_run_per_glyph_hit(
     None
 }
 
+/// Compute the local-space AABB for a single glyph in the run.
+/// Real font metrics when available, em-box approximation when
+/// skrifa can't supply bounds for this glyph.
+fn glyph_local_aabb(
+    run: &crate::scene::SceneGlyphRun,
+    i: usize,
+    g: &crate::scene::Glyph,
+    metrics: Option<&skrifa::metrics::GlyphMetrics<'_>>,
+) -> [f32; 4] {
+    if let Some(metrics) = metrics {
+        if let Some(b) = metrics.bounds(skrifa::GlyphId::new(g.id)) {
+            // Skrifa returns bounds in font (y-up) space at the
+            // glyph origin; convert to scene (y-down) by mirroring
+            // around g.y.
+            return [
+                g.x + b.x_min,
+                g.y - b.y_max,
+                g.x + b.x_max,
+                g.y - b.y_min,
+            ];
+        }
+    }
+    // Em-box fallback.
+    let n = run.glyphs.len();
+    let advance = if i + 1 < n {
+        (run.glyphs[i + 1].x - g.x).max(0.0)
+    } else {
+        run.font_size
+    };
+    let advance = advance.max(run.font_size * 0.25);
+    [
+        g.x,
+        g.y - run.font_size,
+        g.x + advance,
+        g.y + run.font_size * 0.25,
+    ]
+}
+
 /// Returns the [`HitOpKind`] for hittable ops, or `None` for
 /// scope-only ops (push/pop layer) that have no visible body of
 /// their own.
@@ -310,6 +363,7 @@ fn hittable_kind(op: &SceneOp) -> Option<HitOpKind> {
         SceneOp::Stroke(_) => Some(HitOpKind::Stroke),
         SceneOp::Gradient(_) => Some(HitOpKind::Gradient),
         SceneOp::Image(_) => Some(HitOpKind::Image),
+        SceneOp::Pattern(_) => Some(HitOpKind::Pattern),
         SceneOp::Shape(_) => Some(HitOpKind::Shape),
         SceneOp::GlyphRun(_) => Some(HitOpKind::GlyphRun),
         SceneOp::PushLayer(_) | SceneOp::PopLayer => None,
@@ -332,6 +386,10 @@ fn op_contains_point(op: &SceneOp, p: [f32; 2], scene: &Scene) -> bool {
         SceneOp::Stroke(s) => primitive_box_stroke(s, scene),
         SceneOp::Gradient(g) => primitive_box_gradient(g, scene),
         SceneOp::Image(i) => primitive_box_image(i, scene),
+        SceneOp::Pattern(p) => {
+            use crate::tile_cache::world_aabb;
+            (world_aabb(p.extent, p.transform_id, scene), p.clip_rect)
+        }
         SceneOp::Shape(_) => unreachable!("handled above"),
         SceneOp::GlyphRun(r) => match world_aabb_glyph_run(r, scene) {
             Some(aabb) => (aabb, r.clip_rect),
