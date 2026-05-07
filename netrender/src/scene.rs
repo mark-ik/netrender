@@ -611,6 +611,27 @@ pub struct SceneShape {
     pub clip_corner_radii: [f32; 4],
 }
 
+/// Roadmap C3 — compose mode controlling how a layer composites
+/// back into its parent at pop time. Mirrors `peniko::Compose`
+/// with a netrender-owned enum so the Scene API stays peniko-free.
+///
+/// `SrcOver` is the default; layer pixels paint over destination
+/// pixels (the standard Porter-Duff "source-over"). `DestIn` is
+/// the alpha-mask compose: destination pixels survive only where
+/// source (this layer) is opaque — the mechanism behind
+/// `Scene::push_alpha_mask_layer`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[repr(u8)]
+pub enum SceneCompose {
+    /// Standard "source-over" — layer pixels paint over destination.
+    #[default]
+    SrcOver = 0,
+    /// "Destination-in" — destination only where source is opaque.
+    /// Used to mask outer-layer content by an inner mask layer.
+    DestIn = 1,
+}
+
 /// Phase 12a' scene-level blend mode. Mirrors `peniko::Mix` with a
 /// netrender-owned enum so the Scene API stays peniko-free. Maps
 /// 1-to-1 in the translator.
@@ -676,9 +697,14 @@ pub struct SceneLayer {
     /// Multiplied with every pixel inside the layer when composing
     /// back to parent. `1.0` is no-op.
     pub alpha: f32,
-    /// Blend mode used to composite the layer back into its parent.
-    /// `Normal` is straight `source-over`.
+    /// Mix mode used to composite the layer back into its parent
+    /// (Normal / Multiply / Screen / Overlay / Darken / Lighten).
     pub blend_mode: SceneBlendMode,
+    /// Roadmap C3 — compose mode used to composite the layer into
+    /// its parent. `SrcOver` (default) is the standard layer paint;
+    /// `DestIn` makes the parent visible only where this layer is
+    /// opaque (alpha-mask).
+    pub compose: SceneCompose,
     /// Index into `Scene::transforms` applied to the clip shape.
     /// Inner ops carry their own `transform_id`s.
     pub transform_id: u32,
@@ -688,13 +714,53 @@ impl SceneLayer {
     /// Convenience: a layer with the given alpha, no clip, normal
     /// blend mode, identity transform.
     pub fn alpha(alpha: f32) -> Self {
-        Self { clip: SceneClip::None, alpha, blend_mode: SceneBlendMode::Normal, transform_id: 0 }
+        Self {
+            clip: SceneClip::None,
+            alpha,
+            blend_mode: SceneBlendMode::Normal,
+            compose: SceneCompose::SrcOver,
+            transform_id: 0,
+        }
     }
 
     /// Convenience: a clip-only layer (alpha 1, blend Normal,
     /// identity transform) with the given clip.
     pub fn clip(clip: SceneClip) -> Self {
-        Self { clip, alpha: 1.0, blend_mode: SceneBlendMode::Normal, transform_id: 0 }
+        Self {
+            clip,
+            alpha: 1.0,
+            blend_mode: SceneBlendMode::Normal,
+            compose: SceneCompose::SrcOver,
+            transform_id: 0,
+        }
+    }
+
+    /// Roadmap C3 — alpha-mask layer. Pushes a layer that, when
+    /// popped, makes the *enclosing* layer's content visible only
+    /// where this layer's content is opaque (peniko's
+    /// `Compose::DestIn`).
+    ///
+    /// The intended usage pattern:
+    ///
+    /// ```text
+    /// scene.push_layer(SceneLayer::clip(...))    // outer
+    /// // → render content (will be masked)
+    /// scene.push_layer(SceneLayer::alpha_mask())  // inner DestIn
+    /// // → render mask (e.g., scene.push_image_full(mask_key, ...))
+    /// scene.pop_layer()                          // commits the mask
+    /// scene.pop_layer()                          // outer pops with content + mask applied
+    /// ```
+    ///
+    /// A high-level helper [`Scene::push_layer_mask`] / pair
+    /// orchestrates the push/pop bookkeeping for the common case.
+    pub fn alpha_mask() -> Self {
+        Self {
+            clip: SceneClip::None,
+            alpha: 1.0,
+            blend_mode: SceneBlendMode::Normal,
+            compose: SceneCompose::DestIn,
+            transform_id: 0,
+        }
     }
 }
 
@@ -1252,6 +1318,27 @@ impl Scene {
         self.push_layer(SceneLayer::clip(clip));
     }
 
+    /// Roadmap C3 — open an alpha-mask layer (DestIn compose).
+    /// Inside this scope the consumer pushes the mask shape (image,
+    /// shape, glyph run, etc.); when paired [`Scene::pop_layer`]
+    /// fires, the *enclosing* layer's content survives only where
+    /// this layer is opaque.
+    ///
+    /// Typical usage opens an outer clip layer first, then a
+    /// `push_alpha_mask_layer` inner, with content between them:
+    ///
+    /// ```text
+    /// scene.push_layer_clip(SceneClip::Rect { ... });
+    /// // → render content (will be masked)
+    /// scene.push_alpha_mask_layer();
+    /// scene.push_image_full(mask_key, ...);
+    /// scene.pop_layer(); // closes alpha mask, applies DestIn
+    /// scene.pop_layer(); // closes outer
+    /// ```
+    pub fn push_alpha_mask_layer(&mut self) {
+        self.push_layer(SceneLayer::alpha_mask());
+    }
+
     /// Roadmap B2 — open a scroll frame: a rect-clipped layer in
     /// parent space paired with a fresh `Transform` palette entry
     /// that translates content by `-scroll_offset`.
@@ -1287,6 +1374,7 @@ impl Scene {
             },
             alpha: 1.0,
             blend_mode: SceneBlendMode::Normal,
+            compose: SceneCompose::SrcOver,
             // Clip is in parent space; identity transform_id keeps
             // it positioned correctly regardless of the inner
             // content's scroll transform.

@@ -79,8 +79,14 @@ fn map_stroke_join(j: SceneStrokeJoin) -> Join {
     }
 }
 
-/// Map a netrender [`SceneBlendMode`] to a vello [`BlendMode`].
-pub(crate) fn map_blend_mode(b: SceneBlendMode) -> peniko::BlendMode {
+/// Roadmap C3 — Map a netrender (`SceneBlendMode`, `SceneCompose`)
+/// pair to a vello [`BlendMode`]. The previous standalone
+/// `map_blend_mode(SceneBlendMode)` is now an `SrcOver` shortcut
+/// inlined at use sites.
+fn map_layer_blend(
+    b: SceneBlendMode,
+    c: crate::scene::SceneCompose,
+) -> peniko::BlendMode {
     let mix = match b {
         SceneBlendMode::Normal => peniko::Mix::Normal,
         SceneBlendMode::Multiply => peniko::Mix::Multiply,
@@ -89,7 +95,11 @@ pub(crate) fn map_blend_mode(b: SceneBlendMode) -> peniko::BlendMode {
         SceneBlendMode::Darken => peniko::Mix::Darken,
         SceneBlendMode::Lighten => peniko::Mix::Lighten,
     };
-    peniko::BlendMode::new(mix, peniko::Compose::SrcOver)
+    let compose = match c {
+        crate::scene::SceneCompose::SrcOver => peniko::Compose::SrcOver,
+        crate::scene::SceneCompose::DestIn => peniko::Compose::DestIn,
+    };
+    peniko::BlendMode::new(mix, compose)
 }
 
 /// Translate a netrender [`Scene`] into a [`vello::Scene`] suitable
@@ -503,7 +513,10 @@ fn emit_stroke(vscene: &mut vello::Scene, stroke: &SceneStroke, transforms: &[Tr
 /// The matching `pop_layer` is emitted by the `SceneOp::PopLayer`
 /// arm of `scene_to_vello_with_overrides`.
 fn emit_push_layer(vscene: &mut vello::Scene, layer: &SceneLayer, scene: &Scene) {
-    let blend = map_blend_mode(layer.blend_mode);
+    // Roadmap C3 — thread the layer's compose mode through so
+    // alpha-mask layers (`SceneCompose::DestIn`) get their special
+    // composite at pop time.
+    let blend = map_layer_blend(layer.blend_mode, layer.compose);
     let alpha = layer.alpha.clamp(0.0, 1.0);
     let world = transform_to_affine(&scene.transforms[layer.transform_id as usize]);
 

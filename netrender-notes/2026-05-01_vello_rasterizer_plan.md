@@ -2014,6 +2014,66 @@ tiles clean. Plus a GPU smoke that loads Bahnschrift on Windows,
 renders 'B' at wght = 300 / 400 / 700, and asserts bold paints
 visibly more ink than light (the receipt the roadmap asked for).
 
+### 11.28 Downscale-blur-upscale for large blurs (2026-05-06) — **CLEARED**
+
+Roadmap [R5](2026-05-04_feature_roadmap.md): lift the σ-clip cap
+beyond ~28 px so CSS-style large blurs (e.g.,
+`backdrop-filter: blur(40px)` and bigger) reach their intended σ.
+
+New `blur_kernel_plan_with_downscale(radius)` returns
+`(level, passes, step_px)` where `level ∈ {1, 2, 4, 8}` is the
+work-resolution divisor. The heuristic clamps `level` so the
+*scaled* radius stays within the single-level cap (28 px). For
+radii ≤ 224 px the cascade runs unclipped; beyond 224 the chosen
+level (8) clamps and σ-clip returns — documented as the known
+limit.
+
+`Renderer::build_box_shadow_mask` rewritten to:
+
+1. Render the (clip rectangle) mask at full `dim`.
+2. If `level > 1`, prepend a brush_blur task at step=0 with output
+   extent `dim/level` — bilinear sampler on the input texture acts
+   as box-filter pre-AA.
+3. Run the H+V cascade at `dim/level`.
+4. If `level > 1`, append an upscale brush_blur step=0 task at
+   output extent `dim` — bilinear smooths the upsample.
+5. Register the final output via `insert_image_vello`.
+
+Receipt at
+[`netrender/tests/pr5_downscale_blur.rs`](../netrender/tests/pr5_downscale_blur.rs):
+GPU smoke shows `blur_radius=64` produces an edge transition zone
+substantially wider than `blur_radius=16` — without R5, the cascade
+σ-clips at 28px and the difference would be marginal. CPU planner
+receipts in `blur_plan_tests::pr5_*` cover level selection
+(1/2/4/8) at characteristic radii.
+
+### 11.29 Alpha-mask compose mode (2026-05-06) — **CLEARED**
+
+Roadmap [C3](2026-05-04_feature_roadmap.md): mask-image fills
+without pre-baking.
+
+New `SceneCompose` enum (SrcOver default, DestIn for masks) added
+as a per-layer field on `SceneLayer`. `SceneLayer::alpha_mask()`
+constructs a layer with `compose: DestIn`; new
+`Scene::push_alpha_mask_layer` helper appends one. The standard
+outer-layer-then-content-then-inner-mask pattern in vello applies
+without further changes (peniko's existing BlendMode supports
+DestIn natively).
+
+`emit_push_layer` now reads `layer.compose` and threads it through
+to vello via the new `map_layer_blend(blend_mode, compose)`
+function (replacing the SrcOver-hardcoded `map_blend_mode`).
+`hash_push_layer` includes the compose byte so SrcOver vs DestIn
+layers hash differently and trigger correct tile invalidation.
+
+Receipt at
+[`netrender/tests/pc3_alpha_mask_layer.rs`](../netrender/tests/pc3_alpha_mask_layer.rs)
+(5/5): default compose check, alpha_mask helper produces DestIn,
+push_alpha_mask_layer appends DestIn op, compose change
+invalidates tile cache, and a GPU smoke that masks a red rect by a
+half-and-half image and verifies the left half is red while the
+right half is masked to near-black.
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here

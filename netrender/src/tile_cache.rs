@@ -460,6 +460,9 @@ fn hash_push_layer(h: &mut DefaultHasher, layer: &crate::scene::SceneLayer) {
     use crate::scene::SceneClip;
     h.write_u32(layer.alpha.to_bits());
     h.write_u8(layer.blend_mode as u8);
+    // Roadmap C3 — compose mode is part of the layer's visible
+    // identity (SrcOver vs DestIn changes everything).
+    h.write_u8(layer.compose as u8);
     h.write_u32(layer.transform_id);
     match &layer.clip {
         SceneClip::None => h.write_u8(0),

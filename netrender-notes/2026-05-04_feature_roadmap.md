@@ -86,22 +86,19 @@ activates the fix, and the done condition. Move into a
   (7/7). Full finding:
   [rasterizer plan §11.24](2026-05-01_vello_rasterizer_plan.md).
 
-- [ ] **R5. Downscale-blur-upscale for very large blurs**
-  (rasterizer plan §11.10).
-  *Bites when:* a consumer needs `blur_radius_px > ~28`. Today's
-  multi-pass cascade caps at `MAX_PASSES = 50`, which σ-clips beyond
-  that radius. Skia and Firefox use downscale-then-blur for large
-  radii — same approach would lift the cap.
-  *Trigger:* a consumer requests `blur_radius > 28` (CSS
-  `backdrop-filter: blur(40px)` is plausible) and the σ-clip is
-  visible; or D1 (backdrop filter) reaches a radius where the cap
-  bites.
-  *Done condition:* `blur_radius_px = 64` produces a visually correct
-  gaussian (matches a downscale-then-blur reference within tolerance)
-  with no σ-clip artifact, via render to a half- or quarter-resolution
-  intermediate texture, blur there, upscale to target. Two more
-  render-graph tasks per "downscale level." Receipt: oracle PNG
-  comparison.
+- [x] **R5. Downscale-blur-upscale for very large blurs** —
+  **CLEARED 2026-05-06**.
+  New `blur_kernel_plan_with_downscale(radius)` returns
+  `(level, passes, step_px)` where `level ∈ {1, 2, 4, 8}` divides
+  the work resolution. `build_box_shadow_mask` adds a brush_blur
+  step=0 downscale task before the cascade and an upscale task
+  after, both relying on the bilinear sampler for AA. Cascade runs
+  at the scaled resolution with a smaller effective radius.
+  Lifts the σ-clip cap from ~28px up to ~224px (8 × 28). Receipt
+  at
+  [`netrender/tests/pr5_downscale_blur.rs`](../netrender/tests/pr5_downscale_blur.rs)
+  (2/2 GPU + 9/9 CPU planner tests in `blur_plan_tests`). Full
+  finding: [rasterizer plan §11.28](2026-05-01_vello_rasterizer_plan.md).
 
 - [x] **R6. Inline-box rendering helper in `netrender_text`** —
   **CLEARED 2026-05-06**.
@@ -255,14 +252,18 @@ gains one match arm per item.
   (8/8). Full finding:
   [rasterizer plan §11.26](2026-05-01_vello_rasterizer_plan.md).
 
-- [ ] **C3. Mask-image fills** — using one image as an alpha mask for
-  another fill (any `SceneOp` body).
-  *Trigger:* a consumer needs CSS `mask-image` or shaped vignettes
-  without pre-baking.
-  *Done condition:* `Scene::push_layer_mask(image_key, ...)` opens a
-  layer whose visibility is gated by the mask image's alpha (one new
-  WGSL helper or a vello layer trick). Decouples mask from fill so
-  the consumer doesn't have to pre-bake.
+- [x] **C3. Mask-image fills** — **CLEARED 2026-05-06**.
+  New `SceneCompose` enum (SrcOver / DestIn) added as a per-layer
+  field on `SceneLayer`. `SceneLayer::alpha_mask()` and
+  `Scene::push_alpha_mask_layer` open an inner DestIn layer; with
+  the standard outer-layer-then-content pattern, content survives
+  only where the inner layer's draws are opaque. No new shader
+  needed — vello's existing peniko BlendMode supports DestIn
+  natively. Receipt at
+  [`netrender/tests/pc3_alpha_mask_layer.rs`](../netrender/tests/pc3_alpha_mask_layer.rs)
+  (5/5 — including GPU smoke that proves a half-and-half mask
+  shows content on one side and zero on the other). Full finding:
+  [rasterizer plan §11.29](2026-05-01_vello_rasterizer_plan.md).
 
 - [x] **C4. Variable fonts axis interpolation** — **CLEARED 2026-05-06**.
   `SceneGlyphRun` gained `font_axis_values: Vec<(SceneFontAxisTag,

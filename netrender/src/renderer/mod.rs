@@ -87,9 +87,10 @@ impl Default for ColorLoad {
 /// blurs absorb the budget by running more passes.
 ///
 /// Pass count is capped at `MAX_PASSES` for sanity — at the cap a
-/// blur radius of ~28 px is achievable; beyond that the result is
-/// stddev-clipped (downscale-then-blur is the right move for huge
-/// blurs and is not implemented here yet).
+/// blur radius of ~28 px is achievable. Roadmap R5 lifts this cap
+/// for large blurs via [`blur_kernel_plan_with_downscale`], which
+/// picks a downscale level and runs the cascade at the smaller
+/// resolution before upscaling back.
 fn blur_kernel_plan(blur_radius_px: f32) -> (usize, f32) {
     const MAX_STEP_PX: f32 = 2.0;
     const MAX_PASSES: usize = 50;
@@ -101,6 +102,39 @@ fn blur_kernel_plan(blur_radius_px: f32) -> (usize, f32) {
     }
     let passes = ((target_sigma / MAX_STEP_PX).powi(2)).ceil().max(1.0) as usize;
     (passes.min(MAX_PASSES), MAX_STEP_PX)
+}
+
+/// Roadmap R5 — upgraded planner that introduces a downscale level
+/// for blurs beyond what the cascade alone can reach.
+///
+/// Returns `(level, passes, step_px)` where `level ∈ {1, 2, 4, 8}`
+/// is the resolution divisor for the blur intermediate. A `level`
+/// of 1 keeps everything at native resolution (existing behavior);
+/// higher levels halve the work-resolution `level` times, so the
+/// effective blur radius in source-pixel units becomes
+/// `step_px · √passes · level`.
+///
+/// Heuristic: at native resolution the cascade caps at
+/// `SINGLE_LEVEL_MAX_RADIUS ≈ 28` px (50 passes at MAX_STEP_PX = 2,
+/// 2σ → blur_radius). Beyond that we step down by powers of 2 so
+/// the *scaled* radius stays under the cap.
+///
+/// `passes` and `step_px` are then `blur_kernel_plan(blur_radius_px
+/// / level)` — the cascade plan for the radius as it appears at
+/// the scaled resolution.
+pub(crate) fn blur_kernel_plan_with_downscale(blur_radius_px: f32) -> (u32, usize, f32) {
+    const SINGLE_LEVEL_MAX_RADIUS: f32 = 28.0;
+    const MAX_LEVEL: u32 = 8; // Stops the level chain at quarter-quarter res.
+
+    let level: u32 = if blur_radius_px <= SINGLE_LEVEL_MAX_RADIUS {
+        1
+    } else {
+        let raw = (blur_radius_px / SINGLE_LEVEL_MAX_RADIUS).ceil() as u32;
+        raw.next_power_of_two().min(MAX_LEVEL)
+    };
+    let scaled_radius = blur_radius_px / level as f32;
+    let (passes, step_px) = blur_kernel_plan(scaled_radius);
+    (level, passes, step_px)
 }
 
 #[cfg(test)]
@@ -162,6 +196,56 @@ mod blur_plan_tests {
             "MAX_PASSES = 50 should cap unbounded radii; got {}",
             passes,
         );
+    }
+
+    use super::blur_kernel_plan_with_downscale;
+
+    #[test]
+    fn pr5_small_radius_keeps_level_one() {
+        let (level, _, _) = blur_kernel_plan_with_downscale(8.0);
+        assert_eq!(level, 1, "small radii skip downscale");
+        let (level, _, _) = blur_kernel_plan_with_downscale(28.0);
+        assert_eq!(level, 1, "exactly at the cap stays at level 1");
+    }
+
+    #[test]
+    fn pr5_medium_radius_picks_level_two() {
+        // Radii between 28 and 56 round up to level 2 (next power
+        // of 2 above ceil(radius / 28)).
+        let (level, _, _) = blur_kernel_plan_with_downscale(40.0);
+        assert_eq!(level, 2, "radius 40 picks level 2");
+    }
+
+    #[test]
+    fn pr5_large_radius_picks_higher_level() {
+        let (level, _, _) = blur_kernel_plan_with_downscale(100.0);
+        assert!(level >= 4, "radius 100 picks level ≥ 4, got {level}");
+        let (level, _, _) = blur_kernel_plan_with_downscale(1000.0);
+        assert!(level <= 8, "level capped at 8, got {level}");
+    }
+
+    #[test]
+    fn pr5_passes_stay_unclipped_for_realistic_radii() {
+        // At every level chosen by the heuristic, for radii up to
+        // MAX_LEVEL * SINGLE_LEVEL_MAX_RADIUS = 8 * 28 = 224, the
+        // scaled cascade should stay within the 50-pass cap. Beyond
+        // 224 the downscale heuristic clamps at level 8 and σ-clip
+        // returns; documenting that as a known limit.
+        for &r in &[8.0_f32, 28.0, 40.0, 64.0, 100.0, 200.0, 224.0] {
+            let (level, passes, _) = blur_kernel_plan_with_downscale(r);
+            assert!(
+                passes <= 50,
+                "radius {r}: at level {level}, passes = {passes} exceeds MAX_PASSES"
+            );
+            // For radii in this range the cascade should not be at
+            // the cap (it has headroom).
+            if r <= 200.0 {
+                assert!(
+                    passes < 50,
+                    "radius {r}: at level {level}, passes = {passes} should be below the 50-pass cap (downscale path has headroom)"
+                );
+            }
+        }
     }
 }
 
@@ -226,30 +310,64 @@ impl Renderer {
         let blur_pipe = self.wgpu_device.ensure_brush_blur(mask_format);
         let sampler = make_bilinear_sampler(&device);
 
-        let (passes, step_px) = blur_kernel_plan(blur_radius_px);
-        let step_uv = step_px / dim as f32;
-
-        let extent = wgpu::Extent3d { width: dim, height: dim, depth_or_array_layers: 1 };
+        let (level, passes, step_px) = blur_kernel_plan_with_downscale(blur_radius_px);
+        // Roadmap R5 — large blurs run at a downscaled work
+        // resolution, then upscale to the target. The cascade runs
+        // at `scaled_dim`; a `step_px` pixel at scaled_dim is
+        // `level * step_px` pixels at full dim, so the effective
+        // σ scales accordingly.
+        let scaled_dim = (dim / level).max(1);
+        let scaled_extent = wgpu::Extent3d {
+            width: scaled_dim,
+            height: scaled_dim,
+            depth_or_array_layers: 1,
+        };
+        let full_extent = wgpu::Extent3d {
+            width: dim,
+            height: dim,
+            depth_or_array_layers: 1,
+        };
+        let step_uv = step_px / scaled_dim as f32;
 
         const MASK: TaskId = 1;
         let mut graph = RenderGraph::new();
         graph.push(Task {
             id: MASK,
-            extent,
+            extent: full_extent,
             format: mask_format,
             inputs: vec![],
             encode: clip_rectangle_callback(clip_pipe, bounds, corner_radius),
         });
 
-        // Chain N H+V blur pairs, each consuming the previous
-        // pass's output. The first H pass reads from MASK.
+        // R5 — when level > 1, prepend a downscale task that reads
+        // the full-resolution mask and writes it at scaled_dim. We
+        // implement the downscale as a brush_blur pass with step=0:
+        // five taps at the same UV → effectively a bilinear sample
+        // of the source at the target's resolution. The bilinear
+        // filter on the input texture acts as the box-filter
+        // pre-AA expected of a 2x downscale.
         let mut prev: TaskId = MASK;
         let mut next_id: TaskId = MASK + 1;
+        if level > 1 {
+            let down_id = next_id;
+            graph.push(Task {
+                id: down_id,
+                extent: scaled_extent,
+                format: mask_format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = down_id;
+            next_id += 1;
+        }
+
+        // Chain N H+V blur pairs at scaled_extent. The first H pass
+        // reads the (downscaled) mask.
         for _ in 0..passes {
             let h_id = next_id;
             graph.push(Task {
                 id: h_id,
-                extent,
+                extent: scaled_extent,
                 format: mask_format,
                 inputs: vec![prev],
                 encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), step_uv, 0.0),
@@ -257,13 +375,29 @@ impl Renderer {
             let v_id = h_id + 1;
             graph.push(Task {
                 id: v_id,
-                extent,
+                extent: scaled_extent,
                 format: mask_format,
                 inputs: vec![h_id],
                 encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, step_uv),
             });
             prev = v_id;
             next_id = v_id + 1;
+        }
+
+        // R5 — when level > 1, append an upscale task that reads
+        // the blurred scaled-resolution texture and writes at full
+        // dim. Same brush_blur(step=0) trick; bilinear filter
+        // smooths the upsample.
+        if level > 1 {
+            let up_id = next_id;
+            graph.push(Task {
+                id: up_id,
+                extent: full_extent,
+                format: mask_format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = up_id;
         }
 
         let mut outputs = graph.execute(&device, &queue, std::collections::HashMap::new());
