@@ -60,10 +60,22 @@ impl WgpuDevice {
 
     /// Standalone headless boot. Wraps [`core::boot`] for tests / CI /
     /// tools that don't have an embedder; production goes through
-    /// [`WgpuDevice::with_external`].
+    /// [`WgpuDevice::with_external`]. Not available on wasm32 — see
+    /// [`core::boot_async`] for the browser path.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn boot() -> Result<Self, core::BootError> {
         Ok(Self {
             core: core::boot()?,
+            brush_blur: Mutex::new(HashMap::new()),
+            clip_rectangle: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Async standalone headless boot — portable across wasm32 and
+    /// native. Wraps [`core::boot_async`].
+    pub async fn boot_async() -> Result<Self, core::BootError> {
+        Ok(Self {
+            core: core::boot_async().await?,
             brush_blur: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
         })

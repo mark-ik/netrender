@@ -64,7 +64,10 @@ pub use crate::tile_cache::{TileCache, TileCoord};
 // `Compositor`/`LayerPresent`/`PresentedFrame` are the path-(b′)
 // trait surface; consumers (servo-wgpu, etc.) implement `Compositor`
 // for native-compositor handoff.
+#[cfg(not(target_arch = "wasm32"))]
+pub use netrender_device::boot;
 pub use netrender_device::{
     BrushBlurPipeline, ClipRectanglePipeline, Compositor, LayerPresent, PresentedFrame,
-    REQUIRED_FEATURES, WgpuDevice, WgpuHandles, boot, build_brush_blur, build_clip_rectangle,
+    REQUIRED_FEATURES, WgpuDevice, WgpuHandles, boot_async, build_brush_blur,
+    build_clip_rectangle,
 };

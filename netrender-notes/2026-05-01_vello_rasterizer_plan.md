@@ -2215,6 +2215,35 @@ measured pressure shows up — it's just a structural decomposition
 API. Shipping unblocks consumers who want it without forcing them
 to wait for a profiler-surfaced receipt.
 
+### 11.33 Library wasm32 readiness — `boot_async` (2026-05-08) — **CLEARED**
+
+Roadmap [F2](2026-05-04_feature_roadmap.md): WebAssembly target was
+framed as "real cost (wasm build infra), not a protective gate."
+Audit showed otherwise.
+
+`cargo check -p netrender --target wasm32-unknown-unknown` already
+compiled clean before this finding. The only wasm-runtime hazards in
+lib code were two `pollster::block_on` calls in
+`netrender_device::core::boot` — `pollster` polls once and panics on
+wasm32-unknown-unknown because the browser provides no executor.
+
+Fix: split the boot into a portable async core
+[`boot_async`](../netrender_device/src/core.rs) and gate the blocking
+`boot()` wrapper to `#[cfg(not(target_arch = "wasm32"))]`.
+`WgpuDevice::boot_async` mirrors the pattern. Browser consumers drive
+`boot_async().await` from `wasm-bindgen-futures::spawn_local` (or any
+executor); native consumers keep the existing blocking entry points
+unchanged. Both `netrender_device` and `netrender` now `cargo check`
+clean against `wasm32-unknown-unknown`.
+
+The wasm-bindgen *demo* crate (running the card grid in a browser
+canvas) remains gated on a real consumer commitment, but that's an
+embedder example, not a netrender library cost. The library-side
+readiness landed as a thin-wrap over `wgpu`'s already-async API,
+similar in shape to B1, R1–R6, C1–C4, D1, D2, E2 — all of which
+turned out to be protective gates rather than real costs once the
+upstream API was checked first.
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here

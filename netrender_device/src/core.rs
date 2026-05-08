@@ -67,38 +67,43 @@ impl From<wgpu::RequestDeviceError> for BootError {
     }
 }
 
-/// Boot wgpu standalone: create the instance, pick an adapter, verify
-/// [`REQUIRED_FEATURES`], request a device + queue. Production goes
-/// through [`crate::WgpuDevice::with_external`] where the embedder
-/// supplies the primitives; this helper exists for headless tests, CI
-/// goldens, and tools that don't have an embedder fixture.
+/// Async boot core: create the instance, pick an adapter, verify
+/// [`REQUIRED_FEATURES`], request a device + queue. This is the
+/// portable shape — browser / wasm32-unknown-unknown consumers must
+/// drive it from their own runtime (`wasm-bindgen-futures`, etc.)
+/// because `wgpu`'s adapter / device requests are inherently async on
+/// the web.
 ///
 /// Phase 0.5 demoted [`REQUIRED_FEATURES`] to `Features::empty()`, so
 /// this boots cleanly on Lavapipe / WARP / SwiftShader software
 /// adapters.
-pub fn boot() -> Result<WgpuHandles, BootError> {
+pub async fn boot_async() -> Result<WgpuHandles, BootError> {
     let instance = wgpu::Instance::default();
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))?;
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })
+        .await?;
 
     let missing = REQUIRED_FEATURES - adapter.features();
     if !missing.is_empty() {
         return Err(BootError::MissingFeatures(missing));
     }
 
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("netrender device"),
-        required_features: REQUIRED_FEATURES,
-        required_limits: wgpu::Limits {
-            max_inter_stage_shader_variables: 28,
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("netrender device"),
+            required_features: REQUIRED_FEATURES,
+            required_limits: wgpu::Limits {
+                max_inter_stage_shader_variables: 28,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    }))?;
+        })
+        .await?;
 
     Ok(WgpuHandles {
         instance,
@@ -106,6 +111,21 @@ pub fn boot() -> Result<WgpuHandles, BootError> {
         device,
         queue,
     })
+}
+
+/// Blocking boot helper for desktop tests, CI goldens, and tools that
+/// don't have an embedder fixture. Production goes through
+/// [`crate::WgpuDevice::with_external`] where the embedder supplies
+/// the primitives.
+///
+/// Not available on `wasm32-unknown-unknown`: `pollster::block_on`
+/// panics there because the browser provides no executor to drive the
+/// adapter / device futures. Browser / WASM consumers should call
+/// [`boot_async`] directly from `wasm-bindgen-futures::spawn_local`
+/// (or equivalent).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn boot() -> Result<WgpuHandles, BootError> {
+    pollster::block_on(boot_async())
 }
 
 #[cfg(test)]

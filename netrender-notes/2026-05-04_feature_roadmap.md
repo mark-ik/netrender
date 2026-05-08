@@ -367,18 +367,27 @@ renderer reaches.
   *Done condition:* a render target in P3 produces visibly more
   saturated reds/greens/blues vs. sRGB on a P3-capable display.
 
-- [ ] **F2. WebAssembly target** — browser-hosted netrender.
-  *Trigger:* a real consumer commits to a browser-hosted demo. Until
-  then, untracked.
-  *Done condition:* `wasm-pack build` produces a `.wasm` that runs
-  the demo card grid in a browser canvas. The wgpu side handles the
-  webgpu adapter natively; netrender side needs `boot()` adapter
-  selection + a wasm-bindgen shim crate.
-  *Note:* a netrender-specific portability checklist needs to be
-  authored at trigger time. The existing
-  `wasm-portability-checklist.md` in this directory is for the
-  WebRender wgpu-backend branch (a separate project) and does **not**
-  apply as netrender's gating list.
+- [x] **F2. WebAssembly target — library readiness** — **CLEARED 2026-05-08**.
+  Audit found `cargo check -p netrender --target wasm32-unknown-unknown`
+  already passed clean — the only wasm-runtime hazard in lib code was
+  `pollster::block_on` in `netrender_device::core::boot`. Fixed by
+  splitting the boot into a portable async core
+  [`netrender_device::boot_async`](../netrender_device/src/core.rs)
+  and gating the blocking `boot()` wrapper to
+  `#[cfg(not(target_arch = "wasm32"))]`. Browser consumers call
+  `boot_async().await` from `wasm-bindgen-futures::spawn_local` (or any
+  executor); native consumers keep the existing blocking entry point.
+  `WgpuDevice::boot_async` mirrors the pattern. Both `netrender_device`
+  and `netrender` now `cargo check` clean against
+  `wasm32-unknown-unknown`. F2's prior framing as "real cost (wasm
+  build infra)" was a protective gate — the technical work was a
+  thin-wrap shape over `wgpu`'s already-async API. The wasm-bindgen
+  *demo* crate (running the card grid in a browser canvas) is real
+  consumer work and remains gated on a real consumer commitment, but
+  that's an embedder example, not a netrender library cost.
+  *Note:* the existing `wasm-portability-checklist.md` in this
+  directory is for the WebRender wgpu-backend branch (a separate
+  project) and never applied to netrender's smaller surface area.
 
 ---
 
