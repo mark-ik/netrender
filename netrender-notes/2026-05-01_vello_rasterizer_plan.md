@@ -2074,6 +2074,147 @@ invalidates tile cache, and a GPU smoke that masks a red rect by a
 half-and-half image and verifies the left half is red while the
 right half is masked to near-black.
 
+### 11.30 Backdrop filter via prefix-render + blur (2026-05-08) — **CLEARED**
+
+Roadmap [D1](2026-05-04_feature_roadmap.md): CSS-style
+`backdrop-filter` (frosted-glass blur of what's behind a
+translucent rect).
+
+New `SceneFilter::Blur(f32)` enum + `SceneLayer.backdrop_filter:
+Option<SceneFilter>` field. The rasterizer multi-pass
+orchestration lives entirely inside `Renderer::render_vello`:
+
+1. Detect any layer carrying a `backdrop_filter` via
+   `has_backdrop_filter(scene)` — fast path through the existing
+   single-pass render when none.
+2. For each backdrop-filter layer (painter order), build a
+   "prefix scene" with `build_prefix_scene` — every op before the
+   PushLayer, with unclosed scope balanced by appended PopLayers,
+   and any prefix `backdrop_filter` stripped (D1 first-cut
+   doesn't recurse).
+3. Render the prefix to a fresh `Rgba8Unorm` texture at viewport
+   dimensions via `render_scene_to_texture`.
+4. Blur via the new `build_blurred_image` helper — same R5
+   downscale-aware cascade as `build_box_shadow_mask`, but takes
+   an arbitrary input texture as an `external` render-graph
+   input.
+5. Register the blurred texture as a fresh `ImageKey` (using a
+   reserved range starting at `u64::MAX - 1` to avoid colliding
+   with consumer keys).
+6. Inject a `SceneImage` covering the layer's bounds (with UV
+   sampling the corresponding region of the blurred prefix) right
+   after the PushLayer in the processed scene.
+7. Strip the backdrop_filter from the processed PushLayer so the
+   inner render is the no-backdrop fast path.
+
+Tile-cache `hash_push_layer` includes the backdrop_filter
+discriminant + radius so changes invalidate covered tiles.
+
+First-cut limit: each backdrop layer renders its prefix
+independently (no sharing). For typical UI usage (one or two
+backdrop elements per frame) this is fine; heavier consumers can
+revisit caching when profiles surface it. Multi-level recursion
+(backdrop layer's prefix containing another backdrop layer) is
+guarded by stripping `backdrop_filter` from prefix layers — the
+prefix renders without recursion, which is correct for the simple
+case but may visually under-resolve nested filters. Document
+when/if a real consumer hits it.
+
+Receipt at
+[`netrender/tests/pd1_backdrop_filter.rs`](../netrender/tests/pd1_backdrop_filter.rs)
+(4/4): default-None + tile-cache invalidation on filter set /
+radius change (CPU), and a GPU smoke that renders a 16-stripe
+busy background twice (with and without `Blur(12)` covering a
+horizontal band) and asserts the filtered band has <50% the
+local horizontal variance of the reference. The "frosted-glass
+nav bar over a busy background" receipt the roadmap asked for.
+
+### 11.31 Animated values — `interpolate` module (2026-05-08) — **CLEARED**
+
+Roadmap [D2](2026-05-04_feature_roadmap.md): CSS-style timing
+curves and value interpolation for animated alpha / transform /
+color values.
+
+New [`netrender::interpolate`](../netrender/src/interpolate.rs)
+module — pure functions, no clock, no scene-side state. The
+consumer owns the time domain (winit frame timer, media-player
+clock, scrubber state, replay) and uses these helpers to convert
+a normalised `t ∈ [0, 1]` parameter into the eased value to push
+into the next frame's Scene.
+
+Provided:
+
+- **Easing**: `linear`, `ease`, `ease_in`, `ease_out`,
+  `ease_in_out`, `step_start`, `step_end`, plus the generic
+  `cubic_bezier(p1x, p1y, p2x, p2y, x)` (Newton iteration on the
+  x-axis bezier with bisection fallback, matching WebKit /
+  Blink).
+- **Lerp**: generic `lerp<T>(a, b, t)` for any
+  `Add+Sub+Mul<f32>` type, `lerp_array<const N>` for fixed-size
+  arrays, `lerp_color` for premultiplied RGBA (premult-aware
+  blend, matching netrender's color contract).
+- **Keyframes**: `sample_keyframes(&[(time, value)], t, default)`
+  walks a sorted keyframe list and lerps between bracketing
+  pairs.
+
+Why no `Animated<T>` wrapper or scene-side animation field:
+storing animation state on a Scene would couple rendering to
+wall-clock time and break the A2 snapshot/replay determinism
+invariant. Keeping the curves pure preserves "Scene is a frame
+description; replays deterministically." Documented in the
+module-level rustdoc.
+
+Receipt: 14 unit tests under `netrender::interpolate::tests` —
+endpoint clamping, ease symmetry, cubic-bezier extrapolation,
+scalar / array / color lerps, keyframe edge cases (empty,
+clamping, zero-span, easing composition).
+
+### 11.32 Multi-thread scene building (2026-05-08) — **CLEARED**
+
+Roadmap [E2](2026-05-04_feature_roadmap.md): per-thread scene
+fragments + a join API that merges them into a parent Scene.
+
+New `SceneFragment` struct mirrors Scene's op-list shape (ops,
+transforms, fonts, image_sources) but omits scene-level state
+(viewport, root alpha/blend, compositor surfaces) — those live
+on the owning Scene. `SceneFragment::new` initialises with the
+identity transform at index 0 and the sentinel font at index 0,
+matching Scene's palette invariants.
+
+`Scene::append_fragment(fragment)` does the merge with id
+remapping:
+
+- Fragment local index 0 (identity transform / sentinel font)
+  stays at 0 in the parent scene.
+- Fragment local indices ≥ 1 map to scene indices
+  `(scene_old_len + k - 1)` — the parent extends with the
+  fragment's `[1..]` slice, skipping the local identity entry.
+- Image keys are caller-assigned `u64`s and aren't remapped;
+  caller partitions the keyspace across threads.
+- Append is order-preserving: fragment ops land at the end of
+  `parent.ops` in the order `append_fragment` is called.
+
+Helper functions `remap_op_ids` and `op_transform_id_mut` cover
+the variant-dependent id rewrite (every visible-content variant
+carries `transform_id`; only `GlyphRun` carries `font_id`;
+`PopLayer` is a no-op).
+
+Receipt at
+[`netrender/tests/pe2_scene_fragment.rs`](../netrender/tests/pe2_scene_fragment.rs)
+(9/9): empty fragment, single-fragment remap, identity stays at 0,
+sentinel font stays at 0, two fragments keep transforms separate,
+image-key collision overwrites + disjoint keyspace coexists, and
+two parallel-build receipts — one with 4 threads × 100 rects each
+(verifies deterministic join + per-quadrant colors), one with 4
+threads × 2500 rects each (10k total) that exercises the
+`SceneFragment` builder under a thread::spawn workload.
+
+The roadmap framing was protective ("trigger: A4 data shows
+scene-build CPU pressure"). The fragment API has value before
+measured pressure shows up — it's just a structural decomposition
+API. Shipping unblocks consumers who want it without forcing them
+to wait for a profiler-surfaced receipt.
+
 ## 11.99 Open items — moved (2026-05-05)
 
 The catalogue of deferred refinements that originally lived here

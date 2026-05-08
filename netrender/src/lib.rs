@@ -28,6 +28,7 @@
 
 pub mod filter;
 pub mod hit_test;
+pub mod interpolate;
 pub mod profiling;
 pub mod registry;
 pub mod render_graph;
@@ -50,10 +51,10 @@ pub use crate::renderer::{ColorLoad, Renderer, RendererError};
 pub use vello::peniko;
 pub use crate::scene::{
     CompositorSurface, FontBlob, FontId, Glyph, GradientKind, GradientStop, ImageData, ImageKey,
-    NO_CLIP, PathOp, SHARP_CLIP, Scene, SceneBlendMode, SceneClip, SceneCompose,
+    NO_CLIP, PathOp, SHARP_CLIP, Scene, SceneBlendMode, SceneClip, SceneCompose, SceneFilter,
     SceneFontAxisTag, SceneGlyphRun, SceneGradient, SceneImage, SceneLayer, SceneOp, ScenePath,
-    ScenePathStroke, ScenePattern, SceneRect, SceneShape, SceneStroke, SceneStrokeCap,
-    SceneStrokeJoin, SurfaceKey, Transform,
+    ScenePathStroke, ScenePattern, SceneFragment, SceneRect, SceneShape, SceneStroke,
+    SceneStrokeCap, SceneStrokeJoin, SurfaceKey, Transform,
 };
 pub use crate::tile_cache::{TileCache, TileCoord};
 

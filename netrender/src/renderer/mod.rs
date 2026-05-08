@@ -104,6 +104,53 @@ fn blur_kernel_plan(blur_radius_px: f32) -> (usize, f32) {
     (passes.min(MAX_PASSES), MAX_STEP_PX)
 }
 
+/// Roadmap D1 — does this scene have any layer with a
+/// `backdrop_filter` set? Used by `render_vello` to decide whether
+/// to take the no-backdrop fast path or the multi-pass path.
+fn has_backdrop_filter(scene: &Scene) -> bool {
+    scene
+        .ops
+        .iter()
+        .any(|op| matches!(op, crate::scene::SceneOp::PushLayer(l) if l.backdrop_filter.is_some()))
+}
+
+/// Roadmap D1 — build a "prefix scene" containing every op before
+/// the layer at `cutoff_idx`, with any unclosed `PushLayer` scopes
+/// closed by appending `PopLayer` ops so the prefix is balanced.
+/// Reuses the parent scene's transforms, fonts, and image_sources
+/// (cheap; image data is `peniko::Blob` Arc-shares).
+fn build_prefix_scene(scene: &Scene, cutoff_idx: usize) -> Scene {
+    use crate::scene::SceneOp;
+    let mut prefix = Scene::new(scene.viewport_width, scene.viewport_height);
+    prefix.transforms = scene.transforms.clone();
+    prefix.fonts = scene.fonts.clone();
+    prefix.image_sources = scene.image_sources.clone();
+    prefix.root_alpha = scene.root_alpha;
+    prefix.root_blend_mode = scene.root_blend_mode;
+    prefix.ops = scene.ops[..cutoff_idx].to_vec();
+    // Strip any backdrop_filter from prefix layers — D1 first-cut
+    // doesn't recurse into nested filters; later filters processed
+    // independently see the unfiltered prefix.
+    for op in &mut prefix.ops {
+        if let SceneOp::PushLayer(l) = op {
+            l.backdrop_filter = None;
+        }
+    }
+    // Balance unclosed PushLayer scopes by appending PopLayer ops.
+    let mut depth: i32 = 0;
+    for op in &prefix.ops {
+        match op {
+            SceneOp::PushLayer(_) => depth += 1,
+            SceneOp::PopLayer => depth -= 1,
+            _ => {}
+        }
+    }
+    for _ in 0..depth.max(0) {
+        prefix.ops.push(SceneOp::PopLayer);
+    }
+    prefix
+}
+
 /// Roadmap R5 — upgraded planner that introduces a downscale level
 /// for blurs beyond what the cascade alone can reach.
 ///
@@ -505,8 +552,274 @@ impl Renderer {
 
         let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
         let mut tc = tc_mutex.lock().expect("tile_cache lock");
-        rast.render(scene, &mut tc, target_view, base)
+
+        // Roadmap D1 — if any layer carries a `backdrop_filter`,
+        // pre-render the scene-prefix to a texture, blur it, and
+        // inject a SceneImage covering the layer's bounds so the
+        // layer paints over the blurred backdrop. Falls through to
+        // the no-backdrop fast path when no filters are present.
+        let scene_to_render: std::borrow::Cow<'_, Scene> =
+            if has_backdrop_filter(scene) {
+                std::borrow::Cow::Owned(self.preprocess_backdrop_filters(
+                    scene, &mut rast, &mut tc,
+                ))
+            } else {
+                std::borrow::Cow::Borrowed(scene)
+            };
+
+        rast.render(&scene_to_render, &mut tc, target_view, base)
             .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
+    }
+
+    /// Roadmap D1 — pre-process backdrop filters: for each layer
+    /// carrying a [`SceneFilter`], render the scene-prefix to an
+    /// intermediate texture, blur it, register as an `ImageKey`,
+    /// and inject a `SceneImage` covering the layer's bounds at the
+    /// start of the layer's scope. Returns the augmented Scene with
+    /// `backdrop_filter` cleared (the work has been done).
+    ///
+    /// First-cut scope: handles every backdrop-filter layer in the
+    /// scene's op order, but each prefix is rendered independently
+    /// (no sharing). For typical UI usage (one or two backdrop
+    /// elements) this is fine; heavier consumers can revisit the
+    /// caching story when profiles surface it.
+    fn preprocess_backdrop_filters(
+        &self,
+        scene: &Scene,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+    ) -> Scene {
+        use crate::scene::{
+            SceneClip, SceneFilter, SceneImage, SceneOp, NO_CLIP, SHARP_CLIP,
+        };
+
+        let mut processed = scene.clone();
+
+        // Collect (orig_op_index, filter, bounds) for every
+        // backdrop-filter layer in painter order.
+        let backdrops: Vec<(usize, SceneFilter, [f32; 4])> = scene
+            .ops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| match op {
+                SceneOp::PushLayer(l) => l.backdrop_filter.map(|f| {
+                    let bounds = match &l.clip {
+                        SceneClip::None => [
+                            0.0,
+                            0.0,
+                            scene.viewport_width as f32,
+                            scene.viewport_height as f32,
+                        ],
+                        SceneClip::Rect { rect, .. } => *rect,
+                        SceneClip::Path(path) => path.local_aabb().unwrap_or([
+                            0.0,
+                            0.0,
+                            scene.viewport_width as f32,
+                            scene.viewport_height as f32,
+                        ]),
+                    };
+                    (i, f, bounds)
+                }),
+                _ => None,
+            })
+            .collect();
+
+        // Pick an ImageKey range that's unlikely to collide with
+        // consumer-assigned keys. Top of the u64 space is the
+        // convention here — same shape as the sentinel font's
+        // `u64::MAX` id.
+        let mut next_key: ImageKey = u64::MAX - 1;
+
+        // Each backdrop filter shifts subsequent op indices by +1
+        // (the injected SceneImage). Track the running offset.
+        let mut offset = 0_usize;
+
+        for (orig_idx, filter, bounds) in backdrops {
+            // Build the prefix scene: ops up to (but not including)
+            // this PushLayer. Balance any unclosed PushLayer scopes
+            // by appending PopLayer ops to the prefix.
+            let prefix = build_prefix_scene(scene, orig_idx);
+
+            // Render prefix to an intermediate texture at viewport
+            // dimensions.
+            let prefix_tex = self.render_scene_to_texture(rast, tc, &prefix);
+
+            // Blur it.
+            let SceneFilter::Blur(radius) = filter;
+            let blurred = self.build_blurred_image(prefix_tex, scene.viewport_width, radius);
+
+            // Register as an ImageKey on the rasterizer's
+            // `image_overrides` (Path B).
+            rast.register_texture(next_key, blurred);
+
+            // Compute UV: the blurred texture is the FULL viewport;
+            // we sample the bounds region.
+            let vw = scene.viewport_width as f32;
+            let vh = scene.viewport_height as f32;
+            let uv = [
+                bounds[0] / vw,
+                bounds[1] / vh,
+                bounds[2] / vw,
+                bounds[3] / vh,
+            ];
+
+            // Inject the SceneImage right after the PushLayer in
+            // `processed`. The PushLayer's index in `processed` is
+            // `orig_idx + offset` (because earlier injections shifted
+            // it). The SceneImage goes at `orig_idx + offset + 1`.
+            let inject_idx = orig_idx + offset + 1;
+            processed.ops.insert(
+                inject_idx,
+                SceneOp::Image(SceneImage {
+                    x0: bounds[0],
+                    y0: bounds[1],
+                    x1: bounds[2],
+                    y1: bounds[3],
+                    uv,
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    key: next_key,
+                    transform_id: 0,
+                    clip_rect: NO_CLIP,
+                    clip_corner_radii: SHARP_CLIP,
+                }),
+            );
+
+            // Strip the backdrop_filter from the processed
+            // PushLayer so the no-backdrop fast path renders it.
+            if let SceneOp::PushLayer(l) = &mut processed.ops[orig_idx + offset] {
+                l.backdrop_filter = None;
+            }
+
+            offset += 1;
+            next_key = next_key.wrapping_sub(1);
+        }
+
+        processed
+    }
+
+    /// Render the given Scene into a fresh `Rgba8Unorm` texture at
+    /// the scene's viewport dimensions. Used by D1's backdrop
+    /// preprocessing for the prefix render.
+    fn render_scene_to_texture(
+        &self,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+        scene: &Scene,
+    ) -> wgpu::Texture {
+        let device = &self.wgpu_device.core.device;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("netrender D1 backdrop prefix"),
+            size: wgpu::Extent3d {
+                width: scene.viewport_width,
+                height: scene.viewport_height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let transparent = vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]);
+        rast.render(scene, tc, &view, transparent)
+            .unwrap_or_else(|e| panic!("D1 prefix render failed: {:?}", e));
+        texture
+    }
+
+    /// Roadmap D1 — blur an arbitrary input texture using the
+    /// existing render-graph cascade machinery (and R5's downscale
+    /// path for large radii). Returns a fresh `Rgba8Unorm` texture
+    /// of size `dim × dim`.
+    fn build_blurred_image(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        blur_radius_px: f32,
+    ) -> wgpu::Texture {
+        use crate::filter::{blur_pass_callback, make_bilinear_sampler};
+        use crate::render_graph::{RenderGraph, Task, TaskId};
+        use std::collections::HashMap;
+
+        let device = self.wgpu_device.core.device.clone();
+        let queue = self.wgpu_device.core.queue.clone();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let blur_pipe = self.wgpu_device.ensure_brush_blur(format);
+        let sampler = make_bilinear_sampler(&device);
+
+        let (level, passes, step_px) = blur_kernel_plan_with_downscale(blur_radius_px);
+        let scaled_dim = (dim / level).max(1);
+        let scaled_extent = wgpu::Extent3d {
+            width: scaled_dim,
+            height: scaled_dim,
+            depth_or_array_layers: 1,
+        };
+        let full_extent = wgpu::Extent3d {
+            width: dim,
+            height: dim,
+            depth_or_array_layers: 1,
+        };
+        let step_uv = step_px / scaled_dim as f32;
+
+        const INPUT: TaskId = 1;
+        let mut graph = RenderGraph::new();
+        let mut prev: TaskId = INPUT;
+        let mut next_id: TaskId = INPUT + 1;
+
+        if level > 1 {
+            let down_id = next_id;
+            graph.push(Task {
+                id: down_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = down_id;
+            next_id += 1;
+        }
+
+        for _ in 0..passes {
+            let h_id = next_id;
+            graph.push(Task {
+                id: h_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), step_uv, 0.0),
+            });
+            let v_id = h_id + 1;
+            graph.push(Task {
+                id: v_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![h_id],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, step_uv),
+            });
+            prev = v_id;
+            next_id = v_id + 1;
+        }
+
+        if level > 1 {
+            let up_id = next_id;
+            graph.push(Task {
+                id: up_id,
+                extent: full_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = up_id;
+        }
+
+        let mut externals = HashMap::new();
+        externals.insert(INPUT, input);
+
+        let mut outputs = graph.execute(&device, &queue, externals);
+        outputs.remove(&prev).expect("D1 final blur output")
     }
 
     /// Number of times the path-(b′) master-texture pool has

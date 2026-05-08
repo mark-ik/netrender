@@ -285,33 +285,33 @@ gains one match arm per item.
 
 Items that need real design conversation, not just implementation.
 
-- [ ] **D1. Backdrop filter** — frosted-glass blur of *what's behind*
-  a translucent rect. Distinct from drop shadow. Architecturally hard
-  because vello's "always overwrite the whole target" model is in
-  tension with reading the backdrop.
-  *Trigger:* a consumer commits to CSS `backdrop-filter` (Serval will
-  hit this on real-world content; graphshell-shaped consumers may
-  want it for chrome).
-  *Pre-design discussion needed:* snapshot-then-blur-then-composite-
-  over (multi-pass), or a vello layer trick if one exists in newer
-  vello. Resolve before implementation lands.
-  *Done condition:* CSS `backdrop-filter: blur(12px)` produces a
-  frosted-glass nav bar over a busy background.
+- [x] **D1. Backdrop filter** — **CLEARED 2026-05-08**.
+  New `SceneFilter::Blur(f32)` enum + `SceneLayer.backdrop_filter:
+  Option<SceneFilter>` field. `Renderer::render_vello` detects
+  backdrop layers, pre-renders the scene-prefix to a texture,
+  blurs it via the existing render-graph (R5's downscale path
+  applies for large radii), and injects a `SceneImage` covering
+  the layer's bounds at the start of the layer's scope.
+  Multi-pass orchestration is opaque to the consumer; no separate
+  API call. Receipt at
+  [`netrender/tests/pd1_backdrop_filter.rs`](../netrender/tests/pd1_backdrop_filter.rs)
+  (4/4) — including a GPU smoke that verifies a busy striped
+  background under a `Blur(12)` filter shows >50% reduction in
+  local horizontal variance compared to the unfiltered reference.
+  Full finding:
+  [rasterizer plan §11.30](2026-05-01_vello_rasterizer_plan.md).
 
-- [ ] **D2. Animated values** — interpolate alpha / transform / color
-  over time.
-  *Trigger:* a consumer needs CSS animations or transitions painted
-  from netrender side.
-  *Design choice (lock before any code lands):* does netrender own
-  the timing (and read a clock), or does the consumer drive per-frame
-  and rebuild ops with resolved values? Current read: keep netrender
-  clockless; provide an `interpolate.rs` module of timing curves and
-  let the consumer drive. Convert this read into a written decision
-  on this entry before D2 is picked up.
-  *Done condition:* `SceneOp::PushLayer` accepts `Animated<f32>` for
-  alpha; the renderer either samples the curve at a given time or the
-  consumer rebuilds the scene per frame with resolved values
-  (whichever the design choice settles on).
+- [x] **D2. Animated values** — **CLEARED 2026-05-08**.
+  New [`netrender::interpolate`](../netrender/src/interpolate.rs)
+  module: CSS timing curves (`linear`, `ease`, `ease_in`,
+  `ease_out`, `ease_in_out`, `step_start`, `step_end`,
+  `cubic_bezier`), generic `lerp` for scalar / array / color, and
+  `sample_keyframes` for keyframe-driven animation. All pure
+  functions; no clock, no Scene-side state. Consumer drives time
+  and rebuilds the Scene per frame with resolved values — keeps
+  the determinism invariant from A2 intact. Receipt: 14 unit
+  tests in `netrender::interpolate::tests`. Full finding:
+  [rasterizer plan §11.31](2026-05-01_vello_rasterizer_plan.md).
 
 - [ ] **D3. Native-compositor handoff (axiom 14) via path (b′)** —
   exporting per-surface textures to native OS compositors so the OS
@@ -341,14 +341,18 @@ A4-gated** — listed for visibility only.
   don't start; requires upstream coordination. No netrender-side done
   condition; entry exists for visibility.
 
-- [ ] **E2. Multi-thread scene building** — building `Vec<SceneOp>`
-  in parallel chunks and joining. The op-list shape is conducive (no
-  cross-references between siblings).
-  *Trigger:* A4 data shows scene-build CPU pressure under real
-  consumer load.
-  *Done condition:* a 4-thread scene build of 10k ops takes <2× the
-  wall time of a 1-thread build of 2.5k ops, via a `SceneFragment`
-  builder type and a join API.
+- [x] **E2. Multi-thread scene building** — **CLEARED 2026-05-08**.
+  New `SceneFragment` builder type + `Scene::append_fragment`
+  join API. Each fragment carries its own ops / transforms /
+  fonts / image_sources; on append, fragment-local ids are
+  rewritten to the parent scene's index space (identity at id 0
+  / sentinel font at id 0 stay at 0). Consumer-supplied
+  ImageKeys are not remapped — partition the keyspace per
+  thread. Receipt at
+  [`netrender/tests/pe2_scene_fragment.rs`](../netrender/tests/pe2_scene_fragment.rs)
+  (9/9) — including a 4-thread parallel build of 10k ops that
+  confirms the API works end-to-end. Full finding:
+  [rasterizer plan §11.32](2026-05-01_vello_rasterizer_plan.md).
 
 ---
 

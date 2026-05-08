@@ -457,13 +457,22 @@ fn hash_gradient(h: &mut DefaultHasher, g: &SceneGradient) {
 }
 
 fn hash_push_layer(h: &mut DefaultHasher, layer: &crate::scene::SceneLayer) {
-    use crate::scene::SceneClip;
+    use crate::scene::{SceneClip, SceneFilter};
     h.write_u32(layer.alpha.to_bits());
     h.write_u8(layer.blend_mode as u8);
     // Roadmap C3 — compose mode is part of the layer's visible
     // identity (SrcOver vs DestIn changes everything).
     h.write_u8(layer.compose as u8);
     h.write_u32(layer.transform_id);
+    // Roadmap D1 — backdrop_filter changes what the layer paints
+    // over (pre-rendered blurred prefix); include in the hash.
+    match layer.backdrop_filter {
+        None => h.write_u8(0),
+        Some(SceneFilter::Blur(r)) => {
+            h.write_u8(1);
+            h.write_u32(r.to_bits());
+        }
+    }
     match &layer.clip {
         SceneClip::None => h.write_u8(0),
         SceneClip::Rect { rect, radii } => {
