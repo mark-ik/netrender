@@ -340,10 +340,16 @@ Items that need real design conversation, not just implementation.
   applies transform / clip / opacity at 60Hz without re-rasterizing.
   *Status:* see
   [`2026-05-05_compositor_handoff_path_b_prime.md` §5](2026-05-05_compositor_handoff_path_b_prime.md).
-  Sub-phases 5.1–5.4 shipped; 5.5 (servo-wgpu adapter) lives in the
-  `servo-wgpu` repo. **Do not duplicate sub-phase status here — the
+  Sub-phases 5.1–5.4 shipped; 5.5 (serval adapter) lives in the
+  `serval` repo. **Do not duplicate sub-phase status here — the
   compositor plan is canonical.**
-  *Trigger:* 5.5 lands in servo-wgpu.
+  Sub-phase 5.5 has hit **cut milestone** in serval (master path
+  through `Paint::render` against the `WgpuMasterCaptureBackend`,
+  `WindowsDxgiBackend` real on Windows with a working pelt smoke,
+  CALayer + Wayland backends skeletoned). Full done-condition
+  (per-platform OS handoff installed by default + per-`SurfaceKey`
+  declared-surface presents wired) is the remaining 5.5 work.
+  *Trigger:* 5.5 done-condition lands in serval (not just cut milestone).
   *Done condition:* mark complete and migrate to a `§11.x — CLEARED`
   finding in the rasterizer plan.
 

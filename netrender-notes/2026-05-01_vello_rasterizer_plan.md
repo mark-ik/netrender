@@ -469,7 +469,7 @@ that introduces new glyphs (CJK pages, infinite-scroll feeds), vello
 wins (no atlas churn / eviction). Browser workloads span both regimes;
 vello's per-frame cost has been shown adequate on Chromium-class
 content in vello's own benchmarks. This is a "verify on real
-servo-wgpu pages, profile, decide if a glyph cache layer is needed"
+serval pages, profile, decide if a glyph cache layer is needed"
 follow-up, not a Phase 10 blocker.
 
 ### 4.3 Embedder font ingestion
@@ -2405,7 +2405,7 @@ plan's Phase X.
     not ours to work around.
 - 🚧 **Phase 13'**: native-compositor handoff (axiom 14) via path (b′).
   Sub-phases 5.1–5.4 shipped on netrender's side (commit
-  `9447a852b`); 5.5 (servo-wgpu adapter) pending in separate
+  `9447a852b`); 5.5 (serval adapter) pending in separate
   workspace. Recovers most of the trivial-handoff loss flagged at
   §2.4 without forking. Roadmap entry: **D3**. Full design:
   [`2026-05-05_compositor_handoff_path_b_prime.md`](2026-05-05_compositor_handoff_path_b_prime.md).
@@ -2418,7 +2418,7 @@ plan's Phase X.
   change, gated on consumer pull. Modern frosted-glass nav bars hit
   this; static content doesn't.
 - **Phase 13'** (native-compositor handoff → roadmap D3): netrender
-  side complete; servo-wgpu adapter (5.5) is the remaining work,
+  side complete; serval adapter (5.5) is the remaining work,
   out-of-repo.
 - **Linear-light blending** (→ roadmap R9): upstream-blocked on
   vello's GPU compute path; R9-canary will fire when vello honors
@@ -2430,7 +2430,7 @@ the activation-history record is in
 [`archive/2026-05-05_deferred_phases.md`](archive/2026-05-05_deferred_phases.md).
 
 Everything else from 0.5'–12b' has shipped with receipts.
-13' is netrender-complete (5.1–5.4); 5.5 lives in servo-wgpu.
+13' is netrender-complete (5.1–5.4); 5.5 lives in serval.
 
 ## 13. Risks not already covered
 
@@ -2440,7 +2440,7 @@ Everything else from 0.5'–12b' has shipped with receipts.
    fractional-pixel snapshot scrolling, sub-pixel-translation
    re-rasterization). Webrender has years of fuzz/regress data
    here; vello has less. Mitigation: keep the test corpus
-   aggressive; treat first-run servo-wgpu integration as a fuzz
+   aggressive; treat first-run serval integration as a fuzz
    campaign; budget time for upstream vello issues.
 2. **Vello's API churn.** Vello pre-1.0 has reshaped its public
    API across versions. Pinning a version costs us upstream fixes;
@@ -2460,7 +2460,7 @@ Everything else from 0.5'–12b' has shipped with receipts.
    sources, not ours. This is a real comprehension cost; budget
    it.
 5. **Glyph atlas advocates may reappear.** §4.2's "glyph cache
-   layer is a follow-up" is not a guarantee. If servo-wgpu's
+   layer is a follow-up" is not a guarantee. If serval's
    text-heavy content profiles unfavorably, a glyph atlas in
    front of vello becomes a Phase 14 question. Don't pre-build
    it; don't pre-rule it out.

@@ -14,7 +14,7 @@ Distinct from:
 - The doc's earlier [§13' deferral discussion](archive/2026-05-05_deferred_phases.md)
   — superseded by this plan.
 
-Consumer: **servo-wgpu** (in workspace), reshaping its compositing
+Consumer: **serval** (in workspace), reshaping its compositing
 layer to consume the `Compositor` trait defined here.
 
 **Revision note (2026-05-05).** Initial draft had a crate-cycle
@@ -27,8 +27,8 @@ is now firmly **consumer-side via `present_frame`**.
 **Implementation status (2026-05-05).** Netrender-side sub-phases
 **5.1, 5.2, 5.3, 5.4 shipped** with eight receipts in
 [`p13prime_path_b_present_plumbing.rs`](../netrender/tests/p13prime_path_b_present_plumbing.rs).
-Sub-phase **5.5** (servo-wgpu adapter) is the remaining load-
-bearing piece and lives in the `servo-wgpu` repo, separate
+Sub-phase **5.5** (serval adapter) is the remaining load-
+bearing piece and lives in the `serval` repo, separate
 workspace.
 
 ---
@@ -378,17 +378,55 @@ recorded copy list contains only the dirty surface's blit
   pixels are unrotated (the OS compositor does the rotation);
   setting transform alone does **not** flip `dirty: true`.
 
-### 5.5 — servo-wgpu adapter (separate workspace, separate commit)
+### 5.5 — serval adapter (separate workspace, separate commit)
 
-- Implement `Compositor` against servo-wgpu's compositing layer.
-- Native-texture lifecycle managed by servo-wgpu (per-platform
+- Implement `Compositor` against serval's compositing layer.
+- Native-texture lifecycle managed by serval (per-platform
   glue lives there, not in netrender).
 - Reshape the rendering-context surface to feed
   `render_with_compositor` instead of today's
   `present`-target-view path.
 
 This sub-phase is the load-bearing reshape on the consumer side
-and lives in the `servo-wgpu` repo, not here.
+and lives in the `serval` repo, not here.
+
+#### Cut milestone vs done condition
+
+5.5 is large enough that it needs an explicit two-step framing,
+otherwise consumers conflate "the path compiles and a master
+texture flows" with "every platform presents through its native
+compositor."
+
+**Cut milestone (5.5a) — sufficient to call the integration "real":**
+
+- `Compositor` impl exists on the serval side; the master texture
+  reaches it through `Renderer::render_with_compositor`.
+- A capturing fallback (`WgpuMasterCaptureBackend` in serval) is the
+  default; embedders that don't install a per-platform backend still
+  see a populated master.
+- At least one per-platform backend exists with working construction
+  and per-frame body (Windows DXGI Composition is the reference).
+- `Paint::render` actually drives the renderer + compositor (was a
+  stub during the C3 cut).
+
+**Done condition (5.5b) — required to flip D3 to ✅:**
+
+- Per-`SurfaceKey` declared-compositor-surfaces work — a non-empty
+  `frame.layers` slice is iterated and each layer's native handle is
+  routed to the OS compositor via `OsCompositorBackend::present`.
+  Today serval's `ServoCompositor::present_frame` no-ops on the
+  `frame.layers` slice — that's the largest gap.
+- Per-platform default install — `Paint` constructs the right backend
+  per `cfg(target_os = …)` when a window handle is available, falling
+  back to the capturing backend when it isn't (offscreen embedder
+  routes, headless tests, etc.).
+- An end-to-end test that drives `Paint::render` directly (not just
+  the renderer + compositor in isolation) — ensures the embedder-
+  facing path the production loop walks is the one the tests cover.
+- Each per-platform backend has its per-frame body wired and a smoke
+  receipt — Windows is real (pelt's `--windows-present-smoke`
+  validates DCOMP composition swapchain present); macOS + Linux
+  skeletons need a Mac and a Linux box respectively.
 
 ---
 
@@ -400,7 +438,7 @@ and lives in the `servo-wgpu` repo, not here.
 | 5.2 Per-surface dirty | ~150 (up from ~100 — four-source OR + state struct) |
 | 5.3 Master handoff | ~80 (down from ~150 — netrender no longer encodes copies) |
 | 5.4 Transform/clip/opacity | ~80 |
-| 5.5 servo-wgpu adapter | TBD (lives in servo-wgpu) |
+| 5.5 serval adapter | TBD (lives in serval) |
 
 netrender side: **~430 lines + tests** — under the original §13'
 deferral estimate of 600-1000.
@@ -429,7 +467,7 @@ Each sub-phase ships with at least one receipt under `tests/`:
   matches declaration order.
 
 Platform-level integration tests (CALayer / DXGI / Wayland) live
-in servo-wgpu, not netrender. netrender's job is the trait
+in serval, not netrender. netrender's job is the trait
 surface and the master texture handoff.
 
 ---

@@ -16,7 +16,7 @@ fresh against wgpu's actual model.
 ## 1. Goals
 
 - Render display lists as fast and as correctly as production-era
-  webrender did, on wgpu, on the hardware servo-wgpu targets
+  webrender did, on wgpu, on the hardware serval targets
   (Vulkan / Metal / DX12 / WebGPU; software fallbacks via Lavapipe /
   WARP / SwiftShader).
 - Architecture that makes wgpu's actual shape (Send+Sync device,
@@ -24,7 +24,7 @@ fresh against wgpu's actual model.
   of least resistance*, not a thing that has to be defended.
 - A consumer-ready surface: hand in a `wgpu::Device`/`Queue`,
   configure a `wgpu::Surface`, feed display lists, get pixels.
-  Servo-wgpu, Graphshell, anything else.
+  serval, Graphshell, anything else.
 
 ## 2. Non-goals
 
@@ -343,7 +343,7 @@ already uses). Readback matches `oracle/p1_solid_rect.png`. The
 target is a caller-supplied `TextureView` — no swapchain in this
 receipt. Headless on Lavapipe / WARP / SwiftShader. ~3–7 days.
 
-**Receipt (first embedder hookup)**: servo-wgpu or graphshell
+**Receipt (first embedder hookup)**: serval or graphshell
 acquires a real `SurfaceTexture` from `wgpu::Surface` and
 presents the rendered view through `Renderer::render` against
 that surface's `TextureView`. Separate scope from the headless
@@ -1175,8 +1175,8 @@ mode is embedder configuration. Trait *shapes* land at Phase 0.5
 so axioms 13/14 have a real seam to defer to during Phases 5–7;
 implementations land here.
 
-**Receipt per platform**: macOS CALayer integration (when servo-wgpu
-needs it), DirectComposition (when servo-wgpu Windows needs it).
+**Receipt per platform**: macOS CALayer integration (when serval
+needs it), DirectComposition (when serval Windows needs it).
 
 ## 6. Cross-cutting concerns
 
@@ -1409,7 +1409,7 @@ Total focused dev for full webrender-equivalent: **~13 months**.
 Static-page demo (rects + transforms + clips + images + simple
 text) by month 4–5. Production-quality on a single platform by
 month 9–10. Multi-platform native compositing ships when
-servo-wgpu / consumer needs it.
+serval / consumer needs it.
 
 ## 10. Bottom line
 
