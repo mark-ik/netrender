@@ -27,12 +27,8 @@ pub type TaskId = u64;
 /// filtered to those present in the output map), and the pre-created
 /// output view. Should encode exactly one render pass targeting `output`.
 pub type EncodeCallback = Box<
-    dyn FnOnce(
-            &wgpu::Device,
-            &mut wgpu::CommandEncoder,
-            &[wgpu::TextureView],
-            &wgpu::TextureView,
-        ) + Send,
+    dyn FnOnce(&wgpu::Device, &mut wgpu::CommandEncoder, &[wgpu::TextureView], &wgpu::TextureView)
+        + Send,
 >;
 
 /// One node in the render-task graph.
@@ -143,7 +139,10 @@ impl RenderGraph {
 /// is zero from them). The sort is deterministic within a tie because
 /// `VecDeque::push_back` preserves insertion order and tasks were
 /// inserted in `push` order.
-fn topo_sort(tasks: &HashMap<TaskId, Task>, externals: &HashMap<TaskId, wgpu::Texture>) -> Vec<TaskId> {
+fn topo_sort(
+    tasks: &HashMap<TaskId, Task>,
+    externals: &HashMap<TaskId, wgpu::Texture>,
+) -> Vec<TaskId> {
     // in_degree: how many registered-task inputs each task is still waiting on.
     let mut in_degree: HashMap<TaskId, usize> = HashMap::new();
     // rev: for each registered task output, which tasks depend on it.

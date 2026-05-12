@@ -77,7 +77,10 @@ impl FrameTimings {
     /// Look up the duration for a span by name. Returns `None` if no
     /// span with that name was recorded this frame.
     pub fn span(&self, name: &str) -> Option<Duration> {
-        self.spans.iter().find(|s| s.name == name).map(|s| s.duration)
+        self.spans
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.duration)
     }
 }
 

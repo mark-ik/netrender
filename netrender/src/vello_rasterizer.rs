@@ -83,10 +83,7 @@ fn map_stroke_join(j: SceneStrokeJoin) -> Join {
 /// pair to a vello [`BlendMode`]. The previous standalone
 /// `map_blend_mode(SceneBlendMode)` is now an `SrcOver` shortcut
 /// inlined at use sites.
-fn map_layer_blend(
-    b: SceneBlendMode,
-    c: crate::scene::SceneCompose,
-) -> peniko::BlendMode {
+fn map_layer_blend(b: SceneBlendMode, c: crate::scene::SceneCompose) -> peniko::BlendMode {
     let mix = match b {
         SceneBlendMode::Normal => peniko::Mix::Normal,
         SceneBlendMode::Multiply => peniko::Mix::Multiply,
@@ -161,7 +158,9 @@ pub fn scene_to_vello_with_cache(
             SceneOp::Stroke(stroke) => emit_stroke(&mut vscene, stroke, &scene.transforms),
             SceneOp::Gradient(gradient) => emit_gradient(&mut vscene, gradient, &scene.transforms),
             SceneOp::Image(image) => emit_image(&mut vscene, image, &scene.transforms, images),
-            SceneOp::Pattern(pattern) => emit_pattern(&mut vscene, pattern, &scene.transforms, images),
+            SceneOp::Pattern(pattern) => {
+                emit_pattern(&mut vscene, pattern, &scene.transforms, images)
+            }
             SceneOp::Shape(shape) => emit_shape(&mut vscene, shape, &scene.transforms),
             SceneOp::GlyphRun(run) => {
                 emit_glyph_run(&mut vscene, run, &scene.fonts, &scene.transforms)
@@ -171,7 +170,10 @@ pub fn scene_to_vello_with_cache(
                 layer_depth += 1;
             }
             SceneOp::PopLayer => {
-                debug_assert!(layer_depth > 0, "SceneOp::PopLayer with no matching PushLayer");
+                debug_assert!(
+                    layer_depth > 0,
+                    "SceneOp::PopLayer with no matching PushLayer"
+                );
                 if layer_depth > 0 {
                     vscene.pop_layer();
                     layer_depth -= 1;
@@ -181,7 +183,8 @@ pub fn scene_to_vello_with_cache(
     }
     debug_assert_eq!(
         layer_depth, 0,
-        "Scene ended with {} unclosed PushLayer(s)", layer_depth,
+        "Scene ended with {} unclosed PushLayer(s)",
+        layer_depth,
     );
 
     vscene
@@ -402,9 +405,7 @@ fn compute_normalized_coords(
     // non-UTF-8 tag bytes (consumer error) are skipped.
     let settings: Vec<(&str, f32)> = user_settings
         .iter()
-        .filter_map(|(tag, value)| {
-            std::str::from_utf8(tag).ok().map(|s| (s, *value))
-        })
+        .filter_map(|(tag, value)| std::str::from_utf8(tag).ok().map(|s| (s, *value)))
         .collect();
     // skrifa returns coords as F2Dot14; vello wants raw i16 of the
     // same fixed-point representation. F2Dot14 wraps i16 directly.
@@ -609,11 +610,7 @@ fn push_clip_layer(vscene: &mut vello::Scene, clip_rect: [f32; 4], radii: [f32; 
     }
 }
 
-fn emit_gradient(
-    vscene: &mut vello::Scene,
-    grad: &SceneGradient,
-    transforms: &[Transform],
-) {
+fn emit_gradient(vscene: &mut vello::Scene, grad: &SceneGradient, transforms: &[Transform]) {
     let target = Rect::new(
         grad.x0 as f64,
         grad.y0 as f64,
@@ -657,8 +654,7 @@ fn emit_gradient(
                 // We want brush-origin (0, 0) → (cx, cy) and brush-x
                 // unit (1, 0) → (cx + rx, cy):
                 //   brush_transform = translate(cx, cy) * scale(rx, ry).
-                let g = Gradient::new_radial(Point::ORIGIN, 1.0)
-                    .with_stops(stops.as_slice());
+                let g = Gradient::new_radial(Point::ORIGIN, 1.0).with_stops(stops.as_slice());
                 let bx = Affine::translate((cx as f64, cy as f64))
                     * Affine::scale_non_uniform(rx as f64, ry as f64);
                 (g, Some(bx))
@@ -718,13 +714,7 @@ fn emit_image(
         // composes with the *image*, not with anything painted
         // before this primitive. SrcAtop on the inner Multiply
         // layer keeps transparent regions of the image transparent.
-        vscene.push_layer(
-            Fill::NonZero,
-            Mix::Normal,
-            1.0,
-            Affine::IDENTITY,
-            &target,
-        );
+        vscene.push_layer(Fill::NonZero, Mix::Normal, 1.0, Affine::IDENTITY, &target);
         vscene.fill(Fill::NonZero, world, &brush, Some(brush_xform), &target);
         vscene.push_layer(
             Fill::NonZero,
@@ -762,7 +752,11 @@ fn emit_pattern(
     // Negative or zero scale gets clamped to 1.0 (the API contract
     // says "treated as 1.0"); avoid divide-by-zero in the brush
     // transform.
-    let scale = if pattern.scale > 0.0 { pattern.scale as f64 } else { 1.0 };
+    let scale = if pattern.scale > 0.0 {
+        pattern.scale as f64
+    } else {
+        1.0
+    };
 
     let brush = ImageBrush::new(img.clone()).with_extend(Extend::Repeat);
     // Brush-space → scene-space: scale by `scale` so a unit step in
@@ -804,8 +798,16 @@ fn uv_to_target_affine(uv: [f32; 4], target: Rect, image_w: u32, image_h: u32) -
     let src_h = (v1 - v0) * h;
     let tgt_w = target.width();
     let tgt_h = target.height();
-    let sx = if src_w.abs() > 0.0 { tgt_w / src_w } else { 1.0 };
-    let sy = if src_h.abs() > 0.0 { tgt_h / src_h } else { 1.0 };
+    let sx = if src_w.abs() > 0.0 {
+        tgt_w / src_w
+    } else {
+        1.0
+    };
+    let sy = if src_h.abs() > 0.0 {
+        tgt_h / src_h
+    } else {
+        1.0
+    };
     // brush_xform * src_pixel = target_pixel, i.e. translate then scale.
     Affine::translate((target.x0 - src_x0 * sx, target.y0 - src_y0 * sy))
         * Affine::scale_non_uniform(sx, sy)
@@ -826,9 +828,7 @@ fn split_tint(color: [f32; 4]) -> (f32, Option<Color>) {
     let sr = (r / a_clamped).clamp(0.0, 1.0);
     let sg = (g / a_clamped).clamp(0.0, 1.0);
     let sb = (b / a_clamped).clamp(0.0, 1.0);
-    let achromatic = (sr - 1.0).abs() < 1e-3
-        && (sg - 1.0).abs() < 1e-3
-        && (sb - 1.0).abs() < 1e-3;
+    let achromatic = (sr - 1.0).abs() < 1e-3 && (sg - 1.0).abs() < 1e-3 && (sb - 1.0).abs() < 1e-3;
     if achromatic {
         (a_clamped, None)
     } else {

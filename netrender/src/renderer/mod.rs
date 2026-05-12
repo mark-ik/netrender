@@ -37,11 +37,13 @@
 
 pub(crate) mod init;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use netrender_device::compositor::{Compositor, PresentedFrame};
 use netrender_device::WgpuDevice;
 
+use crate::external_texture::{ExternalTexturePipeline, ExternalTexturePlacement};
 use crate::scene::{ImageKey, Scene};
 use crate::tile_cache::TileCache;
 
@@ -55,6 +57,10 @@ pub struct Renderer {
     /// Phase 7' — vello-backed tile rasterizer. Constructed at init
     /// when `NetrenderOptions::enable_vello` is true.
     pub(crate) vello_rasterizer: Option<Mutex<crate::vello_tile_rasterizer::VelloTileRasterizer>>,
+    /// Per-target-format pipeline cache for zero-copy external
+    /// texture overlays.
+    pub(crate) external_texture_pipelines:
+        Mutex<HashMap<wgpu::TextureFormat, ExternalTexturePipeline>>,
 }
 
 /// Per-frame load policy on the color attachment for `render_vello`.
@@ -569,6 +575,58 @@ impl Renderer {
 
         rast.render(&scene_to_render, &mut tc, target_view, base)
             .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
+    }
+
+    /// Compose a same-device external texture directly into an
+    /// already-rendered target view.
+    ///
+    /// This is the zero-copy path for WebGL canvas / video / embedder
+    /// textures that already live on this renderer's `wgpu::Device`.
+    /// The source texture is sampled directly from `source_view` and
+    /// blended over `target_view`; unlike `insert_image_vello`, the
+    /// source texture does not need `COPY_SRC` usage and is not copied
+    /// into vello's image atlas.
+    ///
+    /// First-slice limitation: this helper is an overlay pass. It
+    /// preserves correct composition for external content that is
+    /// topmost relative to the vello-rendered scene. Fully interleaved
+    /// painter order requires splitting the scene around external
+    /// texture ops or moving this pass into the scene compositor.
+    pub fn compose_external_texture(
+        &self,
+        source_view: &wgpu::TextureView,
+        target_view: &wgpu::TextureView,
+        target_format: wgpu::TextureFormat,
+        viewport_width: u32,
+        viewport_height: u32,
+        placement: ExternalTexturePlacement,
+    ) {
+        let pipe = {
+            let mut pipelines = self
+                .external_texture_pipelines
+                .lock()
+                .expect("external_texture_pipelines lock");
+            pipelines
+                .entry(target_format)
+                .or_insert_with(|| {
+                    crate::external_texture::build_external_texture_pipeline(
+                        &self.wgpu_device.core.device,
+                        target_format,
+                    )
+                })
+                .clone()
+        };
+
+        crate::external_texture::compose_external_texture(
+            &self.wgpu_device.core.device,
+            &self.wgpu_device.core.queue,
+            &pipe,
+            source_view,
+            target_view,
+            viewport_width,
+            viewport_height,
+            placement,
+        );
     }
 
     /// Roadmap D1 — pre-process backdrop filters: for each layer

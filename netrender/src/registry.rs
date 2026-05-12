@@ -76,7 +76,10 @@ impl FontRegistry {
     /// without touching `scene.fonts`.
     pub fn intern(&mut self, scene: &mut Scene, font: FontBlob) -> FontId {
         let key = (font.data.id(), font.index);
-        *self.by_id.entry(key).or_insert_with(|| scene.push_font(font))
+        *self
+            .by_id
+            .entry(key)
+            .or_insert_with(|| scene.push_font(font))
     }
 
     /// Look up a previously-interned font without inserting. Returns
@@ -243,8 +246,20 @@ mod tests {
         // Same blob bytes, different collection indices (e.g., a
         // TTC carrying multiple faces).
         let blob = Blob::new(Arc::new(vec![1u8, 2, 3]));
-        let id1 = reg.intern(&mut scene, FontBlob { data: blob.clone(), index: 0 });
-        let id2 = reg.intern(&mut scene, FontBlob { data: blob.clone(), index: 1 });
+        let id1 = reg.intern(
+            &mut scene,
+            FontBlob {
+                data: blob.clone(),
+                index: 0,
+            },
+        );
+        let id2 = reg.intern(
+            &mut scene,
+            FontBlob {
+                data: blob.clone(),
+                index: 1,
+            },
+        );
         assert_ne!(id1, id2);
     }
 

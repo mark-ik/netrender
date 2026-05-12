@@ -260,11 +260,7 @@ impl VelloTileRasterizer {
     ///
     /// `source_rect_in_master` clamps `surface.bounds` to the master
     /// pixel space `[0..viewport_width, 0..viewport_height)`.
-    pub fn build_layer_presents(
-        &self,
-        scene: &Scene,
-        tile_cache: &TileCache,
-    ) -> Vec<LayerPresent> {
+    pub fn build_layer_presents(&self, scene: &Scene, tile_cache: &TileCache) -> Vec<LayerPresent> {
         let mw = scene.viewport_width as f32;
         let mh = scene.viewport_height as f32;
         scene
@@ -311,11 +307,8 @@ impl VelloTileRasterizer {
     /// next-frame dirty/diff computation. Call after the consumer's
     /// `present_frame` returns.
     pub fn commit_compositor_state(&mut self, scene: &Scene) {
-        self.compositor_state.seen_last_frame = scene
-            .compositor_surfaces
-            .iter()
-            .map(|s| s.key)
-            .collect();
+        self.compositor_state.seen_last_frame =
+            scene.compositor_surfaces.iter().map(|s| s.key).collect();
         self.compositor_state.prev_bounds = scene
             .compositor_surfaces
             .iter()
@@ -437,11 +430,7 @@ impl VelloTileRasterizer {
         let total_span = Span::start("total");
         let mut timings = FrameTimings::empty();
 
-        self.ensure_master_texture(
-            scene.viewport_width,
-            scene.viewport_height,
-            master_format,
-        );
+        self.ensure_master_texture(scene.viewport_width, scene.viewport_height, master_format);
 
         let master_scene = self.build_master_scene_timed(scene, tile_cache, &mut timings);
 
@@ -473,18 +462,10 @@ impl VelloTileRasterizer {
         timings.total = total_span.stop();
         self.last_timings = Some(timings);
 
-        Ok((
-            &self.master_pool.as_ref().unwrap().texture,
-            &self.handles,
-        ))
+        Ok((&self.master_pool.as_ref().unwrap().texture, &self.handles))
     }
 
-    fn ensure_master_texture(
-        &mut self,
-        width: u32,
-        height: u32,
-        format: wgpu::TextureFormat,
-    ) {
+    fn ensure_master_texture(&mut self, width: u32, height: u32, format: wgpu::TextureFormat) {
         let needs_realloc = match &self.master_pool {
             Some(e) => e.width != width || e.height != height || e.format != format,
             None => true,
@@ -493,22 +474,25 @@ impl VelloTileRasterizer {
             return;
         }
 
-        let texture = self.handles.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("netrender path-b' master"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
+        let texture = self
+            .handles
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("netrender path-b' master"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::STORAGE_BINDING
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
         self.master_pool = Some(MasterEntry {
             width,
             height,
@@ -792,11 +776,19 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
     for op in &scene.ops {
         let intersects = match op {
             SceneOp::Rect(rect) => aabb_intersects(
-                world_aabb([rect.x0, rect.y0, rect.x1, rect.y1], rect.transform_id, scene),
+                world_aabb(
+                    [rect.x0, rect.y0, rect.x1, rect.y1],
+                    rect.transform_id,
+                    scene,
+                ),
                 tile_rect,
             ),
             SceneOp::Gradient(grad) => aabb_intersects(
-                world_aabb([grad.x0, grad.y0, grad.x1, grad.y1], grad.transform_id, scene),
+                world_aabb(
+                    [grad.x0, grad.y0, grad.x1, grad.y1],
+                    grad.transform_id,
+                    scene,
+                ),
                 tile_rect,
             ),
             SceneOp::Image(image) => aabb_intersects(
@@ -849,4 +841,3 @@ fn filter_scene_to_tile(scene: &Scene, tile_rect: [f32; 4]) -> Scene {
 
     filtered
 }
-

@@ -114,7 +114,11 @@ pub fn hit_test(scene: &Scene, point: [f32; 2]) -> Vec<HitResult> {
                     SceneOp::GlyphRun(run) => glyph_run_per_glyph_hit(run, point, scene),
                     _ => None,
                 };
-                hits.push(HitResult { op_index: idx, kind, glyph_index });
+                hits.push(HitResult {
+                    op_index: idx,
+                    kind,
+                    glyph_index,
+                });
             }
         }
     }
@@ -135,7 +139,11 @@ pub fn hit_test_topmost(scene: &Scene, point: [f32; 2]) -> Option<HitResult> {
                     SceneOp::GlyphRun(run) => glyph_run_per_glyph_hit(run, point, scene),
                     _ => None,
                 };
-                return Some(HitResult { op_index: idx, kind, glyph_index });
+                return Some(HitResult {
+                    op_index: idx,
+                    kind,
+                    glyph_index,
+                });
             }
         }
     }
@@ -330,12 +338,7 @@ fn glyph_local_aabb(
             // Skrifa returns bounds in font (y-up) space at the
             // glyph origin; convert to scene (y-down) by mirroring
             // around g.y.
-            return [
-                g.x + b.x_min,
-                g.y - b.y_max,
-                g.x + b.x_max,
-                g.y - b.y_min,
-            ];
+            return [g.x + b.x_min, g.y - b.y_max, g.x + b.x_max, g.y - b.y_min];
         }
     }
     // Em-box fallback.
@@ -439,11 +442,7 @@ fn shape_contains_point(s: &SceneShape, p: [f32; 2], scene: &Scene) -> bool {
 /// non-invertible (degenerate scale, reflection-degenerate, …) — in
 /// that case the caller should fall back to the AABB-conservative
 /// answer.
-fn world_point_to_local(
-    world_point: [f32; 2],
-    transform_id: u32,
-    scene: &Scene,
-) -> Option<Point> {
+fn world_point_to_local(world_point: [f32; 2], transform_id: u32, scene: &Scene) -> Option<Point> {
     let pt = Point::new(world_point[0] as f64, world_point[1] as f64);
     if transform_id == 0 {
         return Some(pt);
@@ -568,15 +567,23 @@ mod tests {
         // the clip — must not hit.
         let mut scene = Scene::new(64, 64);
         scene.push_rect_clipped(
-            0.0, 0.0, 64.0, 64.0,
+            0.0,
+            0.0,
+            64.0,
+            64.0,
             [1.0, 0.0, 0.0, 1.0],
             0,
             [32.0, 32.0, 64.0, 64.0],
         );
-        assert!(hit_test(&scene, [10.0, 10.0]).is_empty(),
-                "point inside primitive AABB but outside clip should miss");
-        assert_eq!(hit_test(&scene, [40.0, 40.0]).len(), 1,
-                   "point inside both should hit");
+        assert!(
+            hit_test(&scene, [10.0, 10.0]).is_empty(),
+            "point inside primitive AABB but outside clip should miss"
+        );
+        assert_eq!(
+            hit_test(&scene, [40.0, 40.0]).len(),
+            1,
+            "point inside both should hit"
+        );
     }
 
     #[test]
@@ -588,18 +595,39 @@ mod tests {
         // font_size = 16 → each glyph's hit box is roughly
         // (x, 16) — (x + advance, 36).
         let glyphs = vec![
-            Glyph { id: 1, x: 10.0, y: 32.0 },  // box: x in [10..30] (advance to next)
-            Glyph { id: 2, x: 30.0, y: 32.0 },  // box: x in [30..50]
-            Glyph { id: 3, x: 50.0, y: 32.0 },  // box: x in [50..66] (last; advance = font_size = 16)
+            Glyph {
+                id: 1,
+                x: 10.0,
+                y: 32.0,
+            }, // box: x in [10..30] (advance to next)
+            Glyph {
+                id: 2,
+                x: 30.0,
+                y: 32.0,
+            }, // box: x in [30..50]
+            Glyph {
+                id: 3,
+                x: 50.0,
+                y: 32.0,
+            }, // box: x in [50..66] (last; advance = font_size = 16)
         ];
-        scene.push_glyph_run(0 /* font_id 0 = no-font sentinel ok for hit-test only */,
-                             16.0, glyphs, [1.0, 1.0, 1.0, 1.0]);
+        scene.push_glyph_run(
+            0, /* font_id 0 = no-font sentinel ok for hit-test only */
+            16.0,
+            glyphs,
+            [1.0, 1.0, 1.0, 1.0],
+        );
 
         // Point inside glyph[1]'s box — y=24 is within (16, 36),
         // x=40 is within (30, 50).
         let hit = hit_test_topmost(&scene, [40.0, 24.0]).unwrap();
         assert_eq!(hit.kind, HitOpKind::GlyphRun);
-        assert_eq!(hit.glyph_index, Some(1), "expected glyph index 1; got {:?}", hit);
+        assert_eq!(
+            hit.glyph_index,
+            Some(1),
+            "expected glyph index 1; got {:?}",
+            hit
+        );
 
         // Point inside glyph[2]'s box.
         let hit = hit_test_topmost(&scene, [55.0, 24.0]).unwrap();
@@ -624,8 +652,10 @@ mod tests {
         scene.push_rect(0.0, 0.0, 128.0, 64.0, [1.0, 0.0, 0.0, 1.0]);
         let hit = hit_test_topmost(&scene, [4.0, 4.0]).unwrap();
         assert_eq!(hit.kind, HitOpKind::Rect);
-        assert_eq!(hit.glyph_index, None,
-                   "non-glyph-run hits must have glyph_index = None");
+        assert_eq!(
+            hit.glyph_index, None,
+            "non-glyph-run hits must have glyph_index = None"
+        );
     }
 
     #[test]
@@ -706,8 +736,10 @@ mod tests {
             radii: [0.0; 4],
         });
         scene2.pop_layer();
-        assert!(hit_test(&scene2, [32.0, 32.0]).is_empty(),
-                "clip-only layer with no inner content shouldn't hit");
+        assert!(
+            hit_test(&scene2, [32.0, 32.0]).is_empty(),
+            "clip-only layer with no inner content shouldn't hit"
+        );
     }
 
     #[test]

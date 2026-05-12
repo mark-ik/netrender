@@ -72,13 +72,21 @@ pub fn ease(t: f32) -> f32 {
 /// CSS `step-start` — jumps from 0 to 1 at `t == 0`.
 #[inline]
 pub fn step_start(t: f32) -> f32 {
-    if t > 0.0 { 1.0 } else { 0.0 }
+    if t > 0.0 {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// CSS `step-end` — stays at 0 until `t == 1`, then jumps to 1.
 #[inline]
 pub fn step_end(t: f32) -> f32 {
-    if t >= 1.0 { 1.0 } else { 0.0 }
+    if t >= 1.0 {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Generic cubic Bezier easing curve following the CSS
@@ -264,12 +272,7 @@ mod tests {
 
     #[test]
     fn ease_curves_endpoints_are_zero_and_one() {
-        for f in [
-            ease as fn(f32) -> f32,
-            ease_in,
-            ease_out,
-            ease_in_out,
-        ] {
+        for f in [ease as fn(f32) -> f32, ease_in, ease_out, ease_in_out] {
             assert!(approx(f(0.0), 0.0, 1e-6));
             assert!(approx(f(1.0), 1.0, 1e-6));
         }
@@ -294,7 +297,10 @@ mod tests {
         assert!(approx(ease_in_out(0.5), 0.5, 1e-3));
         for t in [0.1, 0.25, 0.4] {
             let sum = ease_in_out(t) + ease_in_out(1.0 - t);
-            assert!(approx(sum, 1.0, 1e-3), "ease_in_out symmetry at {t}: sum={sum}");
+            assert!(
+                approx(sum, 1.0, 1e-3),
+                "ease_in_out symmetry at {t}: sum={sum}"
+            );
         }
     }
 

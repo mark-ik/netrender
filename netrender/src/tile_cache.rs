@@ -208,7 +208,6 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
     hasher.write_u32(scene.root_alpha.to_bits());
     hasher.write_u8(scene.root_blend_mode as u8);
 
-
     // Walk ops in painter order; hash anything whose AABB intersects
     // the tile. The ordering is consumer push order, so within-tile
     // hash bytes change if a primitive is reordered relative to its
@@ -362,42 +361,57 @@ fn hash_shape(h: &mut DefaultHasher, s: &SceneShape) {
         match *op {
             PathOp::MoveTo(x, y) => {
                 h.write_u8(0);
-                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+                h.write_u32(x.to_bits());
+                h.write_u32(y.to_bits());
             }
             PathOp::LineTo(x, y) => {
                 h.write_u8(1);
-                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+                h.write_u32(x.to_bits());
+                h.write_u32(y.to_bits());
             }
             PathOp::QuadTo(cx, cy, x, y) => {
                 h.write_u8(2);
-                h.write_u32(cx.to_bits()); h.write_u32(cy.to_bits());
-                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+                h.write_u32(cx.to_bits());
+                h.write_u32(cy.to_bits());
+                h.write_u32(x.to_bits());
+                h.write_u32(y.to_bits());
             }
             PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y) => {
                 h.write_u8(3);
-                h.write_u32(c1x.to_bits()); h.write_u32(c1y.to_bits());
-                h.write_u32(c2x.to_bits()); h.write_u32(c2y.to_bits());
-                h.write_u32(x.to_bits()); h.write_u32(y.to_bits());
+                h.write_u32(c1x.to_bits());
+                h.write_u32(c1y.to_bits());
+                h.write_u32(c2x.to_bits());
+                h.write_u32(c2y.to_bits());
+                h.write_u32(x.to_bits());
+                h.write_u32(y.to_bits());
             }
             PathOp::Close => h.write_u8(4),
         }
     }
     if let Some(c) = s.fill_color {
         h.write_u8(1);
-        for v in c { h.write_u32(v.to_bits()); }
+        for v in c {
+            h.write_u32(v.to_bits());
+        }
     } else {
         h.write_u8(0);
     }
     if let Some(stroke) = s.stroke {
         h.write_u8(1);
-        for v in stroke.color { h.write_u32(v.to_bits()); }
+        for v in stroke.color {
+            h.write_u32(v.to_bits());
+        }
         h.write_u32(stroke.width.to_bits());
     } else {
         h.write_u8(0);
     }
     h.write_u32(s.transform_id);
-    for c in s.clip_rect { h.write_u32(c.to_bits()); }
-    for c in s.clip_corner_radii { h.write_u32(c.to_bits()); }
+    for c in s.clip_rect {
+        h.write_u32(c.to_bits());
+    }
+    for c in s.clip_corner_radii {
+        h.write_u32(c.to_bits());
+    }
 }
 
 fn hash_stroke(h: &mut DefaultHasher, s: &SceneStroke) {
@@ -544,11 +558,19 @@ pub(crate) fn world_aabb(local: [f32; 4], transform_id: u32, scene: &Scene) -> [
 }
 
 fn world_aabb_rect(rect: &SceneRect, scene: &Scene) -> [f32; 4] {
-    world_aabb([rect.x0, rect.y0, rect.x1, rect.y1], rect.transform_id, scene)
+    world_aabb(
+        [rect.x0, rect.y0, rect.x1, rect.y1],
+        rect.transform_id,
+        scene,
+    )
 }
 
 fn world_aabb_image(image: &SceneImage, scene: &Scene) -> [f32; 4] {
-    world_aabb([image.x0, image.y0, image.x1, image.y1], image.transform_id, scene)
+    world_aabb(
+        [image.x0, image.y0, image.x1, image.y1],
+        image.transform_id,
+        scene,
+    )
 }
 
 fn world_aabb_gradient(g: &SceneGradient, scene: &Scene) -> [f32; 4] {
@@ -568,10 +590,18 @@ pub(crate) fn world_aabb_glyph_run(r: &SceneGlyphRun, scene: &Scene) -> Option<[
     let mut max_x = f32::NEG_INFINITY;
     let mut max_y = f32::NEG_INFINITY;
     for g in &r.glyphs {
-        if g.x < min_x { min_x = g.x; }
-        if g.y < min_y { min_y = g.y; }
-        if g.x > max_x { max_x = g.x; }
-        if g.y > max_y { max_y = g.y; }
+        if g.x < min_x {
+            min_x = g.x;
+        }
+        if g.y < min_y {
+            min_y = g.y;
+        }
+        if g.x > max_x {
+            max_x = g.x;
+        }
+        if g.y > max_y {
+            max_y = g.y;
+        }
     }
     let pad = r.font_size;
     let inflated = [min_x - pad, min_y - pad, max_x + pad, max_y + pad];
@@ -583,7 +613,12 @@ pub(crate) fn world_aabb_shape(s: &SceneShape, scene: &Scene) -> Option<[f32; 4]
     // Inflate by half stroke width if a stroke is present, same
     // reasoning as world_aabb_stroke.
     let half = s.stroke.map_or(0.0, |st| st.width * 0.5);
-    let inflated = [local[0] - half, local[1] - half, local[2] + half, local[3] + half];
+    let inflated = [
+        local[0] - half,
+        local[1] - half,
+        local[2] + half,
+        local[3] + half,
+    ];
     Some(world_aabb(inflated, s.transform_id, scene))
 }
 

@@ -5,6 +5,7 @@
 //! Renderer construction. The embedder owns the wgpu device and
 //! hands its handles in; we install a [`WgpuDevice`] over them.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use netrender_device::{WgpuDevice, WgpuHandles};
@@ -83,5 +84,6 @@ pub fn create_netrender_instance(
         wgpu_device,
         tile_cache,
         vello_rasterizer,
+        external_texture_pipelines: Mutex::new(HashMap::new()),
     })
 }
