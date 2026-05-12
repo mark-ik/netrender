@@ -291,10 +291,49 @@ impl VelloTileRasterizer {
                     std::mem::swap(&mut y0, &mut y1);
                 }
 
+                // Compose `bounds.origin` into `world_transform` so the
+                // consumer gets one transform that already places the
+                // surface at its declared world position. The
+                // user-supplied `s.transform` is column-major
+                // `[a, b, c, d, tx, ty]` representing
+                // `| a c tx |`
+                // `| b d ty |`
+                // `| 0 0  1 |`
+                // and pre-composing a translation by
+                // `(bounds.origin.x, bounds.origin.y)` yields
+                // `[a, b, c, d, tx + origin.x, ty + origin.y]` —
+                // the linear part is unchanged; only the translation
+                // column shifts.
+                //
+                // Without this, every consumer that holds the surface
+                // at layer-local origin (e.g. macOS CALayer) would
+                // need to remember `bounds.origin` from declare and
+                // re-apply it in present, which the
+                // `OsCompositorBackend` trait surface doesn't even
+                // carry today (declare gets dims, present gets
+                // transform/clip/opacity — neither passes origin).
+                // Cleaner to compose here and hand the consumer one
+                // transform that's complete on its own.
+                //
+                // Use the original `s.bounds[0]` / `s.bounds[1]`
+                // (not the clamped/swapped `x0` / `y0` above) — those
+                // were normalized for `source_rect_in_master`'s
+                // master-pixel-space contract; world_transform stays
+                // in the user's coordinate space.
+                let origin_x = s.bounds[0];
+                let origin_y = s.bounds[1];
+                let world_transform = [
+                    s.transform[0],
+                    s.transform[1],
+                    s.transform[2],
+                    s.transform[3],
+                    s.transform[4] + origin_x,
+                    s.transform[5] + origin_y,
+                ];
                 LayerPresent {
                     key: s.key,
                     source_rect_in_master: [x0, y0, x1, y1],
-                    world_transform: s.transform,
+                    world_transform,
                     clip: s.clip,
                     opacity: s.opacity,
                     dirty,

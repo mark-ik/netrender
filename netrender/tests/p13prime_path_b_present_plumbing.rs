@@ -505,3 +505,69 @@ fn p13prime_path_b_transform_only_clean() {
         "frame 1 default transform is identity",
     );
 }
+
+/// Regression: `LayerPresent.world_transform` composes the surface's
+/// `bounds.origin` (top-left) into the user-supplied
+/// `CompositorSurface.transform`, so a consumer that holds a
+/// declared surface at layer-local origin (0, 0) — like macOS
+/// CALayer.contents = IOSurface — gets the correct world-space
+/// position via one composed transform without separately
+/// remembering bounds.origin from declare.
+///
+/// Pre-fix, netrender passed `s.transform` through unchanged and a
+/// surface declared with bounds `[16, 16, 80, 80]` + identity
+/// transform arrived at the consumer as identity world_transform,
+/// stacking visually at the parent's origin instead of (16, 16).
+#[test]
+fn p13prime_path_b_world_transform_composes_bounds_origin() {
+    let renderer = make_renderer();
+    let mut compositor = RecordingCompositor::default();
+
+    let dim = 128u32;
+    let mut scene = Scene::new(dim, dim);
+    scene.push_rect(0.0, 0.0, dim as f32, dim as f32, [1.0, 0.0, 0.0, 1.0]);
+
+    // Surface 1: bounds at origin (0, 0). Composed transform
+    // should equal the user's transform unchanged.
+    scene.declare_compositor_surface(CompositorSurface::new(
+        SurfaceKey(1),
+        [0.0, 0.0, 32.0, 32.0],
+    ));
+    // Surface 2: bounds at (16, 24). Identity user-transform.
+    // Composed should be `[1, 0, 0, 1, 16, 24]`.
+    scene.declare_compositor_surface(CompositorSurface::new(
+        SurfaceKey(2),
+        [16.0, 24.0, 80.0, 88.0],
+    ));
+    // Surface 3: bounds at (40, 40), with a non-trivial user
+    // transform that already has its own translation (10, 5).
+    // Composed should add origin to the existing translation
+    // column: `[a, b, c, d, 10 + 40, 5 + 40]` = `[..., 50, 45]`,
+    // linear part unchanged.
+    let scale_2x_with_offset: [f32; 6] = [2.0, 0.0, 0.0, 2.0, 10.0, 5.0];
+    let mut s3 = CompositorSurface::new(SurfaceKey(3), [40.0, 40.0, 100.0, 100.0]);
+    s3.transform = scale_2x_with_offset;
+    scene.declare_compositor_surface(s3);
+
+    renderer.render_with_compositor(&scene, FORMAT, &mut compositor, base());
+
+    let frame = &compositor.layer_records[0];
+    assert_eq!(frame.len(), 3);
+
+    assert_eq!(
+        frame[0].world_transform,
+        CompositorSurface::IDENTITY_TRANSFORM,
+        "bounds.origin (0, 0) + identity transform = identity world_transform",
+    );
+    assert_eq!(
+        frame[1].world_transform,
+        [1.0, 0.0, 0.0, 1.0, 16.0, 24.0],
+        "bounds.origin (16, 24) + identity transform = translate(16, 24)",
+    );
+    assert_eq!(
+        frame[2].world_transform,
+        [2.0, 0.0, 0.0, 2.0, 50.0, 45.0],
+        "bounds.origin (40, 40) + scale-2x-translate(10, 5) = scale-2x-translate(50, 45); \
+         linear part unchanged",
+    );
+}

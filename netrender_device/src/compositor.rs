@@ -42,6 +42,13 @@ pub struct LayerPresent {
     /// `[[a, c, tx], [b, d, ty], [0, 0, 1]]`. Identity is
     /// `[1.0, 0.0, 0.0, 1.0, 0.0, 0.0]`. Distinct from any transform
     /// internal to the master.
+    ///
+    /// netrender composes the surface's `bounds.origin` (top-left)
+    /// into the user-supplied `CompositorSurface.transform` before
+    /// emitting it here, so consumers that hold the surface at
+    /// layer-local origin (e.g. macOS `CALayer.contents = IOSurface`)
+    /// get one transform that's complete on its own — no separate
+    /// `bounds.origin` handling is required at the consumer side.
     pub world_transform: [f32; 6],
     /// Optional axis-aligned clip applied by the OS at present time.
     pub clip: Option<[f32; 4]>,
