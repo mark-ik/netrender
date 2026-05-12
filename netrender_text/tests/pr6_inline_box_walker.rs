@@ -19,9 +19,7 @@
 use std::sync::Arc;
 
 use netrender::{FontRegistry, Scene};
-use netrender_text::{
-    push_layout, push_layout_with_inline_boxes, InlineBoxPlacement,
-};
+use netrender_text::{push_layout, push_layout_with_inline_boxes, InlineBoxPlacement};
 use netrender_text::parley::{
     self, Alignment, AlignmentOptions, FontContext, FontFamily, InlineBox, InlineBoxKind, Layout,
     LayoutContext, StyleProperty,
@@ -49,10 +47,7 @@ fn try_load_system_font() -> Option<Vec<u8>> {
 
 /// Build a layout `text` with `boxes` (each `(byte_index, id, width,
 /// height)`). Returns `None` if no system font is available.
-fn shape_with_boxes(
-    text: &str,
-    boxes: &[(usize, u64, f32, f32)],
-) -> Option<Layout<[f32; 4]>> {
+fn shape_with_boxes(text: &str, boxes: &[(usize, u64, f32, f32)]) -> Option<Layout<[f32; 4]>> {
     let font_bytes = try_load_system_font()?;
     let mut font_cx = FontContext::new();
     let blob = parley::fontique::Blob::new(Arc::new(font_bytes));
@@ -119,29 +114,27 @@ fn r6_origin_applied_as_translation_delta() {
     let mut scene_a = Scene::new(500, 200);
     let mut reg_a = FontRegistry::new();
     let mut pa: Option<InlineBoxPlacement> = None;
-    push_layout_with_inline_boxes(
-        &mut scene_a,
-        &mut reg_a,
-        &layout,
-        [0.0, 0.0],
-        |p| pa = Some(p),
-    );
+    push_layout_with_inline_boxes(&mut scene_a, &mut reg_a, &layout, [0.0, 0.0], |p| {
+        pa = Some(p)
+    });
 
     let mut scene_b = Scene::new(500, 200);
     let mut reg_b = FontRegistry::new();
     let mut pb: Option<InlineBoxPlacement> = None;
-    push_layout_with_inline_boxes(
-        &mut scene_b,
-        &mut reg_b,
-        &layout,
-        [10.0, 20.0],
-        |p| pb = Some(p),
-    );
+    push_layout_with_inline_boxes(&mut scene_b, &mut reg_b, &layout, [10.0, 20.0], |p| {
+        pb = Some(p)
+    });
 
     let pa = pa.expect("zero-origin placement");
     let pb = pb.expect("offset-origin placement");
-    assert!((pb.x - pa.x - 10.0).abs() < 1e-3, "x delta = origin x: pa={pa:?} pb={pb:?}");
-    assert!((pb.y - pa.y - 20.0).abs() < 1e-3, "y delta = origin y: pa={pa:?} pb={pb:?}");
+    assert!(
+        (pb.x - pa.x - 10.0).abs() < 1e-3,
+        "x delta = origin x: pa={pa:?} pb={pb:?}"
+    );
+    assert!(
+        (pb.y - pa.y - 20.0).abs() < 1e-3,
+        "y delta = origin y: pa={pa:?} pb={pb:?}"
+    );
     // Width/height/id are origin-independent.
     assert_eq!(pa.width, pb.width);
     assert_eq!(pa.height, pb.height);
@@ -158,13 +151,7 @@ fn r6_glyph_runs_still_emitted_alongside_inline_box_callbacks() {
     let mut registry = FontRegistry::new();
     let initial_ops = scene.ops.len();
 
-    push_layout_with_inline_boxes(
-        &mut scene,
-        &mut registry,
-        &layout,
-        [0.0, 0.0],
-        |_| {},
-    );
+    push_layout_with_inline_boxes(&mut scene, &mut registry, &layout, [0.0, 0.0], |_| {});
 
     // The walker should have pushed at least one glyph run for
     // "hello" and one for "world" (the inline box splits the text).
@@ -255,13 +242,9 @@ fn r6_placement_x_inside_layout_width() {
     let mut scene = Scene::new(500, 200);
     let mut registry = FontRegistry::new();
     let mut placement: Option<InlineBoxPlacement> = None;
-    push_layout_with_inline_boxes(
-        &mut scene,
-        &mut registry,
-        &layout,
-        [0.0, 0.0],
-        |p| placement = Some(p),
-    );
+    push_layout_with_inline_boxes(&mut scene, &mut registry, &layout, [0.0, 0.0], |p| {
+        placement = Some(p)
+    });
 
     let p = placement.expect("inline-box callback fired");
     assert!(

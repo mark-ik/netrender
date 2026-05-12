@@ -112,12 +112,7 @@ impl WgpuDevice {
     /// CPU bytes via a staging buffer + map_async. Blocks until the
     /// readback completes; intended for tests and tooling, not
     /// production frames.
-    pub fn read_rgba8_texture(
-        &self,
-        target: &wgpu::Texture,
-        width: u32,
-        height: u32,
-    ) -> Vec<u8> {
+    pub fn read_rgba8_texture(&self, target: &wgpu::Texture, width: u32, height: u32) -> Vec<u8> {
         readback::read_rgba8_texture(&self.core, target, width, height)
     }
 }

@@ -34,7 +34,11 @@ fn try_load_system_font() -> Option<Vec<u8>> {
     ];
     for path in candidates {
         if let Ok(bytes) = std::fs::read(path) {
-            eprintln!("netrender_text test: loaded {} ({} bytes)", path, bytes.len());
+            eprintln!(
+                "netrender_text test: loaded {} ({} bytes)",
+                path,
+                bytes.len()
+            );
             return Some(bytes);
         }
     }
@@ -44,7 +48,11 @@ fn try_load_system_font() -> Option<Vec<u8>> {
 fn make_target(device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("netrender_text target"),
-        size: wgpu::Extent3d { width: DIM, height: DIM, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: DIM,
+            height: DIM,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -77,7 +85,11 @@ fn netrender_text_01_shaped_paragraph_paints() {
     let handles = boot().expect("wgpu boot");
     let renderer = create_netrender_instance(
         handles.clone(),
-        NetrenderOptions { tile_cache_size: Some(TILE), enable_vello: true, ..Default::default() },
+        NetrenderOptions {
+            tile_cache_size: Some(TILE),
+            enable_vello: true,
+            ..Default::default()
+        },
     )
     .expect("create_netrender_instance");
 
@@ -250,7 +262,9 @@ fn netrender_text_03_decorations_emit_rects() {
     builder.push_default(StyleProperty::Underline(true));
     builder.push_default(StyleProperty::UnderlineBrush(Some([0.0, 1.0, 1.0, 1.0])));
     builder.push_default(StyleProperty::Strikethrough(true));
-    builder.push_default(StyleProperty::StrikethroughBrush(Some([1.0, 0.0, 1.0, 1.0])));
+    builder.push_default(StyleProperty::StrikethroughBrush(Some([
+        1.0, 0.0, 1.0, 1.0,
+    ])));
 
     let mut layout: Layout<[f32; 4]> = builder.build(text);
     layout.break_all_lines(Some(DIM as f32));
@@ -299,5 +313,8 @@ fn netrender_text_03_decorations_emit_rects() {
     let g = idx_glyph.expect("glyph run found");
     let s = idx_strikethrough.expect("strikethrough rect found");
     assert!(u < g, "underline must paint before glyphs (u={u}, g={g})");
-    assert!(g < s, "strikethrough must paint after glyphs (g={g}, s={s})");
+    assert!(
+        g < s,
+        "strikethrough must paint after glyphs (g={g}, s={s})"
+    );
 }

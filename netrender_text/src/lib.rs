@@ -274,9 +274,7 @@ pub fn selection_rects<B: parley::style::Brush>(
     Selection::new(anchor, focus)
         .geometry(layout)
         .into_iter()
-        .map(|(bb, _line_idx)| {
-            [bb.x0 as f32, bb.y0 as f32, bb.x1 as f32, bb.y1 as f32]
-        })
+        .map(|(bb, _line_idx)| [bb.x0 as f32, bb.y0 as f32, bb.x1 as f32, bb.y1 as f32])
         .collect()
 }
 

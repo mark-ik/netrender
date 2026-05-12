@@ -126,7 +126,10 @@ fn pb3_color_emoji_renders_chromatically() {
         .family_name(family_id)
         .expect("registered family has a name")
         .to_owned();
-    eprintln!("pb3: registered emoji family '{}' from {}", family_name, src_path);
+    eprintln!(
+        "pb3: registered emoji family '{}' from {}",
+        family_name, src_path
+    );
 
     // Build a layout containing a few common emoji. Mixing several
     // gives us multiple shots at landing a chromatic glyph in case

@@ -17,9 +17,7 @@ use std::sync::Arc;
 
 use netrender_text::{
     caret_rect, selection_rects,
-    parley::{
-        self, Affinity, FontContext, FontFamily, Layout, LayoutContext, StyleProperty,
-    },
+    parley::{self, Affinity, FontContext, FontFamily, Layout, LayoutContext, StyleProperty},
 };
 
 const LAYOUT_WIDTH: f32 = 200.0;
@@ -161,10 +159,7 @@ fn caret_rect_advances_through_text() {
         .map(|i| caret_rect(&layout, *i, Affinity::Downstream, 1.0)[0])
         .collect();
     for w in positions.windows(2) {
-        assert!(
-            w[1] >= w[0] - 0.001,
-            "caret advances or stays put: {w:?}"
-        );
+        assert!(w[1] >= w[0] - 0.001, "caret advances or stays put: {w:?}");
     }
     // First and last positions must differ — otherwise we measured
     // five copies of the same point.

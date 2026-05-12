@@ -185,8 +185,7 @@ mod tests {
             });
         }
 
-        let padded_bytes_per_row =
-            (4 * 4_u32).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let padded_bytes_per_row = (4 * 4_u32).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let readback = dev.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("S1 smoke readback"),
             size: padded_bytes_per_row as u64 * 4,

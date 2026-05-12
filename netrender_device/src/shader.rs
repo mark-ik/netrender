@@ -13,5 +13,4 @@ pub(crate) const BRUSH_BLUR_WGSL: &str = include_str!("shaders/brush_blur.wgsl")
 /// coverage texture (all channels = coverage). `HAS_ROUNDED_CORNERS`
 /// override toggles the SDF (Phase 9A) vs. the axis-aligned fast
 /// path (Phase 9C).
-pub(crate) const CS_CLIP_RECTANGLE_WGSL: &str =
-    include_str!("shaders/cs_clip_rectangle.wgsl");
+pub(crate) const CS_CLIP_RECTANGLE_WGSL: &str = include_str!("shaders/cs_clip_rectangle.wgsl");
