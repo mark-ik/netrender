@@ -39,10 +39,7 @@ pub struct Transform {
 impl Transform {
     pub const IDENTITY: Self = Self {
         m: [
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
         ],
     };
 
@@ -50,10 +47,7 @@ impl Transform {
     pub fn translate_2d(tx: f32, ty: f32) -> Self {
         Self {
             m: [
-                1.0, 0.0, 0.0, 0.0,
-                0.0, 1.0, 0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                tx,  ty,  0.0, 1.0,
+                1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, tx, ty, 0.0, 1.0,
             ],
         }
     }
@@ -63,10 +57,7 @@ impl Transform {
         let (s, c) = angle_radians.sin_cos();
         Self {
             m: [
-                 c,   s,  0.0, 0.0,
-                -s,   c,  0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
+                c, s, 0.0, 0.0, -s, c, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
         }
     }
@@ -75,10 +66,7 @@ impl Transform {
     pub fn scale_2d(sx: f32, sy: f32) -> Self {
         Self {
             m: [
-                sx,  0.0, 0.0, 0.0,
-                0.0, sy,  0.0, 0.0,
-                0.0, 0.0, 1.0, 0.0,
-                0.0, 0.0, 0.0, 1.0,
+                sx, 0.0, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
             ],
         }
     }
@@ -138,8 +126,12 @@ pub struct SceneRect {
     pub clip_corner_radii: [f32; 4],
 }
 
-pub const NO_CLIP: [f32; 4] =
-    [f32::NEG_INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::INFINITY];
+pub const NO_CLIP: [f32; 4] = [
+    f32::NEG_INFINITY,
+    f32::NEG_INFINITY,
+    f32::INFINITY,
+    f32::INFINITY,
+];
 
 /// Sharp / axis-aligned clip — all four corner radii at zero. Used as
 /// the default `clip_corner_radii` value in Scene helper methods that
@@ -193,7 +185,11 @@ impl ImageData {
     /// two `ImageData`s constructed from clones of the same blob
     /// dedup at the vello atlas level.
     pub fn from_blob(width: u32, height: u32, data: vello::peniko::Blob<u8>) -> Self {
-        Self { width, height, data }
+        Self {
+            width,
+            height,
+            data,
+        }
     }
 }
 
@@ -512,7 +508,9 @@ impl ScenePath {
     }
 
     pub fn with_capacity(n: usize) -> Self {
-        Self { ops: Vec::with_capacity(n) }
+        Self {
+            ops: Vec::with_capacity(n),
+        }
     }
 
     pub fn move_to(&mut self, x: f32, y: f32) -> &mut Self {
@@ -532,9 +530,12 @@ impl ScenePath {
 
     pub fn cubic_to(
         &mut self,
-        c1x: f32, c1y: f32,
-        c2x: f32, c2y: f32,
-        x: f32, y: f32,
+        c1x: f32,
+        c1y: f32,
+        c2x: f32,
+        c2y: f32,
+        x: f32,
+        y: f32,
     ) -> &mut Self {
         self.ops.push(PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y));
         self
@@ -558,16 +559,29 @@ impl ScenePath {
         for op in &self.ops {
             let mut update = |x: f32, y: f32| {
                 got_any = true;
-                if x < min_x { min_x = x; }
-                if y < min_y { min_y = y; }
-                if x > max_x { max_x = x; }
-                if y > max_y { max_y = y; }
+                if x < min_x {
+                    min_x = x;
+                }
+                if y < min_y {
+                    min_y = y;
+                }
+                if x > max_x {
+                    max_x = x;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
             };
             match *op {
                 PathOp::MoveTo(x, y) | PathOp::LineTo(x, y) => update(x, y),
-                PathOp::QuadTo(cx, cy, x, y) => { update(cx, cy); update(x, y); }
+                PathOp::QuadTo(cx, cy, x, y) => {
+                    update(cx, cy);
+                    update(x, y);
+                }
                 PathOp::CubicTo(c1x, c1y, c2x, c2y, x, y) => {
-                    update(c1x, c1y); update(c2x, c2y); update(x, y);
+                    update(c1x, c1y);
+                    update(c2x, c2y);
+                    update(x, y);
                 }
                 PathOp::Close => {}
             }
@@ -963,7 +977,10 @@ impl Scene {
     /// no clip (backward-compatible Phase 2 API).
     pub fn push_rect(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
         self.ops.push(SceneOp::Rect(SceneRect {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             transform_id: 0,
             clip_rect: NO_CLIP,
@@ -974,12 +991,18 @@ impl Scene {
     /// Append a rect with an explicit transform id.
     pub fn push_rect_transformed(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         transform_id: u32,
     ) {
         self.ops.push(SceneOp::Rect(SceneRect {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             transform_id,
             clip_rect: NO_CLIP,
@@ -991,13 +1014,19 @@ impl Scene {
     /// axis-aligned clip.
     pub fn push_rect_clipped(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         transform_id: u32,
         clip_rect: [f32; 4],
     ) {
         self.ops.push(SceneOp::Rect(SceneRect {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             transform_id,
             clip_rect,
@@ -1011,14 +1040,20 @@ impl Scene {
     /// `push_rect_clipped` (a sharp axis-aligned clip).
     pub fn push_rect_clipped_rounded(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         transform_id: u32,
         clip_rect: [f32; 4],
         clip_corner_radii: [f32; 4],
     ) {
         self.ops.push(SceneOp::Rect(SceneRect {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             transform_id,
             clip_rect,
@@ -1040,13 +1075,19 @@ impl Scene {
     /// UV defaults to `[0, 0, 1, 1]` (full image); tint to white `[1,1,1,1]`.
     pub fn push_image(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         key: ImageKey,
         data: ImageData,
     ) {
         self.image_sources.entry(key).or_insert(data);
         self.ops.push(SceneOp::Image(SceneImage {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             uv: [0.0, 0.0, 1.0, 1.0],
             color: [1.0, 1.0, 1.0, 1.0],
             key,
@@ -1066,7 +1107,10 @@ impl Scene {
     /// 2-stop linear gradient (Phase 8A convenience; preserved post-8D).
     pub fn push_linear_gradient(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         start: [f32; 2],
         end: [f32; 2],
         color0: [f32; 4],
@@ -1074,17 +1118,25 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Linear,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [start[0], start[1], end[0], end[1]],
-            color0, color1,
-            0, NO_CLIP,
+            color0,
+            color1,
+            0,
+            NO_CLIP,
         )));
     }
 
     /// 2-stop linear gradient with full control over transform and clip.
     pub fn push_linear_gradient_full(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         start: [f32; 2],
         end: [f32; 2],
         color0: [f32; 4],
@@ -1094,10 +1146,15 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Linear,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [start[0], start[1], end[0], end[1]],
-            color0, color1,
-            transform_id, clip_rect,
+            color0,
+            color1,
+            transform_id,
+            clip_rect,
         )));
     }
 
@@ -1106,7 +1163,10 @@ impl Scene {
     /// elliptical boundary (clamps beyond).
     pub fn push_radial_gradient(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         center: [f32; 2],
         radii: [f32; 2],
         color0: [f32; 4],
@@ -1114,10 +1174,15 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Radial,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [center[0], center[1], radii[0], radii[1]],
-            color0, color1,
-            0, NO_CLIP,
+            color0,
+            color1,
+            0,
+            NO_CLIP,
         )));
     }
 
@@ -1126,7 +1191,10 @@ impl Scene {
     /// back to the seam at `t = 1`.
     pub fn push_conic_gradient(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         center: [f32; 2],
         start_angle: f32,
         color0: [f32; 4],
@@ -1134,17 +1202,25 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Conic,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [center[0], center[1], start_angle, 0.0],
-            color0, color1,
-            0, NO_CLIP,
+            color0,
+            color1,
+            0,
+            NO_CLIP,
         )));
     }
 
     /// 2-stop conic gradient with full control over transform and clip.
     pub fn push_conic_gradient_full(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         center: [f32; 2],
         start_angle: f32,
         color0: [f32; 4],
@@ -1154,17 +1230,25 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Conic,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [center[0], center[1], start_angle, 0.0],
-            color0, color1,
-            transform_id, clip_rect,
+            color0,
+            color1,
+            transform_id,
+            clip_rect,
         )));
     }
 
     /// 2-stop radial gradient with full control over transform and clip.
     pub fn push_radial_gradient_full(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         center: [f32; 2],
         radii: [f32; 2],
         color0: [f32; 4],
@@ -1174,10 +1258,15 @@ impl Scene {
     ) {
         self.ops.push(SceneOp::Gradient(two_stop_gradient(
             GradientKind::Radial,
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             [center[0], center[1], radii[0], radii[1]],
-            color0, color1,
-            transform_id, clip_rect,
+            color0,
+            color1,
+            transform_id,
+            clip_rect,
         )));
     }
 
@@ -1185,12 +1274,7 @@ impl Scene {
     /// at `tile` repeats at `image_size * scale` to cover `extent`.
     /// Identity transform, no clip; for richer construction build
     /// the [`ScenePattern`] struct directly and push it.
-    pub fn push_pattern(
-        &mut self,
-        tile: ImageKey,
-        extent: [f32; 4],
-        scale: f32,
-    ) {
+    pub fn push_pattern(&mut self, tile: ImageKey, extent: [f32; 4], scale: f32) {
         self.ops.push(SceneOp::Pattern(ScenePattern {
             tile,
             extent,
@@ -1205,7 +1289,10 @@ impl Scene {
     /// and clip.
     pub fn push_image_full(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         uv: [f32; 4],
         color: [f32; 4],
         key: ImageKey,
@@ -1213,7 +1300,10 @@ impl Scene {
         clip_rect: [f32; 4],
     ) {
         self.ops.push(SceneOp::Image(SceneImage {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             uv,
             color,
             key,
@@ -1381,11 +1471,7 @@ impl Scene {
     /// `clip_rect` is in parent (pre-scroll) coordinates;
     /// `scroll_offset` is `[dx, dy]` (positive = pan content
     /// up/left, matching CSS scroll semantics).
-    pub fn push_scroll_frame(
-        &mut self,
-        clip_rect: [f32; 4],
-        scroll_offset: [f32; 2],
-    ) -> u32 {
+    pub fn push_scroll_frame(&mut self, clip_rect: [f32; 4], scroll_offset: [f32; 2]) -> u32 {
         let xf_id = self.push_transform(Transform::translate_2d(
             -scroll_offset[0],
             -scroll_offset[1],
@@ -1550,16 +1636,14 @@ impl Scene {
 
     /// Phase 11b': append an arbitrary path stroked with a single
     /// solid color and line width. Identity transform, no clip.
-    pub fn push_shape_stroked(
-        &mut self,
-        path: ScenePath,
-        color: [f32; 4],
-        stroke_width: f32,
-    ) {
+    pub fn push_shape_stroked(&mut self, path: ScenePath, color: [f32; 4], stroke_width: f32) {
         self.ops.push(SceneOp::Shape(SceneShape {
             path,
             fill_color: None,
-            stroke: Some(ScenePathStroke { color, width: stroke_width }),
+            stroke: Some(ScenePathStroke {
+                color,
+                width: stroke_width,
+            }),
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
@@ -1569,12 +1653,18 @@ impl Scene {
     /// Phase 11': append a sharp axis-aligned stroked rect (border).
     pub fn push_stroke(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         stroke_width: f32,
     ) {
         self.ops.push(SceneOp::Stroke(SceneStroke {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             stroke_width,
             stroke_corner_radii: SHARP_CLIP,
@@ -1594,13 +1684,19 @@ impl Scene {
     /// order. All-zero radii produce a sharp rectangular stroke.
     pub fn push_stroke_rounded(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         stroke_width: f32,
         stroke_corner_radii: [f32; 4],
     ) {
         self.ops.push(SceneOp::Stroke(SceneStroke {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             stroke_width,
             stroke_corner_radii,
@@ -1618,7 +1714,10 @@ impl Scene {
     /// control over transform, clip, and clip corner radii.
     pub fn push_stroke_full(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         stroke_width: f32,
         stroke_corner_radii: [f32; 4],
@@ -1627,7 +1726,10 @@ impl Scene {
         clip_corner_radii: [f32; 4],
     ) {
         self.ops.push(SceneOp::Stroke(SceneStroke {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             stroke_width,
             stroke_corner_radii,
@@ -1650,7 +1752,10 @@ impl Scene {
     /// [`SceneStroke`] struct directly and push it.
     pub fn push_stroke_decorated(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         color: [f32; 4],
         stroke_width: f32,
         cap: SceneStrokeCap,
@@ -1658,7 +1763,10 @@ impl Scene {
         dash_pattern: Vec<f32>,
     ) {
         self.ops.push(SceneOp::Stroke(SceneStroke {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             stroke_width,
             stroke_corner_radii: SHARP_CLIP,
@@ -1677,7 +1785,10 @@ impl Scene {
     /// convention.
     pub fn push_image_full_rounded(
         &mut self,
-        x0: f32, y0: f32, x1: f32, y1: f32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
         uv: [f32; 4],
         color: [f32; 4],
         key: ImageKey,
@@ -1686,7 +1797,10 @@ impl Scene {
         clip_corner_radii: [f32; 4],
     ) {
         self.ops.push(SceneOp::Image(SceneImage {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             uv,
             color,
             key,
@@ -1774,12 +1888,21 @@ fn two_stop_gradient(
     clip_rect: [f32; 4],
 ) -> SceneGradient {
     SceneGradient {
-        x0, y0, x1, y1,
+        x0,
+        y0,
+        x1,
+        y1,
         kind,
         params,
         stops: vec![
-            GradientStop { offset: 0.0, color: color0 },
-            GradientStop { offset: 1.0, color: color1 },
+            GradientStop {
+                offset: 0.0,
+                color: color0,
+            },
+            GradientStop {
+                offset: 1.0,
+                color: color1,
+            },
         ],
         transform_id,
         clip_rect,
@@ -1894,7 +2017,10 @@ impl SceneFragment {
     /// no clip. Mirrors [`Scene::push_rect`].
     pub fn push_rect(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: [f32; 4]) {
         self.ops.push(SceneOp::Rect(SceneRect {
-            x0, y0, x1, y1,
+            x0,
+            y0,
+            x1,
+            y1,
             color,
             transform_id: 0,
             clip_rect: NO_CLIP,
@@ -2107,26 +2233,56 @@ fn dump_op(out: &mut String, op: &SceneOp) {
     use std::fmt::Write;
     match op {
         SceneOp::Rect(r) => {
-            write!(out, "Rect      [{:.1}..{:.1}, {:.1}..{:.1}]  color={}",
-                r.x0, r.x1, r.y0, r.y1, fmt_color(r.color)).ok();
+            write!(
+                out,
+                "Rect      [{:.1}..{:.1}, {:.1}..{:.1}]  color={}",
+                r.x0,
+                r.x1,
+                r.y0,
+                r.y1,
+                fmt_color(r.color)
+            )
+            .ok();
             dump_modifiers(out, r.transform_id, r.clip_rect, r.clip_corner_radii);
         }
         SceneOp::Stroke(s) => {
-            write!(out, "Stroke    [{:.1}..{:.1}, {:.1}..{:.1}]  width={}  color={}",
-                s.x0, s.x1, s.y0, s.y1, s.stroke_width, fmt_color(s.color)).ok();
+            write!(
+                out,
+                "Stroke    [{:.1}..{:.1}, {:.1}..{:.1}]  width={}  color={}",
+                s.x0,
+                s.x1,
+                s.y0,
+                s.y1,
+                s.stroke_width,
+                fmt_color(s.color)
+            )
+            .ok();
             if s.stroke_corner_radii != SHARP_CLIP {
                 write!(out, "  stroke_radii={:?}", s.stroke_corner_radii).ok();
             }
             dump_modifiers(out, s.transform_id, s.clip_rect, s.clip_corner_radii);
         }
         SceneOp::Gradient(g) => {
-            write!(out, "Gradient  [{:.1}..{:.1}, {:.1}..{:.1}]  kind={:?}  stops={}",
-                g.x0, g.x1, g.y0, g.y1, g.kind, g.stops.len()).ok();
+            write!(
+                out,
+                "Gradient  [{:.1}..{:.1}, {:.1}..{:.1}]  kind={:?}  stops={}",
+                g.x0,
+                g.x1,
+                g.y0,
+                g.y1,
+                g.kind,
+                g.stops.len()
+            )
+            .ok();
             dump_modifiers(out, g.transform_id, g.clip_rect, g.clip_corner_radii);
         }
         SceneOp::Image(i) => {
-            write!(out, "Image     [{:.1}..{:.1}, {:.1}..{:.1}]  key={}",
-                i.x0, i.x1, i.y0, i.y1, i.key).ok();
+            write!(
+                out,
+                "Image     [{:.1}..{:.1}, {:.1}..{:.1}]  key={}",
+                i.x0, i.x1, i.y0, i.y1, i.key
+            )
+            .ok();
             if i.color != [1.0, 1.0, 1.0, 1.0] {
                 write!(out, "  tint={}", fmt_color(i.color)).ok();
             }
@@ -2140,7 +2296,8 @@ fn dump_op(out: &mut String, op: &SceneOp) {
                 out,
                 "Pattern   [{:.1}..{:.1}, {:.1}..{:.1}]  tile={}  scale={}",
                 p.extent[0], p.extent[2], p.extent[1], p.extent[3], p.tile, p.scale,
-            ).ok();
+            )
+            .ok();
             dump_modifiers(out, p.transform_id, p.clip_rect, p.clip_corner_radii);
         }
         SceneOp::Shape(s) => {
@@ -2158,13 +2315,26 @@ fn dump_op(out: &mut String, op: &SceneOp) {
             dump_modifiers(out, s.transform_id, s.clip_rect, s.clip_corner_radii);
         }
         SceneOp::GlyphRun(g) => {
-            write!(out, "GlyphRun  font={}  size={}  glyphs={}  color={}",
-                g.font_id, g.font_size, g.glyphs.len(), fmt_color(g.color)).ok();
+            write!(
+                out,
+                "GlyphRun  font={}  size={}  glyphs={}  color={}",
+                g.font_id,
+                g.font_size,
+                g.glyphs.len(),
+                fmt_color(g.color)
+            )
+            .ok();
             dump_modifiers(out, g.transform_id, g.clip_rect, g.clip_corner_radii);
         }
         SceneOp::PushLayer(l) => {
-            write!(out, "PushLayer alpha={}  blend={:?}  clip={}",
-                l.alpha, l.blend_mode, fmt_clip(&l.clip)).ok();
+            write!(
+                out,
+                "PushLayer alpha={}  blend={:?}  clip={}",
+                l.alpha,
+                l.blend_mode,
+                fmt_clip(&l.clip)
+            )
+            .ok();
             if l.transform_id != 0 {
                 write!(out, "  transform={}", l.transform_id).ok();
             }
@@ -2181,8 +2351,12 @@ fn dump_modifiers(out: &mut String, transform_id: u32, clip_rect: [f32; 4], radi
         write!(out, "  transform={}", transform_id).ok();
     }
     if clip_rect != NO_CLIP {
-        write!(out, "  clip=[{:.1}..{:.1}, {:.1}..{:.1}]",
-            clip_rect[0], clip_rect[2], clip_rect[1], clip_rect[3]).ok();
+        write!(
+            out,
+            "  clip=[{:.1}..{:.1}, {:.1}..{:.1}]",
+            clip_rect[0], clip_rect[2], clip_rect[1], clip_rect[3]
+        )
+        .ok();
     }
     if radii != SHARP_CLIP {
         write!(out, "  radii={:?}", radii).ok();
@@ -2198,11 +2372,15 @@ fn fmt_clip(c: &SceneClip) -> String {
         SceneClip::None => "None".to_string(),
         SceneClip::Rect { rect, radii } => {
             if *radii == SHARP_CLIP {
-                format!("Rect[{:.1}..{:.1}, {:.1}..{:.1}]",
-                    rect[0], rect[2], rect[1], rect[3])
+                format!(
+                    "Rect[{:.1}..{:.1}, {:.1}..{:.1}]",
+                    rect[0], rect[2], rect[1], rect[3]
+                )
             } else {
-                format!("Rect[{:.1}..{:.1}, {:.1}..{:.1}]+radii{:?}",
-                    rect[0], rect[2], rect[1], rect[3], radii)
+                format!(
+                    "Rect[{:.1}..{:.1}, {:.1}..{:.1}]+radii{:?}",
+                    rect[0], rect[2], rect[1], rect[3], radii
+                )
             }
         }
         SceneClip::Path(p) => format!("Path(ops={})", p.ops.len()),

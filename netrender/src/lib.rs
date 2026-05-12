@@ -26,6 +26,7 @@
     mismatched_lifetime_syntaxes
 )]
 
+pub mod external_texture;
 pub mod filter;
 pub mod hit_test;
 pub mod interpolate;
@@ -39,6 +40,7 @@ pub mod vello_rasterizer;
 pub mod vello_tile_rasterizer;
 
 pub use crate::hit_test::{HitOpKind, HitResult, hit_test, hit_test_topmost};
+pub use crate::external_texture::ExternalTexturePlacement;
 pub use crate::registry::{FontRegistry, ImageRegistry};
 pub use crate::render_graph::{EncodeCallback, RenderGraph, Task, TaskId};
 pub use crate::renderer::init::{NetrenderOptions, create_netrender_instance};
