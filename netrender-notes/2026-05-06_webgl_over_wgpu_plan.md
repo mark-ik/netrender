@@ -333,7 +333,204 @@ working code, documented receipts, no external dependency.
 
 ---
 
-## 4. Cross-references
+## 4. First work lane: same-device canvas texture slice
+
+Added 2026-05-11 after reviewing the roadmap, vello rasterizer plan,
+path-(b′) compositor surface API, Serval's `RenderingContextCore` /
+`WgpuCapability` seam, and the existing netrender `insert_image_vello`
+Path B hook.
+
+This is the first executable lane through G0→G4. It deliberately does
+not try to clear full WebGL correctness. The point is to prove the
+ownership boundary and texture handoff first, then grow the WebGL state
+machine and shader translator behind that boundary.
+
+Status as of 2026-05-11: W0 is repaired locally. W1's Serval-side
+adapter crate shell and W2's netrender-side zero-copy composition
+receipt are implemented. W3, W4, and the broader W5 gate remain
+pending.
+
+### W0. Repair the map
+
+**CLEARED 2026-05-11.** The canonical path-(b′) design note exists at
+`2026-05-05_compositor_handoff_path_b_prime.md`; the roadmap, progress
+index, vello rasterizer plan, and `netrender_device::compositor` links
+all resolve locally.
+
+*Shape:* restore or relocate the referenced
+`2026-05-05_compositor_handoff_path_b_prime.md` plan, or update the
+roadmap / progress / vello-plan links to the canonical location. The
+code already contains the path-(b′) API and receipts; this step keeps
+the design map aligned with the shipped API.
+
+*Done condition:* `PROGRESS.md`, the roadmap D3 entry, the vello
+rasterizer plan, and `netrender_device::compositor` all link to a file
+that exists locally.
+
+### W1. Adapter crate shell and texture contract
+
+**CLEARED 2026-05-11.** Serval now has `servo-webgl-wgpu` under
+`components/webgl-wgpu`. It depends on `paint_api`'s `wgpu_backend`
+capability and `wgpu`, exposes `WebGlCanvasTexture`, allocates on the
+shared device, supports resize and clear, and has a focused
+`webgl_canvas_to_netrender_texture_allocates_resizes_and_clears` smoke.
+
+*Shape:* create the sibling WebGL-over-wgpu crate on the Serval/Pelt
+side, not in netrender. Preferred first home is `serval/components/`
+unless the Pelt integration work needs it under `ports/` temporarily.
+The crate exposes a narrow canvas output type, roughly:
+
+```rust
+pub struct WebGlCanvasTexture {
+  pub texture: wgpu::Texture,
+  pub size: (u32, u32),
+  pub format: wgpu::TextureFormat,
+  pub alpha_mode: CanvasAlphaMode,
+  pub generation: u64,
+  pub damage: Option<[u32; 4]>,
+}
+```
+
+The initial texture usage should be at least
+`RENDER_ATTACHMENT | TEXTURE_BINDING | COPY_SRC | COPY_DST`, with
+`Rgba8Unorm` as the first storage format unless a CTS case proves that
+another format must be surfaced earlier.
+
+*Done condition:* a `webgl_canvas_to_netrender_texture` smoke compiles
+without `glow`, GLES, EGL, WGL, ANGLE, ServoShell, or surfman
+dependencies. The crate can allocate, resize, clear, and expose the
+same-device `wgpu::Texture` plus metadata.
+
+### W2. NetRender zero-copy composition smoke
+
+**CLEARED 2026-05-11 on the netrender side.**
+`Renderer::compose_external_texture` directly samples a same-device
+producer `TextureView` into the already-rendered target. Receipt:
+`netrender/tests/pg4_webgl_canvas_texture.rs` creates a producer
+texture without `COPY_SRC`, verifies color mapping, and verifies
+opacity blending over a vello-rendered scene.
+
+*Shape:* prefer the direct same-device external texture pass over
+vello's `register_texture` path. `Renderer::insert_image_vello` remains
+the compatibility fallback for arbitrary `SceneImage` placement, but
+current vello copies registered textures into its image atlas at frame
+start and therefore is not the WebGL canvas fast path.
+
+The first zero-copy hook is `Renderer::compose_external_texture`: render
+the ordinary vello scene, then sample a producer `TextureView` directly
+into the target. The source texture only needs `TEXTURE_BINDING` (plus
+whatever the producer needs, e.g. `RENDER_ATTACHMENT` / `COPY_DST`); it
+does **not** need `COPY_SRC`. This is ideal for topmost canvas/video
+overlays and is the right first G4 receipt. Fully interleaved painter
+order is the next step: split the scene around external-texture ops or
+move this pass into the scene compositor so ordinary text/rect content
+can appear above and below the canvas without falling back to the atlas
+copy.
+
+*Done condition:* a netrender test creates a producer texture without
+`COPY_SRC`, renders ordinary vello content, composites the producer via
+the direct external-texture pass, and readback confirms color mapping,
+opacity blending, and no CPU readback or texture-copy dependency for
+the producer texture.
+
+### W3. Minimal WebGL-shaped render path
+
+**FIRST SERVAL ADAPTER SLICE CLEARED 2026-05-11.**
+`components/webgl-wgpu` now has a `WebGlContext` wrapper over the W1
+canvas texture with context attributes by construction, default
+framebuffer clear/draw/readback, buffer creation/binding/data upload,
+vertex attrib reflection/setup including interleaved stride and offset,
+reflected `uniform vec4` fragment color setup, one cross-stage `varying
+vec4` color path, `drawArrays`, `getError`, `readPixels`, resize, and
+context loss / recreation receipts. The first draw path remains
+triangle-only on `Rgba8Unorm`.
+
+The archived `webrender_build/src/wgsl.rs` translator source is not in
+the current working tree, but it is present at
+`origin/wgpu-backend-0.68-minimal:webrender_build/src/wgsl.rs`. The
+W3 slice ports the core safety shape from that translator for the
+first canonical pair: `components/webgl-wgpu/shader.rs` accepts the
+canonical ESSL 1.00 vertex / fragment pair, validates that narrow
+receipt independent of comments and whitespace, records `lowp` /
+`mediump` / `highp` fragment-float precision for the canonical body,
+accepts literal `vec4(r,g,b,a)` fragment colors in the `0.0..1.0`
+range, a reflected `uniform vec4` color, or a single linked `varying
+vec4` color sourced from a reflected vertex `attribute vec4`. It lowers
+those receipts to naga-acceptable GLSL 4.50, runs naga on an 8 MB stack
+behind a panic boundary, and returns naga-generated WGSL for
+`create_program_from_essl` to pipeline along with tiny reflection
+metadata for the canonical `vec2` position attribute at location 0,
+optional `vec4` color attribute at location 1, optional fragment-color
+uniform, and fragment-float precision. `WebGlContext` caches the
+resulting canonical translation by validated shader shape so repeated
+program creation does not re-run the naga path and exposes
+`get_attrib_location` and `get_uniform_location` from that reflection.
+Render pipelines are cached per effective vertex stride and attribute
+offset so tightly packed and interleaved vertex buffers use the same
+translated program with distinct wgpu vertex layouts. This first receipt
+proves the API, layer boundaries, precision/reflection/cache hook, and
+safety boundary; it is not general ESSL parsing.
+It does **not** port the full ~2K-line WebRender pre-pass / post-pass
+translator yet; do not widen shader acceptance beyond that canonical
+receipt until the rest of the G2 wrapper is restored/ported behind the
+same seam.
+
+*Shape:* implement the smallest WebGL API-shaped object behind the
+adapter crate: context attributes, default framebuffer backed by the
+canvas texture, `clear`, buffer creation/binding, vertex attrib setup,
+`getAttribLocation`, minimal `getUniformLocation` / `uniform4f`,
+`drawArrays`, `getError`, `readPixels`, resize, and context loss /
+recreation. Keep the first draw path intentionally tiny: triangle only,
+RGBA8 target, no extensions, no WebGL 2.
+
+Shader support for this step should enter through the G2 translator
+wrapper rather than through a handwritten WGSL-only shortcut. For the
+first receipt, accept a tiny set of canonical ESSL 1.00 vertex/fragment
+pairs and route them through the panic-caught, 8 MB stack naga wrapper
+from the prior WebRender translator work. Full precision propagation
+and sampler breadth can follow once the vertical slice renders.
+
+*Done condition:* the adapter renders clear + triangle into its canvas
+texture, `readPixels` matches expected RGBA bytes, `getError` reports
+the WebGL-mandated errors for at least one invalid bind/draw case, and
+the resulting texture still composes through W2's netrender smoke.
+
+### W4. Pelt/Serval integration smoke
+
+*Shape:* wire the adapter into the existing wgpu context path:
+`RenderingContextCore::wgpu()` supplies the shared device/queue,
+the adapter produces a canvas texture, the paint/composition layer
+registers that texture with netrender, and Pelt presents the frame.
+If the canvas is also a declared compositor surface, reuse
+`CompositorSurface` / `SurfaceKey` metadata rather than inventing a
+parallel surface lifecycle.
+
+*Done condition:* a headed or non-presenting Pelt smoke loads a page
+or synthetic display list containing one WebGL canvas, presents it via
+the netrender path, and captures a screenshot/readback with the WebGL
+triangle visibly composited with surrounding 2D content.
+
+### W5. Gates before widening
+
+Do not start WebGL 2, broad extensions, or the full CTS matrix until
+the W1-W4 lane is green. Once it is green, the next lane is the G1/G2
+correctness ladder: more API validation, translator precision work,
+uniform / attribute linking, samplers, framebuffer completeness, then
+small CTS buckets.
+
+The first lane's regression commands should be narrow and named:
+
+```text
+cargo test -p servo-webgl-wgpu webgl_canvas_to_netrender_texture
+cargo test -p netrender pg4_webgl_canvas_texture
+cargo run -p pelt -- --webgl-wgpu-smoke
+```
+
+Treat command names as placeholders until the crates/tests land; the
+important part is that the lane has one adapter test, one netrender
+composition test, and one Serval/Pelt integration smoke.
+
+## 5. Cross-references
 
 - Roadmap pointer:
   [`2026-05-04_feature_roadmap.md` — Phase G](2026-05-04_feature_roadmap.md).
