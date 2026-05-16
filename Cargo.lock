@@ -155,9 +155,12 @@ dependencies = [
 
 [[package]]
 name = "color"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a18ef4657441fb193b65f34dc39b3781f0dfec23d3bd94d0eeb4e88cde421edb"
+checksum = "2ec7c5eb7a16992b1904d76c517d170ab353b0e0b3d5a0c81a8a0cd1037893cf"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "core_maths"
@@ -713,24 +716,14 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kurbo"
-version = "0.11.3"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c62026ae44756f8a599ba21140f350303d4f08dcdcc71b5ad9c9bb8128c13c62"
+checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
 dependencies = [
  "arrayvec",
  "euclid",
+ "polycool",
  "serde",
- "smallvec",
-]
-
-[[package]]
-name = "kurbo"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7564e90fe3c0d5771e1f0bc95322b21baaeaa0d9213fa6a0b61c99f8b17b3bfb"
-dependencies = [
- "arrayvec",
- "euclid",
  "smallvec",
 ]
 
@@ -761,6 +754,10 @@ name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
+dependencies = [
+ "serde",
+ "serde_bytes",
+]
 
 [[package]]
 name = "litemap"
@@ -816,9 +813,9 @@ dependencies = [
 
 [[package]]
 name = "naga"
-version = "29.0.2"
+version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e1d5545a185b183ac132eb745a0f31f976d93ce495aad199cd1e1fe37d69581"
+checksum = "0dd91265cc2454558f659b3b4b9640f0ddb8cc6521277f166b8a8c181c898079"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -856,7 +853,7 @@ dependencies = [
  "log",
  "netrender_device",
  "netrender_text",
- "peniko 0.1.1",
+ "peniko",
  "png 0.17.16",
  "postcard",
  "serde",
@@ -1040,25 +1037,14 @@ dependencies = [
 
 [[package]]
 name = "peniko"
-version = "0.1.1"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c28d7294093837856bb80ad191cc46a2fcec8a30b43b7a3b0285325f0a917a9"
-dependencies = [
- "kurbo 0.11.3",
- "serde",
- "serde_bytes",
- "smallvec",
-]
-
-[[package]]
-name = "peniko"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a2b6aadb221872732e87d465213e9be5af2849b0e8cc5300a8ba98fffa2e00a"
+checksum = "839c8299360d2e998bdb106dc0a6cd71dcc5f4df51df1b620361bf50e283cca6"
 dependencies = [
  "color",
- "kurbo 0.13.0",
+ "kurbo",
  "linebender_resource_handle",
+ "serde",
  "smallvec",
 ]
 
@@ -1105,6 +1091,15 @@ name = "pollster"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
+
+[[package]]
+name = "polycool"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
+dependencies = [
+ "arrayvec",
+]
 
 [[package]]
 name = "portable-atomic"
@@ -1478,13 +1473,14 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "vello"
-version = "0.8.0"
-source = "git+https://github.com/linebender/vello?branch=main#02c250175ac13d098ebbb8d6369d6966915d8108"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "261359dbef879f8110ef7e1c442246c838d33d3d91cb05e0ea9288d432760c9f"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
  "log",
- "peniko 0.6.0",
+ "peniko",
  "png 0.18.1",
  "skrifa",
  "static_assertions",
@@ -1496,20 +1492,22 @@ dependencies = [
 
 [[package]]
 name = "vello_encoding"
-version = "0.8.0"
-source = "git+https://github.com/linebender/vello?branch=main#02c250175ac13d098ebbb8d6369d6966915d8108"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2346f5f0d7dccb3582fcd397b4a57b43165209f1424e0d76e85dd814db164af7"
 dependencies = [
  "bytemuck",
  "guillotiere",
- "peniko 0.6.0",
+ "peniko",
  "skrifa",
  "smallvec",
 ]
 
 [[package]]
 name = "vello_shaders"
-version = "0.8.0"
-source = "git+https://github.com/linebender/vello?branch=main#02c250175ac13d098ebbb8d6369d6966915d8108"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9dd38937516fa4b47423d9255bb5e4a65e839ec9d57c38c4af6189ce56bf46b7"
 dependencies = [
  "bytemuck",
  "log",
@@ -1603,9 +1601,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu"
-version = "29.0.2"
+version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcc909ba55acd5ff4253912c8b4b33f0b800d107eb0f22c3d9df0ccf31728a95"
+checksum = "bb3feacc458f7bee8bc1737149b42b6c731aa461039a4264a67bb6681646b250"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.1",
