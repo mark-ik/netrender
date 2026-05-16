@@ -438,6 +438,17 @@ resource-lifetime semantics.
   netrender-side hook lands as part of G4 (texture compositing). The
   rest is sibling-crate or test-infra work.
 
+  - **G4 netrender-side hook — CLEARED 2026-05-16.**
+    `ExternalTextureComposite` with `scene_op_boundary` plus
+    `VelloTileRasterizer::render_overlay_fragment` deliver ordered
+    texture compositing: z-order over text/rects, opacity blending,
+    same-device direct sampling (no readback round-trip). Receipts at
+    [`netrender/tests/pg4_webgl_canvas_texture.rs`](../netrender/tests/pg4_webgl_canvas_texture.rs)
+    — including `pg4_webgl_canvas_texture_preserves_scene_order` for
+    the new ordered path. G0–G3 / G5 / G6 remain as sibling-crate work
+    in serval/pelt; the netrender library surface that G needs is
+    complete.
+
 ---
 
 ## Out of scope (visibility-only)
