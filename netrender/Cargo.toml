@@ -29,21 +29,21 @@ serde = [
 linear-light-canary = []
 
 [dependencies]
-log = "0.4"
-wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+log.workspace = true
+wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 netrender_device = { path = "../netrender_device" }
-vello = { version = "0.9", default-features = false, features = ["wgpu"] }
+vello = { workspace = true, features = ["wgpu"] }
 # Roadmap R1 — per-glyph hit testing uses skrifa::metrics::GlyphMetrics
 # to query real font-supplied glyph bounds instead of the em-box
 # approximation. Pinned at the same minor as vello's transitive
 # pull (0.42) so cargo unifies the version.
-skrifa = "0.42"
+skrifa.workspace = true
 # Direct peniko dep with the `serde` feature, used only when this crate's
 # `serde` feature is on. Vello pulls peniko transitively but does not forward
 # its serde feature; we re-import the same version with `serde` enabled so
 # `peniko::Blob` round-trips through our custom (de)serializer.
-peniko = { version = "0.6", features = ["serde"], optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+peniko = { workspace = true, features = ["serde"], optional = true }
+serde = { workspace = true, optional = true }
 serde_json = { version = "1", optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 

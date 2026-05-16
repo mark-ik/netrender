@@ -14,7 +14,7 @@ default = []
 serde = ["dep:serde"]
 
 [dependencies]
-log = "0.4"
-wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+log.workspace = true
+wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 pollster = "0.4"
-serde = { version = "1", features = ["derive"], optional = true }
+serde = { workspace = true, optional = true }

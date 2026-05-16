@@ -6,6 +6,23 @@ members = [
 ]
 resolver = "2"
 
+# Centralized load-bearing pins. Each crate that uses one of these
+# declares it with `<dep>.workspace = true` instead of pinning the
+# version directly. Prevents the version-skew risk flagged in the
+# 2026-05-16 audit (three crates each pinning wgpu independently)
+# and matches the Mere workspace convention.
+[workspace.dependencies]
+# Linebender visual stack.
+vello = { version = "0.9", default-features = false }
+wgpu = { version = "29", default-features = false }
+peniko = "0.6"
+parley = "0.9"
+skrifa = "0.42"
+
+# Cross-cutting.
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+
 [profile.release]
 debug = true
 panic = "abort"

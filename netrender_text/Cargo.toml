@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 netrender = { path = "../netrender" }
-parley = "0.9"
+parley.workspace = true
 
 [dev-dependencies]
-wgpu = "29"
+wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
