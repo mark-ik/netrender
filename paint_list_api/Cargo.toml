@@ -1,0 +1,13 @@
+[package]
+name = "paint_list_api"
+version = "0.0.1"
+license = "MPL-2.0"
+description = "PaintList trait + engine-facing paint vocabulary for the polyglot netrender pipeline (PM-3 design)."
+edition = "2021"
+
+[dependencies]
+euclid.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json = "1"

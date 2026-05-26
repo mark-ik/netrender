@@ -1,0 +1,14 @@
+[package]
+name = "paint_list_render"
+version = "0.0.1"
+license = "MPL-2.0"
+description = "Translator from the paint_list_api PaintCmd vocabulary into netrender::Scene (the impedance bridge between engine-facing display lists and renderer primitives)."
+edition = "2021"
+
+[dependencies]
+log.workspace = true
+netrender = { path = "../netrender" }
+paint_list_api = { path = "../paint_list_api" }
+
+[dev-dependencies]
+serde.workspace = true

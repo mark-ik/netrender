@@ -3,6 +3,8 @@ members = [
     "netrender_device",
     "netrender",
     "netrender_text",
+    "paint_list_api",
+    "paint_list_render",
 ]
 resolver = "2"
 
@@ -22,6 +24,10 @@ skrifa = "0.42"
 # Cross-cutting.
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
+# euclid pinned to match serval + inker so the PaintList vocabulary's
+# geometry types share identity across the path-dep boundary (extraction
+# plan risk #4). `serde` feature on so Layout* types (de)serialize.
+euclid = { version = "0.22", features = ["serde"] }
 
 [profile.release]
 debug = true

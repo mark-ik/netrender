@@ -254,6 +254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -889,6 +890,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7d950ca161dc355eaf28f82b11345ed76c6e1f6eb1f4f4479e0323b9e2fbd0e"
 dependencies = [
  "num-traits",
+]
+
+[[package]]
+name = "paint_list_api"
+version = "0.0.1"
+dependencies = [
+ "euclid",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "paint_list_render"
+version = "0.0.1"
+dependencies = [
+ "log",
+ "netrender",
+ "paint_list_api",
+ "serde",
 ]
 
 [[package]]
