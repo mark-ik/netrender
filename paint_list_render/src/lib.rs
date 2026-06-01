@@ -191,12 +191,24 @@ fn register_fonts(scene: &mut Scene, fonts: &[FontResource]) -> HashMap<FontInst
 /// Register a paint list's image side-table into the scene's image
 /// sources, returning the `ImageKey → netrender ImageKey` map that
 /// `DrawImage` lowering resolves through. netrender's `ImageKey` is a
-/// flat `u64`; paint-list's is `(IdNamespace, u32)`, so we assign
-/// fresh sequential u64s and key the map on the paint-side key.
+/// flat `u64`; paint-list's is `(IdNamespace, u32)`, so we fold the
+/// namespace + index into the `u64` directly.
+///
+/// The scene key MUST be derived from the consumer's `ImageResource.key`,
+/// not a per-render index: the rasterizer caches `scene_key → bytes` for
+/// its whole lifetime and `debug_assert`s that a re-encountered key
+/// carries identical bytes. A per-render `i + 1` made every render's
+/// first image collide on scene key `1` with different bytes, poisoning
+/// the rasterizer lock across a multi-render session (e.g. the WPT
+/// reftest runner). Producers mint `ImageResource.key` unique per image,
+/// so folding it in gives a stable, collision-free scene key.
 fn register_images(scene: &mut Scene, images: &[ImageResource]) -> HashMap<ImageKey, NrImageKey> {
     let mut map = HashMap::new();
-    for (i, ir) in images.iter().enumerate() {
-        let nr_key = (i as u64) + 1; // 0 reserved
+    for ir in images {
+        // Fold (namespace, index) into the flat u64. `| 1 << 63` keeps
+        // it clear of the reserved low keys (0, demo constants) and of a
+        // pure-zero namespace+index.
+        let nr_key = ((ir.key.0 .0 as u64) << 32) | (ir.key.1 as u64) | (1 << 63);
         scene.set_image_source(
             nr_key,
             ImageData::from_bytes(ir.width, ir.height, ir.data.clone()),
