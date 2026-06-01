@@ -142,6 +142,37 @@ fn aged_out_tiles_excluded_from_recent_list() {
 }
 
 #[test]
+fn moved_rect_under_stable_transform_id_dirties_its_tile() {
+    use netrender::scene::Transform;
+    // A rect that slides *within* one tile via a transform whose value changes
+    // but whose id is stable: a fresh scene each frame re-emits the same op
+    // sequence, so the transform keeps index 1. Before the fix the per-tile
+    // dependency hash was (local rect + transform_id) — identical across the two
+    // frames — so the tile was reported clean, never re-rendered, and the rect
+    // ghosted at its old position (the live demo's "split" slider thumb).
+    // Folding the world AABB into the hash makes the move invalidate the tile.
+    let mut cache = TileCache::new(TILE_SIZE);
+
+    let scene_at = |tx: f32| {
+        let mut s = Scene::new(128, 128);
+        let id = s.push_transform(Transform::translate_2d(tx, 4.0));
+        assert_eq!(id, 1, "translate takes the first non-identity transform id");
+        s.push_rect_transformed(0.0, 0.0, 8.0, 8.0, [1.0, 0.0, 0.0, 1.0], id);
+        s
+    };
+
+    // Frame 1 warms the cache (all tiles new → dirty).
+    let _ = cache.invalidate(&scene_at(4.0));
+    // Frame 2: the rect moves from world x=4 to x=20 — still wholly inside tile
+    // (0,0) (TILE_SIZE = 32), still transform id 1.
+    let dirty = cache.invalidate(&scene_at(20.0));
+    assert!(
+        dirty.contains(&(0, 0)),
+        "a rect moving within tile (0,0) must dirty it (stale-ghost regression); got {dirty:?}"
+    );
+}
+
+#[test]
 fn window_zero_returns_empty() {
     let mut cache = TileCache::new(TILE_SIZE);
     let scene = Scene::new(128, 128);

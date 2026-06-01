@@ -218,36 +218,42 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
             SceneOp::Rect(rect) => {
                 let aabb = world_aabb_rect(rect, scene);
                 if aabb_intersects(aabb, tile_rect) {
+                    hash_aabb(&mut hasher, aabb);
                     hash_rect(&mut hasher, rect);
                 }
             }
             SceneOp::Image(image) => {
                 let aabb = world_aabb_image(image, scene);
                 if aabb_intersects(aabb, tile_rect) {
+                    hash_aabb(&mut hasher, aabb);
                     hash_image(&mut hasher, image);
                 }
             }
             SceneOp::Pattern(pattern) => {
                 let aabb = world_aabb(pattern.extent, pattern.transform_id, scene);
                 if aabb_intersects(aabb, tile_rect) {
+                    hash_aabb(&mut hasher, aabb);
                     hash_pattern(&mut hasher, pattern);
                 }
             }
             SceneOp::Gradient(grad) => {
                 let aabb = world_aabb_gradient(grad, scene);
                 if aabb_intersects(aabb, tile_rect) {
+                    hash_aabb(&mut hasher, aabb);
                     hash_gradient(&mut hasher, grad);
                 }
             }
             SceneOp::Stroke(stroke) => {
                 let aabb = world_aabb_stroke(stroke, scene);
                 if aabb_intersects(aabb, tile_rect) {
+                    hash_aabb(&mut hasher, aabb);
                     hash_stroke(&mut hasher, stroke);
                 }
             }
             SceneOp::Shape(shape) => {
                 if let Some(aabb) = world_aabb_shape(shape, scene) {
                     if aabb_intersects(aabb, tile_rect) {
+                        hash_aabb(&mut hasher, aabb);
                         hash_shape(&mut hasher, shape);
                     }
                 }
@@ -255,6 +261,7 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
             SceneOp::GlyphRun(run) => {
                 if let Some(aabb) = world_aabb_glyph_run(run, scene) {
                     if aabb_intersects(aabb, tile_rect) {
+                        hash_aabb(&mut hasher, aabb);
                         hash_glyph_run(&mut hasher, run);
                     }
                 }
@@ -271,6 +278,23 @@ fn hash_tile_deps(scene: &Scene, tile_rect: [f32; 4]) -> u64 {
     }
 
     hasher.finish()
+}
+
+/// Hash a primitive's world-space AABB into the tile dependency hash.
+///
+/// The per-primitive `hash_*` functions hash `transform_id` (the *index* into
+/// `scene.transforms`), not the transform's matrix values. When a primitive
+/// moves under a stable id — e.g. a dragged element re-emitted in the same scene
+/// position each frame, so it keeps the same transform index while its translate
+/// changes — its local hash is unchanged, so a tile that still contains it is not
+/// marked dirty and keeps a stale cached render (the moved primitive ghosts at
+/// its old position). Folding the world AABB (which `world_aabb_*` derives by
+/// applying the transform) into the hash makes any positional change invalidate
+/// the tiles the primitive occupies.
+fn hash_aabb(h: &mut DefaultHasher, aabb: [f32; 4]) {
+    for v in aabb {
+        h.write_u32(v.to_bits());
+    }
 }
 
 fn hash_rect(h: &mut DefaultHasher, r: &SceneRect) {
