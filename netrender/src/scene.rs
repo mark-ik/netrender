@@ -1651,6 +1651,14 @@ impl Scene {
     }
 
     /// Phase 11': append a sharp axis-aligned stroked rect (border).
+    /// Append a fully-specified stroke op. The struct-accepting escape hatch for
+    /// callers needing rounded corners + dashes + transform/clip at once (e.g.
+    /// a rounded, dashed CSS border) — the positional `push_stroke*` helpers each
+    /// cover only a subset.
+    pub fn push_stroke_op(&mut self, stroke: SceneStroke) {
+        self.ops.push(SceneOp::Stroke(stroke));
+    }
+
     pub fn push_stroke(
         &mut self,
         x0: f32,

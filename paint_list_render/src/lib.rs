@@ -37,8 +37,9 @@ use std::sync::Arc;
 use log::warn;
 use netrender::{
     ExternalTexturePlacement, FontBlob, FontId, Glyph as NrGlyph, GradientKind,
-    GradientStop as NrGradientStop, ImageData, ImageKey as NrImageKey, NO_CLIP, Scene,
-    SceneBlendMode, SceneClip, SceneLayer, SceneOp, ScenePattern, Transform, peniko,
+    GradientStop as NrGradientStop, ImageData, ImageKey as NrImageKey, NO_CLIP, SHARP_CLIP, Scene,
+    SceneBlendMode, SceneClip, SceneLayer, SceneOp, SceneStroke, SceneStrokeCap, SceneStrokeJoin,
+    ScenePattern, Transform, peniko,
 };
 use paint_list_api::{
     self as ple, ColorF, FontInstanceKey, FontResource, ImageKey, ImageResource, PaintCmd,
@@ -611,6 +612,7 @@ fn emit_push_layer(scene: &mut Scene, spec: &ple::LayerSpec, tid: u32) {
 }
 
 fn emit_border_first_cut(scene: &mut Scene, border: &ple::BorderItem, tid: u32) {
+    use ple::BorderStyle as BS;
     let rect = &border.placement.bounds;
     let widths = &border.widths;
     let sides = match &border.details {
@@ -620,6 +622,69 @@ fn emit_border_first_cut(scene: &mut Scene, border: &ple::BorderItem, tid: u32) 
             return;
         },
     };
+
+    // Uniform border (all four sides identical width / style / color) is the
+    // common case and the only one a single stroked path can render — strokes
+    // can't carry per-side colors. When it's also rounded or dashed/dotted, take
+    // the stroke fast path; the 4-rect fallback below handles the rest (and
+    // per-side borders, always square).
+    let r = &sides.radius;
+    let has_radius = r.top_left.width > 0.0 || r.top_right.width > 0.0
+        || r.bottom_right.width > 0.0 || r.bottom_left.width > 0.0;
+    let w = widths.top;
+    let uniform_width = (widths.right - w).abs() < 0.01
+        && (widths.bottom - w).abs() < 0.01
+        && (widths.left - w).abs() < 0.01;
+    let s = sides.top.style;
+    let uniform_style = sides.right.style == s && sides.bottom.style == s && sides.left.style == s;
+    let c = sides.top.color;
+    let col_eq = |a: &ColorF, b: &ColorF| (a.r - b.r).abs() < 0.004 && (a.g - b.g).abs() < 0.004
+        && (a.b - b.b).abs() < 0.004 && (a.a - b.a).abs() < 0.004;
+    let uniform_color = col_eq(&sides.right.color, &c)
+        && col_eq(&sides.bottom.color, &c) && col_eq(&sides.left.color, &c);
+    // dotted/dashed need a stroke (dash pattern); solid needs a stroke only to
+    // round. `double`/`groove`/etc. fall through to the (square, solid) fallback.
+    let dash = match s {
+        BS::Dotted => Some(vec![w.max(1.0), w.max(1.0)]),
+        BS::Dashed => Some(vec![(w * 3.0).max(1.0), w.max(1.0)]),
+        _ => None,
+    };
+    let strokeable = matches!(s, BS::Solid | BS::Dotted | BS::Dashed);
+
+    if w > 0.01 && uniform_width && uniform_style && uniform_color && strokeable
+        && (has_radius || dash.is_some())
+    {
+        // Stroke is centered on its path; a CSS border sits inside the
+        // border-box, so inset the path by w/2 and shrink the corner radii to
+        // match (radius is measured at the border-box edge).
+        let h = w * 0.5;
+        let inset = |r: f32| (r - h).max(0.0);
+        scene.push_stroke_op(SceneStroke {
+            x0: rect.min.x + h,
+            y0: rect.min.y + h,
+            x1: rect.max.x - h,
+            y1: rect.max.y - h,
+            color: color_to_array(&c),
+            stroke_width: w,
+            stroke_corner_radii: [
+                inset(r.top_left.width),
+                inset(r.top_right.width),
+                inset(r.bottom_right.width),
+                inset(r.bottom_left.width),
+            ],
+            transform_id: tid,
+            clip_rect: NO_CLIP,
+            clip_corner_radii: SHARP_CLIP,
+            cap: SceneStrokeCap::Butt,
+            join: SceneStrokeJoin::Miter,
+            dash_pattern: dash.unwrap_or_default(),
+            dash_offset: 0.0,
+        });
+        return;
+    }
+
+    // Fallback: per-side filled rects (square corners). Handles non-uniform
+    // borders and styles the stroke path doesn't model yet (double/groove/...).
     if widths.top > 0.0 {
         scene.push_rect_transformed(
             rect.min.x,
