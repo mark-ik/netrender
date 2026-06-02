@@ -369,7 +369,9 @@ fn hash_pattern(h: &mut DefaultHasher, p: &ScenePattern) {
     for c in p.extent {
         h.write_u32(c.to_bits());
     }
-    h.write_u32(p.scale.to_bits());
+    for s in p.scale {
+        h.write_u32(s.to_bits());
+    }
     h.write_u32(p.transform_id);
     for c in p.clip_rect {
         h.write_u32(c.to_bits());

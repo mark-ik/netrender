@@ -278,8 +278,12 @@ pub struct ScenePattern {
     pub tile: ImageKey,
     /// `[x0, y0, x1, y1]` in local space.
     pub extent: [f32; 4],
-    /// Tile size multiplier (1.0 = native pixel size).
-    pub scale: f32,
+    /// Per-axis tile-size multiplier `[sx, sy]` (`[1.0, 1.0]` = native pixel
+    /// size). A tile spans `image_w * sx` by `image_h * sy` in scene-local
+    /// space — this carries CSS `background-size` (incl. non-uniform like
+    /// `100% auto` or `16px 40px`), so the repeated tile is the resolved size,
+    /// not the source resolution.
+    pub scale: [f32; 2],
     /// Index into `Scene::transforms`; `0` = identity.
     pub transform_id: u32,
     /// Device-space axis-aligned clip; `NO_CLIP` disables clipping.
@@ -1274,7 +1278,7 @@ impl Scene {
     /// at `tile` repeats at `image_size * scale` to cover `extent`.
     /// Identity transform, no clip; for richer construction build
     /// the [`ScenePattern`] struct directly and push it.
-    pub fn push_pattern(&mut self, tile: ImageKey, extent: [f32; 4], scale: f32) {
+    pub fn push_pattern(&mut self, tile: ImageKey, extent: [f32; 4], scale: [f32; 2]) {
         self.ops.push(SceneOp::Pattern(ScenePattern {
             tile,
             extent,
@@ -2302,7 +2306,7 @@ fn dump_op(out: &mut String, op: &SceneOp) {
         SceneOp::Pattern(p) => {
             write!(
                 out,
-                "Pattern   [{:.1}..{:.1}, {:.1}..{:.1}]  tile={}  scale={}",
+                "Pattern   [{:.1}..{:.1}, {:.1}..{:.1}]  tile={}  scale={:?}",
                 p.extent[0], p.extent[2], p.extent[1], p.extent[3], p.tile, p.scale,
             )
             .ok();

@@ -258,6 +258,11 @@ pub fn translate_paint_cmd_stream(
     // resolve their keys to scene-side ids.
     let font_map = register_fonts(&mut scene, fonts);
     let image_map = register_images(&mut scene, images);
+    // Native pixel size per image key — needed to turn a DrawRepeatingImage's
+    // CSS `stretch_size` (the resolved background-size tile, in scene px) into
+    // the per-axis brush scale `stretch_size / native`.
+    let image_dims: HashMap<ImageKey, (u32, u32)> =
+        images.iter().map(|ir| (ir.key, (ir.width, ir.height))).collect();
     // Composed transform ids; top = active coordinate space. Empty
     // means identity (transform_id 0).
     let mut transform_stack: Vec<u32> = Vec::new();
@@ -378,14 +383,26 @@ pub fn translate_paint_cmd_stream(
             PaintCmd::DrawRepeatingImage(ri) => {
                 if let Some(&nr_key) = image_map.get(&ri.image_key) {
                     let (x0, y0, x1, y1) = rect_corners(&ri.placement.bounds);
-                    // `scale` is the tile-size multiplier (1.0 = native
-                    // pixel size). `stretch_size` / `tile_spacing` (CSS
-                    // background-size / gap) aren't honored yet — native
-                    // tiling only.
+                    // Honor CSS background-size: a tile spans `stretch_size`
+                    // (scene px), so the per-axis brush scale is
+                    // `stretch_size / native_pixels`. Falls back to native (1:1)
+                    // when the size or native dims are unusable. `tile_spacing`
+                    // (the `space` gap) is still not modeled.
+                    let (nw, nh) = image_dims.get(&ri.image_key).copied().unwrap_or((0, 0));
+                    let sx = if nw > 0 && ri.stretch_size.width > 0.0 {
+                        ri.stretch_size.width / nw as f32
+                    } else {
+                        1.0
+                    };
+                    let sy = if nh > 0 && ri.stretch_size.height > 0.0 {
+                        ri.stretch_size.height / nh as f32
+                    } else {
+                        1.0
+                    };
                     scene.ops.push(SceneOp::Pattern(ScenePattern {
                         tile: nr_key,
                         extent: [x0, y0, x1, y1],
-                        scale: 1.0,
+                        scale: [sx, sy],
                         transform_id: tid,
                         clip_rect: NO_CLIP,
                         clip_corner_radii: [0.0; 4],

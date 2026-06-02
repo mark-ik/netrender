@@ -749,20 +749,10 @@ fn emit_pattern(
         .get(&pattern.tile)
         .expect("scene_to_vello: ScenePattern references unknown ImageKey");
 
-    // Negative or zero scale gets clamped to 1.0 (the API contract
-    // says "treated as 1.0"); avoid divide-by-zero in the brush
-    // transform.
-    let scale = if pattern.scale > 0.0 {
-        pattern.scale as f64
-    } else {
-        1.0
-    };
-
-    let brush = ImageBrush::new(img.clone()).with_extend(Extend::Repeat);
-    // Brush-space → scene-space: scale by `scale` so a unit step in
-    // the image's pixel space becomes `scale` units in scene-local
-    // space (a tile is `image_size * scale` wide).
-    let brush_xform = Affine::scale(scale);
+    // Per-axis tile scale (CSS background-size). Non-positive on an axis is
+    // clamped to 1.0 (the API contract; avoids a degenerate brush transform).
+    let sx = if pattern.scale[0] > 0.0 { pattern.scale[0] as f64 } else { 1.0 };
+    let sy = if pattern.scale[1] > 0.0 { pattern.scale[1] as f64 } else { 1.0 };
 
     let target = Rect::new(
         pattern.extent[0] as f64,
@@ -770,6 +760,14 @@ fn emit_pattern(
         pattern.extent[2] as f64,
         pattern.extent[3] as f64,
     );
+
+    let brush = ImageBrush::new(img.clone()).with_extend(Extend::Repeat);
+    // Brush-space (image pixels) → scene-space: scale each axis (a tile spans
+    // `image_w * sx` by `image_h * sy`) AND translate so the first tile's origin
+    // is the extent's top-left — otherwise the repeat phase is anchored at the
+    // scene origin, shifting the tiling (mirrors `uv_to_target_affine`).
+    let brush_xform =
+        Affine::translate((target.x0, target.y0)) * Affine::scale_non_uniform(sx, sy);
     let world = transform_to_affine(&transforms[pattern.transform_id as usize]);
 
     let needs_clip = pattern.clip_rect != NO_CLIP;
