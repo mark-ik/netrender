@@ -42,8 +42,8 @@ use netrender::{
     ScenePattern, Transform, peniko,
 };
 use paint_list_api::{
-    self as ple, ColorF, FontInstanceKey, FontResource, ImageKey, ImageResource, PaintCmd,
-    PaintList,
+    self as ple, ColorF, FontInstanceKey, FontResource, IdNamespace, ImageKey, ImageResource,
+    PaintCmd, PaintList,
 };
 
 /// External-texture composite metadata produced by the translator and
@@ -169,6 +169,135 @@ pub fn translate_envelope_with_external_textures(
         envelope.fonts(),
         envelope.images(),
     )
+}
+
+// =============================================================================
+// Layer composition — merge several paint outputs into one Scene
+// =============================================================================
+
+/// First `IdNamespace` the compositor remaps layers into. Far above the small
+/// per-producer namespaces (serval fonts 0, images 1; nematic/inker likewise low)
+/// so a remapped key never aliases a value a producer might also be using in the
+/// same merged stream. Layer `i` is remapped into `IdNamespace(BASE + i)`.
+const COMPOSITE_NAMESPACE_BASE: u32 = 0xC000_0000;
+
+/// One layer to composite, in back-to-front order (earlier layers paint behind
+/// later ones). Borrows a producer's paint output — the producer (a [`PaintList`]
+/// impl, or any source) stays the owner and exposes these via
+/// `commands()`/`fonts()`/`images()`.
+#[derive(Clone, Copy)]
+pub struct CompositeLayer<'a> {
+    pub commands: &'a [PaintCmd],
+    pub fonts: &'a [FontResource],
+    pub images: &'a [ImageResource],
+}
+
+impl<'a> CompositeLayer<'a> {
+    /// A layer from an already-extracted command slice with no font/image
+    /// side-tables (e.g. the orrery's scene-paint underlay, which emits only
+    /// strokes + rects today).
+    pub fn commands_only(commands: &'a [PaintCmd]) -> Self {
+        Self { commands, fonts: &[], images: &[] }
+    }
+}
+
+/// Composite several paint layers into one [`netrender::Scene`], back-to-front.
+///
+/// Each producer mints font/image keys in its own [`IdNamespace`], and two
+/// producers can independently pick the same namespace (both default to 0), so
+/// naively concatenating their side-tables would collide — the translator's
+/// `FontInstanceKey -> FontId` / `ImageKey -> u64` maps would clobber one
+/// producer's entry with another's. This remaps each layer's keys into a
+/// composite-unique namespace and rewrites the matching references in that
+/// layer's `DrawText` / `DrawImage` / `DrawRepeatingImage` commands, then
+/// translates the merged stream against `viewport` (the shared final target).
+/// Layers with no fonts/images pass through with their commands untouched.
+pub fn composite_paint_layers(
+    viewport: paint_list_api::DeviceIntSize,
+    layers: &[CompositeLayer<'_>],
+) -> TranslatedDisplayList {
+    let (commands, fonts, images) = merge_layers(layers);
+    translate_paint_cmd_stream(viewport, &commands, &fonts, &images)
+}
+
+/// Merge layers' commands + side-tables into one stream with collision-free keys.
+/// Split out from [`composite_paint_layers`] so the remapping is unit-testable
+/// without going through `Scene` lowering (and its font parsing).
+fn merge_layers(
+    layers: &[CompositeLayer<'_>],
+) -> (Vec<PaintCmd>, Vec<FontResource>, Vec<ImageResource>) {
+    let mut commands: Vec<PaintCmd> = Vec::new();
+    let mut fonts: Vec<FontResource> = Vec::new();
+    let mut images: Vec<ImageResource> = Vec::new();
+
+    for (i, layer) in layers.iter().enumerate() {
+        let ns = IdNamespace(COMPOSITE_NAMESPACE_BASE.wrapping_add(i as u32));
+
+        // Remap this layer's font keys into `ns`, preserving the within-layer
+        // index, and record old -> new for rewriting the command references.
+        let mut font_remap: HashMap<FontInstanceKey, FontInstanceKey> = HashMap::new();
+        for (j, fr) in layer.fonts.iter().enumerate() {
+            let new_key = FontInstanceKey(ns, j as u32);
+            font_remap.insert(fr.key, new_key);
+            fonts.push(FontResource { key: new_key, data: fr.data.clone(), index: fr.index });
+        }
+        let mut image_remap: HashMap<ImageKey, ImageKey> = HashMap::new();
+        for (j, ir) in layer.images.iter().enumerate() {
+            let new_key = ImageKey(ns, j as u32);
+            image_remap.insert(ir.key, new_key);
+            images.push(ImageResource {
+                key: new_key,
+                width: ir.width,
+                height: ir.height,
+                data: ir.data.clone(),
+            });
+        }
+
+        // Append commands. The common case (no fonts/images, e.g. the underlay)
+        // needs no rewrite, so pass the slice through verbatim.
+        if font_remap.is_empty() && image_remap.is_empty() {
+            commands.extend_from_slice(layer.commands);
+        } else {
+            commands.extend(
+                layer
+                    .commands
+                    .iter()
+                    .map(|cmd| remap_cmd_keys(cmd, &font_remap, &image_remap)),
+            );
+        }
+    }
+
+    (commands, fonts, images)
+}
+
+/// Clone a command, rewriting any font/image key reference through the per-layer
+/// remap. Only the three key-bearing variants carry a reference; everything else
+/// is a verbatim clone.
+fn remap_cmd_keys(
+    cmd: &PaintCmd,
+    fonts: &HashMap<FontInstanceKey, FontInstanceKey>,
+    images: &HashMap<ImageKey, ImageKey>,
+) -> PaintCmd {
+    let mut c = cmd.clone();
+    match &mut c {
+        PaintCmd::DrawText(t) => {
+            if let Some(&new_key) = fonts.get(&t.font_instance) {
+                t.font_instance = new_key;
+            }
+        },
+        PaintCmd::DrawImage(it) => {
+            if let Some(&new_key) = images.get(&it.image_key) {
+                it.image_key = new_key;
+            }
+        },
+        PaintCmd::DrawRepeatingImage(it) => {
+            if let Some(&new_key) = images.get(&it.image_key) {
+                it.image_key = new_key;
+            }
+        },
+        _ => {},
+    }
+    c
 }
 
 /// Register a paint list's font side-table into the scene's font
@@ -883,6 +1012,81 @@ mod tests {
         let scene = translate_paint_list(&list);
         assert_eq!(scene.ops.len(), 1);
         assert!(matches!(scene.ops[0], netrender::SceneOp::Rect(_)));
+    }
+
+    /// Composing layers with no side-tables (the orrery underlay + a doc, today)
+    /// concatenates command streams back-to-front into one scene.
+    #[test]
+    fn commands_only_layers_concatenate_into_one_scene() {
+        let underlay = vec![PaintCmd::DrawRect(RectItem {
+            placement: placement_at(box2d(0.0, 0.0, 10.0, 10.0)),
+            color: ColorF { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+        })];
+        let doc = vec![PaintCmd::DrawRect(RectItem {
+            placement: placement_at(box2d(5.0, 5.0, 10.0, 10.0)),
+            color: ColorF { r: 0.0, g: 0.0, b: 1.0, a: 1.0 },
+        })];
+        let layers = [
+            CompositeLayer::commands_only(&underlay),
+            CompositeLayer::commands_only(&doc),
+        ];
+        let out = composite_paint_layers(DeviceIntSize::new(800, 600), &layers);
+        let rects = out
+            .scene
+            .ops
+            .iter()
+            .filter(|o| matches!(o, netrender::SceneOp::Rect(_)))
+            .count();
+        assert_eq!(rects, 2, "both layers' rects composite into one scene");
+    }
+
+    /// Two layers that BOTH mint a font under the default namespace+index (the
+    /// collision producers fall into) must come out with distinct keys, and each
+    /// layer's `DrawText` rewritten to its own remapped key — otherwise the
+    /// translator's `FontInstanceKey -> FontId` map clobbers one font with the
+    /// other. (Pins the font/image key-namespacing the seam exists for.)
+    #[test]
+    fn merge_namespaces_colliding_font_keys() {
+        use paint_list_api::{FontInstanceKey, FontResource, IdNamespace, TextOptions, TextRunItem};
+
+        let collide = FontInstanceKey::new(IdNamespace(0), 0);
+        let mk = |face: u8| {
+            let fonts = vec![FontResource { key: collide, data: vec![face], index: 0 }];
+            let cmds = vec![PaintCmd::DrawText(TextRunItem {
+                placement: placement_at(box2d(0.0, 0.0, 10.0, 10.0)),
+                font_instance: collide,
+                font_size: 16.0,
+                color: ColorF::BLACK,
+                glyphs: vec![],
+                options: TextOptions::default(),
+            })];
+            (fonts, cmds)
+        };
+        let (f0, c0) = mk(0xAA);
+        let (f1, c1) = mk(0xBB);
+        let layers = [
+            CompositeLayer { commands: &c0, fonts: &f0, images: &[] },
+            CompositeLayer { commands: &c1, fonts: &f1, images: &[] },
+        ];
+        let (commands, fonts, images) = merge_layers(&layers);
+
+        assert!(images.is_empty());
+        assert_eq!(fonts.len(), 2, "both fonts survive the merge");
+        assert_ne!(fonts[0].key, fonts[1].key, "colliding keys made distinct");
+        assert_eq!(fonts[0].data, vec![0xAA], "font bytes paired to the right new key");
+        assert_eq!(fonts[1].data, vec![0xBB]);
+        let text_keys: Vec<_> = commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCmd::DrawText(t) => Some(t.font_instance),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            text_keys,
+            vec![fonts[0].key, fonts[1].key],
+            "each layer's DrawText references its own remapped font",
+        );
     }
 
     #[test]
