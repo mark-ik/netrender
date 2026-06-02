@@ -38,8 +38,8 @@ use log::warn;
 use netrender::{
     ExternalTexturePlacement, FontBlob, FontId, Glyph as NrGlyph, GradientKind,
     GradientStop as NrGradientStop, ImageData, ImageKey as NrImageKey, NO_CLIP, SHARP_CLIP, Scene,
-    SceneBlendMode, SceneClip, SceneLayer, SceneOp, SceneStroke, SceneStrokeCap, SceneStrokeJoin,
-    ScenePattern, Transform, peniko,
+    SceneBlendMode, SceneClip, SceneLayer, SceneOp, ScenePath, ScenePathStroke, ScenePattern,
+    SceneShape, SceneStroke, SceneStrokeCap, SceneStrokeJoin, Transform, peniko,
 };
 use paint_list_api::{
     self as ple, ColorF, FontInstanceKey, FontResource, IdNamespace, ImageKey, ImageResource,
@@ -137,6 +137,33 @@ fn gradient_stops(stops: &[paint_list_api::GradientStop]) -> Vec<NrGradientStop>
             color: [s.color.r, s.color.g, s.color.b, s.color.a],
         })
         .collect()
+}
+
+/// Rebuild a `netrender::ScenePath` from the serializable `PathData` command
+/// sequence (the shape `DrawStroke` / `DrawPath` carry). 1:1 verb mapping.
+fn path_data_to_scene_path(pd: &ple::PathData) -> ScenePath {
+    use ple::PathCommand as C;
+    let mut p = ScenePath::with_capacity(pd.commands.len());
+    for cmd in &pd.commands {
+        match *cmd {
+            C::MoveTo(pt) => {
+                p.move_to(pt.x, pt.y);
+            },
+            C::LineTo(pt) => {
+                p.line_to(pt.x, pt.y);
+            },
+            C::QuadTo { control, to } => {
+                p.quad_to(control.x, control.y, to.x, to.y);
+            },
+            C::CurveTo { control1, control2, to } => {
+                p.cubic_to(control1.x, control1.y, control2.x, control2.y, to.x, to.y);
+            },
+            C::Close => {
+                p.close();
+            },
+        }
+    }
+    p
 }
 
 // =============================================================================
@@ -435,12 +462,20 @@ pub fn translate_paint_cmd_stream(
                 let (x0, y0, x1, y1) = rect_corners(&r.placement.bounds);
                 scene.push_rect_transformed(x0, y0, x1, y1, color_to_array(&r.color), tid);
             },
-            PaintCmd::DrawStroke(_) => {
-                // Stroke requires `kurbo::BezPath` reconstruction + a
-                // netrender stroke primitive (`SceneStroke`).
-                // Painter-side wiring needs the same plumbing as
-                // DrawPath; deferred together.
-                warn!("[paint translator] DrawStroke deferred (needs kurbo::BezPath wiring)");
+            PaintCmd::DrawStroke(s) => {
+                // Lower to netrender's arbitrary-path primitive (`SceneShape`),
+                // stroke-only. This is the orrery's edge path (straight or routed
+                // polyline). `ScenePathStroke` is `{color, width}` today, so
+                // cap/join/dash (`s.cap`/`s.join`/`s.dash`) are not yet honored —
+                // a solid butt stroke. Empty paths produce an empty shape (no-op).
+                scene.push_shape(SceneShape {
+                    path: path_data_to_scene_path(&s.path),
+                    fill_color: None,
+                    stroke: Some(ScenePathStroke { color: color_to_array(&s.color), width: s.width }),
+                    transform_id: tid,
+                    clip_rect: NO_CLIP,
+                    clip_corner_radii: SHARP_CLIP,
+                });
             },
             PaintCmd::DrawLine(line) => {
                 // First-cut: emit a solid rect spanning the line's
@@ -449,11 +484,26 @@ pub fn translate_paint_cmd_stream(
                 let (x0, y0, x1, y1) = rect_corners(&line.placement.bounds);
                 scene.push_rect_transformed(x0, y0, x1, y1, color_to_array(&line.color), tid);
             },
-            PaintCmd::DrawPath(_) => {
-                // PM-3 common variant; renderer side needs
-                // kurbo::BezPath reconstruction from PathData + vello
-                // path emission (netrender's `SceneOp::Shape` exists).
-                warn!("[paint translator] DrawPath deferred (needs kurbo::BezPath wiring)");
+            PaintCmd::DrawPath(p) => {
+                // Lower to `SceneShape`, carrying whichever of fill / stroke is
+                // set (CSS / SVG "filled then stroked"). `ScenePathStroke` is
+                // `{color, width}`, so a stroke's cap/join/dash are not yet
+                // honored. A path with neither fill nor stroke is a no-op.
+                let fill_color = p.fill.as_ref().map(color_to_array);
+                let stroke = p
+                    .stroke
+                    .as_ref()
+                    .map(|st| ScenePathStroke { color: color_to_array(&st.color), width: st.width });
+                if fill_color.is_some() || stroke.is_some() {
+                    scene.push_shape(SceneShape {
+                        path: path_data_to_scene_path(&p.path),
+                        fill_color,
+                        stroke,
+                        transform_id: tid,
+                        clip_rect: NO_CLIP,
+                        clip_corner_radii: SHARP_CLIP,
+                    });
+                }
             },
             PaintCmd::DrawBorder(border) => emit_border_first_cut(&mut scene, border, tid),
             PaintCmd::DrawLinearGradient(g) => emit_linear_gradient(&mut scene, g, tid),
@@ -1087,6 +1137,38 @@ mod tests {
             vec![fonts[0].key, fonts[1].key],
             "each layer's DrawText references its own remapped font",
         );
+    }
+
+    /// `DrawStroke` (the orrery's edge primitive — a straight or routed polyline)
+    /// lowers to one stroked `SceneShape`, so edges render. (Was warn-skipped.)
+    #[test]
+    fn draw_stroke_emits_stroked_scene_shape() {
+        use paint_list_api::{LayoutPoint, PathCommand, PathData, StrokeCap, StrokeItem, StrokeJoin};
+
+        let list = list_with(
+            DeviceIntSize::new(800, 600),
+            vec![PaintCmd::DrawStroke(StrokeItem {
+                placement: placement_at(box2d(0.0, 0.0, 100.0, 100.0)),
+                path: PathData {
+                    commands: vec![
+                        PathCommand::MoveTo(LayoutPoint::new(0.0, 0.0)),
+                        PathCommand::LineTo(LayoutPoint::new(100.0, 80.0)),
+                    ],
+                },
+                color: ColorF { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+                width: 2.0,
+                cap: StrokeCap::Butt,
+                join: StrokeJoin::Miter,
+                dash: None,
+            })],
+        );
+        let scene = translate_paint_list(&list);
+        let stroked = scene
+            .ops
+            .iter()
+            .filter(|o| matches!(o, netrender::SceneOp::Shape(s) if s.stroke.is_some()))
+            .count();
+        assert_eq!(stroked, 1, "DrawStroke lowers to one stroked SceneShape");
     }
 
     #[test]
