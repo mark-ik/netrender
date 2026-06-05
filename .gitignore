@@ -26,6 +26,7 @@ wrench/ron_frames
 # System
 .fuse_hidden*
 test-logs/
+.cargo-check-logs/
 netrender/examples/output/
 
 # sem (Ataraxy-Labs) semantic-diff index cache — local, never committed.
