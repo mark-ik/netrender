@@ -297,3 +297,46 @@ fn p8prime_03_conic_red_to_blue_seam_zero() {
     let west = read_pixel(&bytes, 4, 32);
     assert_within_tol(west, [128, 0, 128, 255], 8, "conic midpoint (west)");
 }
+
+/// Repeating linear gradient: one period (red→blue) spans the left half, then
+/// tiles. At x = 0.75·DIM (1.5 periods along the line) the pattern is back at
+/// its midpoint (purple), where a non-repeating (Pad) gradient would have
+/// clamped to blue past its last stop.
+#[test]
+fn p8prime_05_repeating_linear_tiles() {
+    let grad = |repeat: bool| netrender::SceneGradient {
+        x0: 0.0,
+        y0: 0.0,
+        x1: DIM as f32,
+        y1: DIM as f32,
+        kind: netrender::GradientKind::Linear,
+        repeat,
+        // Gradient line spans the left half — one repeat period.
+        params: [0.0, (DIM as f32) / 2.0, (DIM as f32) / 2.0, (DIM as f32) / 2.0],
+        stops: vec![
+            netrender::GradientStop { offset: 0.0, color: [1.0, 0.0, 0.0, 1.0] },
+            netrender::GradientStop { offset: 1.0, color: [0.0, 0.0, 1.0, 1.0] },
+        ],
+        transform_id: 0,
+        clip_rect: netrender::NO_CLIP,
+        clip_corner_radii: [0.0; 4],
+    };
+    let sx = (DIM as f32 * 0.75) as u32; // 1.5 periods along the line
+
+    let mut repeating = Scene::new(DIM, DIM);
+    repeating.push_gradient(grad(true));
+    let rep = read_pixel(&render_scene(&repeating), sx, DIM / 2);
+
+    let mut clamped = Scene::new(DIM, DIM);
+    clamped.push_gradient(grad(false));
+    let pad = read_pixel(&render_scene(&clamped), sx, DIM / 2);
+
+    assert!(
+        rep[0] > 80 && rep[2] > 80,
+        "repeating gradient shows the mid-pattern (purple) at 1.5 periods: {rep:?}"
+    );
+    assert!(
+        pad[0] < 40 && pad[2] > 200,
+        "non-repeating gradient clamps to blue past the last stop: {pad:?}"
+    );
+}

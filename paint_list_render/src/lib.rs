@@ -934,6 +934,7 @@ fn emit_linear_gradient(scene: &mut Scene, item: &ple::LinearGradientItem, tid: 
         x1: rect.max.x,
         y1: rect.max.y,
         kind: GradientKind::Linear,
+        repeat: matches!(g.extend_mode, ple::ExtendMode::Repeat),
         params: [
             g.start_point.x,
             g.start_point.y,
@@ -956,6 +957,7 @@ fn emit_radial_gradient(scene: &mut Scene, item: &ple::RadialGradientItem, tid: 
         x1: rect.max.x,
         y1: rect.max.y,
         kind: GradientKind::Radial,
+        repeat: matches!(g.extend_mode, ple::ExtendMode::Repeat),
         params: [g.center.x, g.center.y, g.radius.width, g.radius.height],
         stops: gradient_stops(&g.stops),
         transform_id: tid,
@@ -973,6 +975,7 @@ fn emit_conic_gradient(scene: &mut Scene, item: &ple::ConicGradientItem, tid: u3
         x1: rect.max.x,
         y1: rect.max.y,
         kind: GradientKind::Conic,
+        repeat: matches!(g.extend_mode, ple::ExtendMode::Repeat),
         params: [g.center.x, g.center.y, g.angle, 0.0],
         stops: gradient_stops(&g.stops),
         transform_id: tid,

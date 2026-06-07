@@ -629,7 +629,7 @@ fn emit_gradient(vscene: &mut vello::Scene, grad: &SceneGradient, transforms: &[
     // `interpolation_cs`, so leave it at default (Srgb) — matches the
     // existing Phase 8 batched receipts which lerp in sRGB-encoded
     // component space.
-    let (peniko_grad, brush_xform) = match grad.kind {
+    let (mut peniko_grad, brush_xform) = match grad.kind {
         GradientKind::Linear => {
             let [sx, sy, ex, ey] = grad.params;
             let g = Gradient::new_linear(
@@ -671,6 +671,13 @@ fn emit_gradient(vscene: &mut vello::Scene, grad: &SceneGradient, transforms: &[
             (g, None)
         }
     };
+
+    // `repeating-*-gradient`: tile the colorstop range instead of clamping. The
+    // producer sized the gradient to one repeat period, so Repeat reproduces the
+    // CSS pattern across the fill.
+    if grad.repeat {
+        peniko_grad.extend = Extend::Repeat;
+    }
 
     let needs_clip = grad.clip_rect != NO_CLIP;
     if needs_clip {

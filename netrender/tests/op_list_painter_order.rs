@@ -168,6 +168,7 @@ fn op_order_03_op_list_holds_six_variant_kinds() {
         x1: 8.0,
         y1: 8.0,
         kind: GradientKind::Linear,
+        repeat: false,
         params: [0.0, 0.0, 8.0, 0.0],
         stops: vec![
             GradientStop {

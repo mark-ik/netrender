@@ -199,6 +199,7 @@ fn p9prime_03_gradient_rounded_clip() {
         x1: DIM as f32,
         y1: DIM as f32,
         kind: netrender::GradientKind::Linear,
+        repeat: false,
         params: [0.0, 0.0, DIM as f32, 0.0],
         stops: vec![
             netrender::GradientStop {

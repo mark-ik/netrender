@@ -239,6 +239,11 @@ pub struct SceneGradient {
     pub y1: f32,
     /// Which gradient family this primitive uses.
     pub kind: GradientKind,
+    /// `true` for a `repeating-*-gradient`: the colorstop range tiles via
+    /// `Extend::Repeat` instead of clamping (`Extend::Pad`). The producer sizes
+    /// the gradient line / radius / sweep to one repeat period so the tiling
+    /// reproduces the CSS pattern.
+    pub repeat: bool,
     /// Kind-dependent parameter slot (see struct docs).
     pub params: [f32; 4],
     /// Color stops along the gradient parameter, sorted by `offset`
@@ -1905,6 +1910,7 @@ fn two_stop_gradient(
         x1,
         y1,
         kind,
+        repeat: false,
         params,
         stops: vec![
             GradientStop {
