@@ -18,7 +18,7 @@ resolver = "2"
 vello = { version = "0.9", default-features = false }
 wgpu = { version = "29", default-features = false }
 peniko = "0.6"
-parley = "0.9"
+parley = "0.10"
 skrifa = "0.42"
 
 # Cross-cutting.
