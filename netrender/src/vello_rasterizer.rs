@@ -689,6 +689,34 @@ fn emit_gradient(vscene: &mut vello::Scene, grad: &SceneGradient, transforms: &[
     }
 }
 
+/// Crop `img` to the normalized `uv` sub-rect, returning a tightly-packed RGBA8
+/// sub-image. A clamp-to-uv draw samples this crop (padded at its edges) instead
+/// of a sub-region of the full source, so the sampler cannot read past the
+/// sub-rect into adjacent source pixels.
+fn crop_to_uv(img: &ImageData, uv: [f32; 4]) -> ImageData {
+    let (iw, ih) = (img.width, img.height);
+    let px = |u: f32, dim: u32| (u * dim as f32).round().clamp(0.0, dim as f32) as u32;
+    let sx0 = px(uv[0], iw);
+    let sy0 = px(uv[1], ih);
+    let sx1 = px(uv[2], iw).max(sx0 + 1).min(iw);
+    let sy1 = px(uv[3], ih).max(sy0 + 1).min(ih);
+    let (sw, sh) = (sx1 - sx0, sy1 - sy0);
+    let bytes: &[u8] = img.data.as_ref();
+    let mut out = Vec::with_capacity((sw * sh * 4) as usize);
+    for row in 0..sh {
+        let y = sy0 + row;
+        let start = (((y * iw) + sx0) * 4) as usize;
+        out.extend_from_slice(&bytes[start..start + (sw * 4) as usize]);
+    }
+    ImageData {
+        data: peniko::Blob::new(std::sync::Arc::new(out)),
+        format: ImageFormat::Rgba8,
+        alpha_type: img.alpha_type,
+        width: sw,
+        height: sh,
+    }
+}
+
 fn emit_image(
     vscene: &mut vello::Scene,
     image: &SceneImage,
@@ -700,8 +728,6 @@ fn emit_image(
         .expect("scene_to_vello: SceneImage references unknown ImageKey");
 
     let (alpha, chromatic) = split_tint(image.color);
-    let brush = ImageBrush::new(img.clone()).with_alpha(alpha);
-
     let target = Rect::new(
         image.x0 as f64,
         image.y0 as f64,
@@ -709,7 +735,24 @@ fn emit_image(
         image.y1 as f64,
     );
     let world = transform_to_affine(&transforms[image.transform_id as usize]);
-    let brush_xform = uv_to_target_affine(image.uv, target, img.width, img.height);
+
+    // Clamp-to-uv crops the source to the `uv` sub-rect and pads at its edges, so
+    // bilinear filtering cannot bleed in neighbouring source pixels at a seam
+    // (nine-patch slices, sprite cells). Otherwise sample the whole image, mapping
+    // the `uv` sub-region onto the target via the brush transform.
+    let (brush, brush_xform) = if image.clamp_to_uv {
+        let sub = crop_to_uv(img, image.uv);
+        let (sw, sh) = (sub.width, sub.height);
+        (
+            ImageBrush::new(sub).with_alpha(alpha).with_extend(Extend::Pad),
+            uv_to_target_affine([0.0, 0.0, 1.0, 1.0], target, sw, sh),
+        )
+    } else {
+        (
+            ImageBrush::new(img.clone()).with_alpha(alpha),
+            uv_to_target_affine(image.uv, target, img.width, img.height),
+        )
+    };
 
     let needs_clip = image.clip_rect != NO_CLIP;
     if needs_clip {

@@ -768,6 +768,7 @@ impl Renderer {
                     transform_id: 0,
                     clip_rect: NO_CLIP,
                     clip_corner_radii: SHARP_CLIP,
+                    clamp_to_uv: false,
                 }),
             );
 

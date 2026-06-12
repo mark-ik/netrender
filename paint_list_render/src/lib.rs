@@ -505,7 +505,12 @@ pub fn translate_paint_cmd_stream(
                     });
                 }
             },
-            PaintCmd::DrawBorder(border) => emit_border_first_cut(&mut scene, border, tid),
+            PaintCmd::DrawBorder(border) => match &border.details {
+                ple::BorderDetails::NinePatch(np) => {
+                    emit_nine_patch(&mut scene, border, np, &image_map, tid)
+                },
+                ple::BorderDetails::Normal(_) => emit_border_first_cut(&mut scene, border, tid),
+            },
             PaintCmd::DrawLinearGradient(g) => emit_linear_gradient(&mut scene, g, tid),
             PaintCmd::DrawRadialGradient(g) => emit_radial_gradient(&mut scene, g, tid),
             PaintCmd::DrawConicGradient(g) => emit_conic_gradient(&mut scene, g, tid),
@@ -805,6 +810,165 @@ fn emit_push_layer(scene: &mut Scene, spec: &ple::LayerSpec, tid: u32) {
         transform_id: tid,
         backdrop_filter: None,
     });
+}
+
+/// Lower a nine-patch (`border-image`) border. The source image is sliced into
+/// four corners, four edges, and an optional fill center; each region is sampled
+/// from the source by a UV sub-rect and drawn to its destination — corners
+/// scaled, edges stretched or tiled per `repeat_horizontal` / `repeat_vertical`,
+/// the center filled when `fill`. One source image, UV-sampled per region (no
+/// producer-side pre-slicing), and partial `repeat` tiles are UV-cropped rather
+/// than clipped — so no clip-layer edge AA.
+///
+/// `border.placement.bounds` is the border-image area; `border.widths` the
+/// destination border widths; `np.slice` the source slice insets (px); `np.width`
+/// / `np.height` the source intrinsic size.
+fn emit_nine_patch(
+    scene: &mut Scene,
+    border: &ple::BorderItem,
+    np: &ple::NinePatchBorder,
+    image_map: &HashMap<ImageKey, NrImageKey>,
+    tid: u32,
+) {
+    let key = match np.source {
+        ple::NinePatchSource::Image(k, _rendering) => match image_map.get(&k) {
+            Some(&nr) => nr,
+            None => {
+                warn!("[paint translator] nine-patch source image {:?} unregistered; skipping", k);
+                return;
+            },
+        },
+        // Gradient sources emit directly elsewhere; only image sources slice here.
+        _ => {
+            warn!("[paint translator] nine-patch gradient source deferred");
+            return;
+        },
+    };
+    let (w, h) = (np.width as f32, np.height as f32);
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let (dx0, dy0, dx1, dy1) = rect_corners(&border.placement.bounds);
+    let (wt, wr, wb, wl) =
+        (border.widths.top, border.widths.right, border.widths.bottom, border.widths.left);
+    let (st, sr, sb, sl) =
+        (np.slice.top as f32, np.slice.right as f32, np.slice.bottom as f32, np.slice.left as f32);
+
+    // Sample source px-rect (sx0,sy0)-(sx1,sy1) onto dest rect (a,b)-(c,d), scaled.
+    // `push_image_clamped` crops to the UV sub-rect so a slice region never bleeds
+    // its neighbour's source pixels across the seam.
+    let img = |scene: &mut Scene, a, b, c, d, sx0: f32, sy0: f32, sx1: f32, sy1: f32| {
+        if c - a <= 0.0 || d - b <= 0.0 || sx1 - sx0 <= 0.0 || sy1 - sy0 <= 0.0 {
+            return;
+        }
+        scene.push_image_clamped(
+            a,
+            b,
+            c,
+            d,
+            [sx0 / w, sy0 / h, sx1 / w, sy1 / h],
+            [1.0, 1.0, 1.0, 1.0],
+            key,
+            tid,
+            NO_CLIP,
+        );
+    };
+
+    // Corners — always scaled.
+    img(scene, dx0, dy0, dx0 + wl, dy0 + wt, 0.0, 0.0, sl, st);
+    img(scene, dx1 - wr, dy0, dx1, dy0 + wt, w - sr, 0.0, w, st);
+    img(scene, dx0, dy1 - wb, dx0 + wl, dy1, 0.0, h - sb, sl, h);
+    img(scene, dx1 - wr, dy1 - wb, dx1, dy1, w - sr, h - sb, w, h);
+
+    // One edge: lay the source strip [s_along_lo..s_along_hi] × [s_cross_lo..hi]
+    // along the dest [d_along_lo..hi] at cross [d_cross_lo..hi], per `repeat`. For
+    // a horizontal edge `along` is x and `cross` is y; for a vertical edge they
+    // swap. The cross axis fills the border width; the tile's along-length scales
+    // proportionally.
+    #[allow(clippy::too_many_arguments)]
+    fn tile_edge(
+        scene: &mut Scene,
+        img: &dyn Fn(&mut Scene, f32, f32, f32, f32, f32, f32, f32, f32),
+        horizontal: bool,
+        d_along_lo: f32,
+        d_along_hi: f32,
+        d_cross_lo: f32,
+        d_cross_hi: f32,
+        s_along_lo: f32,
+        s_along_hi: f32,
+        s_cross_lo: f32,
+        s_cross_hi: f32,
+        repeat: ple::RepeatMode,
+    ) {
+        let d_len = d_along_hi - d_along_lo;
+        let d_cross = d_cross_hi - d_cross_lo;
+        let s_along = s_along_hi - s_along_lo;
+        let s_cross = s_cross_hi - s_cross_lo;
+        if d_len <= 0.0 || d_cross <= 0.0 || s_along <= 0.0 || s_cross <= 0.0 {
+            return;
+        }
+        // One tile covering dest along [a0,a1] sampling source along [su0,su1].
+        let put = |scene: &mut Scene, a0: f32, a1: f32, su0: f32, su1: f32| {
+            if horizontal {
+                img(scene, a0, d_cross_lo, a1, d_cross_hi, su0, s_cross_lo, su1, s_cross_hi);
+            } else {
+                img(scene, d_cross_lo, a0, d_cross_hi, a1, s_cross_lo, su0, s_cross_hi, su1);
+            }
+        };
+        // Natural tile along-length: the source strip scaled so its cross fills the
+        // border width.
+        let natural = (s_along * (d_cross / s_cross)).max(1.0);
+        match repeat {
+            ple::RepeatMode::Stretch => put(scene, d_along_lo, d_along_hi, s_along_lo, s_along_hi),
+            ple::RepeatMode::Round => {
+                // Rescale so a whole number of tiles fills the edge exactly.
+                let n = (d_len / natural).round().max(1.0);
+                let t = d_len / n;
+                for i in 0..(n as usize) {
+                    let a0 = d_along_lo + i as f32 * t;
+                    put(scene, a0, a0 + t, s_along_lo, s_along_hi);
+                }
+            },
+            ple::RepeatMode::Space => {
+                // Whole tiles at natural size with equal gaps; first/last at the
+                // edges. None if not even one fits.
+                let n = (d_len / natural).floor();
+                if n < 1.0 {
+                    return;
+                }
+                let gap = if n > 1.0 { (d_len - n * natural) / (n - 1.0) } else { 0.0 };
+                // A lone tile (no room for two) centers in the edge.
+                let base = if n == 1.0 { d_along_lo + (d_len - natural) / 2.0 } else { d_along_lo };
+                for i in 0..(n as usize) {
+                    let a0 = base + i as f32 * (natural + gap);
+                    put(scene, a0, a0 + natural, s_along_lo, s_along_hi);
+                }
+            },
+            ple::RepeatMode::Repeat => {
+                // Whole tiles from the start, then a UV-cropped partial.
+                let mut a0 = d_along_lo;
+                let mut guard = 0;
+                while a0 < d_along_hi - 0.01 && guard < 4096 {
+                    let a1 = (a0 + natural).min(d_along_hi);
+                    let su1 = s_along_lo + s_along * ((a1 - a0) / natural);
+                    put(scene, a0, a1, s_along_lo, su1);
+                    a0 += natural;
+                    guard += 1;
+                }
+            },
+        }
+    }
+
+    // Top + bottom edges (horizontal), then left + right (vertical).
+    tile_edge(scene, &img, true, dx0 + wl, dx1 - wr, dy0, dy0 + wt, sl, w - sr, 0.0, st, np.repeat_horizontal);
+    tile_edge(scene, &img, true, dx0 + wl, dx1 - wr, dy1 - wb, dy1, sl, w - sr, h - sb, h, np.repeat_horizontal);
+    tile_edge(scene, &img, false, dy0 + wt, dy1 - wb, dx0, dx0 + wl, st, h - sb, 0.0, sl, np.repeat_vertical);
+    tile_edge(scene, &img, false, dy0 + wt, dy1 - wb, dx1 - wr, dx1, st, h - sb, w - sr, w, np.repeat_vertical);
+
+    // Center — only with `fill`; stretched (tiled fill is a refinement).
+    if np.fill {
+        img(scene, dx0 + wl, dy0 + wt, dx1 - wr, dy1 - wb, sl, st, w - sr, h - sb);
+    }
 }
 
 fn emit_border_first_cut(scene: &mut Scene, border: &ple::BorderItem, tid: u32) {

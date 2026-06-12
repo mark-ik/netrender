@@ -323,6 +323,14 @@ pub struct SceneImage {
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
+    /// When set, the sampler is *clamped to the `uv` sub-rect*: the source is
+    /// cropped to that region before drawing, so bilinear filtering at the
+    /// sub-rect edges does not bleed into adjacent source pixels. Used by
+    /// nine-patch (`border-image`) slicing and any sub-rect / sprite-sheet blit
+    /// where neighbouring atlas cells must not leak across the seam. `false`
+    /// (default) samples the whole image with the brush's extend mode.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub clamp_to_uv: bool,
 }
 
 /// Phase 11' stroked rect / rounded-rect primitive — for borders,
@@ -1103,6 +1111,7 @@ impl Scene {
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
+            clamp_to_uv: false,
         }));
     }
 
@@ -1319,6 +1328,39 @@ impl Scene {
             transform_id,
             clip_rect,
             clip_corner_radii: SHARP_CLIP,
+            clamp_to_uv: false,
+        }));
+    }
+
+    /// Like [`Self::push_image_full`], but **clamps the sampler to the `uv`
+    /// sub-rect**: the source is cropped to that region before drawing, so
+    /// bilinear filtering at the sub-rect edges cannot bleed in adjacent source
+    /// pixels (nine-patch slice seams, sprite-sheet cells).
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_image_clamped(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        uv: [f32; 4],
+        color: [f32; 4],
+        key: ImageKey,
+        transform_id: u32,
+        clip_rect: [f32; 4],
+    ) {
+        self.ops.push(SceneOp::Image(SceneImage {
+            x0,
+            y0,
+            x1,
+            y1,
+            uv,
+            color,
+            key,
+            transform_id,
+            clip_rect,
+            clip_corner_radii: SHARP_CLIP,
+            clamp_to_uv: true,
         }));
     }
 
@@ -1824,6 +1866,7 @@ impl Scene {
             transform_id,
             clip_rect,
             clip_corner_radii,
+            clamp_to_uv: false,
         }));
     }
 
