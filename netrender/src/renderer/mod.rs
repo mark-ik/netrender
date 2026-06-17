@@ -734,8 +734,12 @@ impl Renderer {
             // dimensions.
             let prefix_tex = self.render_scene_to_texture(rast, tc, &prefix);
 
-            // Blur it.
-            let SceneFilter::Blur(radius) = filter;
+            // Blur it. `backdrop-filter` only supports blur today; the color
+            // ops exist for element `filter` (`SceneLayer::filters`), so skip a
+            // non-blur backdrop defensively rather than mis-render it.
+            let SceneFilter::Blur(radius) = filter else {
+                continue;
+            };
             let blurred = self.build_blurred_image(prefix_tex, scene.viewport_width, radius);
 
             // Register as an ImageKey on the rasterizer's

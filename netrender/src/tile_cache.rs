@@ -496,8 +496,26 @@ fn hash_gradient(h: &mut DefaultHasher, g: &SceneGradient) {
     }
 }
 
+/// Hash a single filter function (discriminant + its `f32` amount) into the
+/// layer key, so a filter change invalidates the cached tile.
+fn hash_scene_filter(h: &mut DefaultHasher, f: crate::scene::SceneFilter) {
+    use crate::scene::SceneFilter as F;
+    let (tag, v) = match f {
+        F::Blur(v) => (0u8, v),
+        F::Brightness(v) => (1, v),
+        F::Contrast(v) => (2, v),
+        F::Grayscale(v) => (3, v),
+        F::HueRotate(v) => (4, v),
+        F::Invert(v) => (5, v),
+        F::Saturate(v) => (6, v),
+        F::Sepia(v) => (7, v),
+    };
+    h.write_u8(tag);
+    h.write_u32(v.to_bits());
+}
+
 fn hash_push_layer(h: &mut DefaultHasher, layer: &crate::scene::SceneLayer) {
-    use crate::scene::{SceneClip, SceneFilter};
+    use crate::scene::SceneClip;
     h.write_u32(layer.alpha.to_bits());
     h.write_u8(layer.blend_mode as u8);
     // Roadmap C3 — compose mode is part of the layer's visible
@@ -508,10 +526,15 @@ fn hash_push_layer(h: &mut DefaultHasher, layer: &crate::scene::SceneLayer) {
     // over (pre-rendered blurred prefix); include in the hash.
     match layer.backdrop_filter {
         None => h.write_u8(0),
-        Some(SceneFilter::Blur(r)) => {
+        Some(f) => {
             h.write_u8(1);
-            h.write_u32(r.to_bits());
+            hash_scene_filter(h, f);
         }
+    }
+    // CSS `filter` chain on the layer's own output — part of its visible identity.
+    h.write_usize(layer.filters.len());
+    for f in &layer.filters {
+        hash_scene_filter(h, *f);
     }
     match &layer.clip {
         SceneClip::None => h.write_u8(0),

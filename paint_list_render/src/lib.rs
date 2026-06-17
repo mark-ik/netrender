@@ -851,7 +851,29 @@ fn emit_push_clip(scene: &mut Scene, spec: &ple::ClipSpec, tid: u32) {
         compose: netrender::SceneCompose::SrcOver,
         transform_id: tid,
         backdrop_filter: None,
+        filters: Vec::new(),
     });
+}
+
+/// Map a paint-list `FilterOp` to a netrender `SceneFilter`. `Opacity` returns
+/// `None` — it folds into the layer alpha, not the output-filter chain.
+fn filter_op_to_scene(f: &ple::FilterOp) -> Option<netrender::SceneFilter> {
+    use netrender::SceneFilter as F;
+    use ple::FilterOp as O;
+    Some(match *f {
+        O::Blur(r) => F::Blur(r),
+        O::Brightness(v) => F::Brightness(v),
+        O::Contrast(v) => F::Contrast(v),
+        O::Grayscale(v) => F::Grayscale(v),
+        O::HueRotate(v) => F::HueRotate(v),
+        O::Invert(v) => F::Invert(v),
+        O::Saturate(v) => F::Saturate(v),
+        O::Sepia(v) => F::Sepia(v),
+        O::Opacity(_) => return None,
+        // `drop-shadow()` is its own increment (an element-alpha shadow, like
+        // box-shadow); `color-matrix()` (arbitrary 4x5) is a follow-up.
+        O::DropShadow { .. } | O::ColorMatrix(_) => return None,
+    })
 }
 
 fn compose_with_origin(t: &Transform, ox: f32, oy: f32) -> Transform {
@@ -867,13 +889,15 @@ fn compose_with_origin(t: &Transform, ox: f32, oy: f32) -> Transform {
 fn emit_push_layer(scene: &mut Scene, spec: &ple::LayerSpec, tid: u32) {
     let blend_mode = mix_blend_mode_to_scene(spec.mix_blend_mode);
     let mut alpha = spec.opacity;
-    // Filter-chain opacity collapses into the layer's alpha; other
-    // filters need backdrop machinery and are deferred.
+    // `opacity()` in the chain folds into the layer alpha; the other filter
+    // functions apply to the layer's own rasterized output (SceneLayer::filters,
+    // rendered offscreen + filtered + composited by netrender).
     for filter in &spec.filters {
         if let ple::FilterOp::Opacity(a) = filter {
             alpha *= *a;
         }
     }
+    let filters: Vec<netrender::SceneFilter> = spec.filters.iter().filter_map(filter_op_to_scene).collect();
     let _ = spec.raster_space; // Local vs Screen — deferred
     let _ = spec.flags;        // BLEND_CONTAINER etc. — deferred
     let _ = &spec.mask;        // alpha-mask layer — deferred
@@ -884,6 +908,7 @@ fn emit_push_layer(scene: &mut Scene, spec: &ple::LayerSpec, tid: u32) {
         compose: netrender::SceneCompose::SrcOver,
         transform_id: tid,
         backdrop_filter: None,
+        filters,
     });
 }
 
@@ -1429,6 +1454,37 @@ mod tests {
         assert_eq!(scene.ops.len(), 2);
         assert!(matches!(scene.ops[0], netrender::SceneOp::PushLayer(_)));
         assert!(matches!(scene.ops[1], netrender::SceneOp::PopLayer));
+    }
+
+    #[test]
+    fn push_layer_carries_filter_chain() {
+        // CSS `filter` lands on `SceneLayer::filters` (the layer's own output
+        // chain); `opacity()` in the chain folds into the layer alpha instead.
+        let list = list_with(
+            DeviceIntSize::new(800, 600),
+            vec![
+                PaintCmd::PushLayer(ple::LayerSpec {
+                    filters: vec![
+                        ple::FilterOp::Grayscale(1.0),
+                        ple::FilterOp::Opacity(0.5),
+                        ple::FilterOp::Blur(2.0),
+                    ],
+                    ..ple::LayerSpec::default()
+                }),
+                PaintCmd::PopLayer,
+            ],
+        );
+        let scene = translate_paint_list(&list);
+        let layer = match &scene.ops[0] {
+            netrender::SceneOp::PushLayer(l) => l,
+            other => panic!("expected PushLayer, got {other:?}"),
+        };
+        assert_eq!(
+            layer.filters,
+            vec![netrender::SceneFilter::Grayscale(1.0), netrender::SceneFilter::Blur(2.0)],
+            "color/blur ops map to SceneLayer.filters in order"
+        );
+        assert_eq!(layer.alpha, 0.5, "opacity() folds into the layer alpha");
     }
 
     #[test]

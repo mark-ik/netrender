@@ -710,17 +710,26 @@ pub enum SceneClip {
     Path(ScenePath),
 }
 
-/// Roadmap D1 — backdrop filter applied to the *parent* scene
-/// content beneath a layer. Currently supports `Blur(radius_px)`;
-/// other CSS `backdrop-filter` values (saturate, brightness,
-/// contrast, drop-shadow) can be added as new variants when a real
-/// consumer needs them.
+/// A single filter function, as used both for `backdrop-filter` (on the
+/// *parent* content beneath a layer, D1) and CSS `filter` (on a layer's *own*
+/// output — see [`SceneLayer::filters`]). `Blur` is a spatial pass; the rest are
+/// per-pixel color transforms (CSS Filter Effects §2 reference functions). The
+/// `f32` is the CSS amount: `Blur` a radius in device px, `HueRotate` an angle
+/// in degrees, the others a unitless amount (`0.0` = identity for most, `1.0` =
+/// identity for `Brightness`/`Contrast`/`Saturate`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SceneFilter {
     /// Gaussian blur with the given radius in device pixels.
-    /// Maps to CSS `backdrop-filter: blur(<radius>px)`.
     Blur(f32),
+    Brightness(f32),
+    Contrast(f32),
+    Grayscale(f32),
+    /// Hue rotation by an angle in degrees.
+    HueRotate(f32),
+    Invert(f32),
+    Saturate(f32),
+    Sepia(f32),
 }
 
 /// Phase 12b' — a nested layer scope opened by [`SceneOp::PushLayer`]
@@ -759,6 +768,13 @@ pub struct SceneLayer {
     /// pass the filter description and netrender does the
     /// pre-render → blur → composite dance.
     pub backdrop_filter: Option<SceneFilter>,
+    /// CSS `filter` — the chain applied to this layer's *own* rendered output
+    /// (post-rasterization), in order, before it composites into the parent.
+    /// Empty = no filter (the common case). Distinct from `backdrop_filter`,
+    /// which filters what is *behind* the layer. The renderer renders the
+    /// layer's ops to an offscreen, applies the chain, then composites the
+    /// result (carrying `alpha` / `blend_mode` / `clip`).
+    pub filters: Vec<SceneFilter>,
 }
 
 impl SceneLayer {
@@ -772,6 +788,7 @@ impl SceneLayer {
             compose: SceneCompose::SrcOver,
             transform_id: 0,
             backdrop_filter: None,
+            filters: Vec::new(),
         }
     }
 
@@ -785,6 +802,7 @@ impl SceneLayer {
             compose: SceneCompose::SrcOver,
             transform_id: 0,
             backdrop_filter: None,
+            filters: Vec::new(),
         }
     }
 
@@ -814,6 +832,7 @@ impl SceneLayer {
             compose: SceneCompose::DestIn,
             transform_id: 0,
             backdrop_filter: None,
+            filters: Vec::new(),
         }
     }
 }
@@ -1540,6 +1559,7 @@ impl Scene {
             // content's scroll transform.
             transform_id: 0,
             backdrop_filter: None,
+            filters: Vec::new(),
         });
         xf_id
     }
