@@ -837,13 +837,10 @@ fn emit_push_clip(scene: &mut Scene, spec: &ple::ClipSpec, tid: u32) {
                 ],
             }
         },
-        ple::ClipKind::Path(_) => {
-            // Path clips need kurbo::BezPath reconstruction; same
-            // deferred plumbing as DrawPath. Fall back to no-clip so
-            // the layer still pushes and pairs correctly with PopClip.
-            warn!("[paint translator] PushClip(Path) deferred; pushing unclipped layer");
-            SceneClip::None
-        },
+        // Arbitrary-path clip (CSS clip-path basic shapes). The scene + vello
+        // rasterizer already lower `SceneClip::Path` to a kurbo BezPath clip
+        // (Phase 9b'); reuse the same path reconstruction as DrawPath.
+        ple::ClipKind::Path(pd) => SceneClip::Path(path_data_to_scene_path(pd)),
     };
     // The clip layer carries the active transform so its geometry is
     // resolved in the same coordinate space as the clipped content.
