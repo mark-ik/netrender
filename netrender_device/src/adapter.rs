@@ -37,7 +37,7 @@ pub struct WgpuDevice {
     brush_blur: Mutex<HashMap<wgpu::TextureFormat, BrushBlurPipeline>>,
     // Cache key: (target_format, has_rounded_corners). Phase 9A/9C
     // rounded-rect clip mask coverage.
-    clip_rectangle: Mutex<HashMap<(wgpu::TextureFormat, bool), ClipRectanglePipeline>>,
+    clip_rectangle: Mutex<HashMap<(wgpu::TextureFormat, bool, bool), ClipRectanglePipeline>>,
 }
 
 impl WgpuDevice {
@@ -90,11 +90,14 @@ impl WgpuDevice {
         &self,
         format: wgpu::TextureFormat,
         has_rounded_corners: bool,
+        invert: bool,
     ) -> ClipRectanglePipeline {
         let mut cache = self.clip_rectangle.lock().expect("clip_rectangle lock");
         cache
-            .entry((format, has_rounded_corners))
-            .or_insert_with(|| build_clip_rectangle(&self.core.device, format, has_rounded_corners))
+            .entry((format, has_rounded_corners, invert))
+            .or_insert_with(|| {
+                build_clip_rectangle(&self.core.device, format, has_rounded_corners, invert)
+            })
             .clone()
     }
 

@@ -50,6 +50,7 @@ pub fn build_clip_rectangle(
     device: &wgpu::Device,
     target_format: wgpu::TextureFormat,
     has_rounded_corners: bool,
+    invert: bool,
 ) -> ClipRectanglePipeline {
     let layout = crate::binding::cs_clip_rectangle_layout(device);
 
@@ -64,15 +65,19 @@ pub fn build_clip_rectangle(
         immediate_size: 0,
     });
 
-    let constants: &[(&str, f64)] = &[(
-        "HAS_ROUNDED_CORNERS",
-        if has_rounded_corners { 1.0 } else { 0.0 },
-    )];
+    let constants: &[(&str, f64)] = &[
+        (
+            "HAS_ROUNDED_CORNERS",
+            if has_rounded_corners { 1.0 } else { 0.0 },
+        ),
+        ("INVERT", if invert { 1.0 } else { 0.0 }),
+    ];
 
-    let label = if has_rounded_corners {
-        "cs_clip_rectangle rounded"
-    } else {
-        "cs_clip_rectangle fast_path"
+    let label = match (has_rounded_corners, invert) {
+        (true, false) => "cs_clip_rectangle rounded",
+        (false, false) => "cs_clip_rectangle fast_path",
+        (true, true) => "cs_clip_rectangle rounded inverted",
+        (false, true) => "cs_clip_rectangle fast_path inverted",
     };
 
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

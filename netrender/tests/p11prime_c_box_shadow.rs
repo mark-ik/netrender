@@ -78,6 +78,7 @@ fn p11c_01_card_with_drop_shadow() {
         [16.0, 16.0, 48.0, 48.0], // shadow source bounds
         4.0,                      // corner radius
         2.0,                      // blur radius (CSS px); was step=1/DIM ≈ σ=1
+        false,                    // not inverted (outset)
     );
 
     // Step 2: build a scene compositing the shadow under a white card.
@@ -211,7 +212,7 @@ fn p11c_02_blur_radius_extends_halo() {
 
         const KEY: u64 = 0xBEEF_BEEF;
         let bounds = [48.0_f32, 48.0, 80.0, 80.0]; // 32×32 card centered
-        renderer.build_box_shadow_mask(KEY, D, bounds, 0.0, blur_radius_px);
+        renderer.build_box_shadow_mask(KEY, D, bounds, 0.0, blur_radius_px, false);
 
         let mut scene = Scene::new(D, D);
         scene.push_image_full(

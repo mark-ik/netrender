@@ -388,6 +388,7 @@ impl Renderer {
         bounds: [f32; 4],
         corner_radius: f32,
         blur_radius_px: f32,
+        invert: bool,
     ) {
         use crate::filter::{blur_pass_callback, clip_rectangle_callback, make_bilinear_sampler};
         use crate::render_graph::{RenderGraph, Task, TaskId};
@@ -396,7 +397,9 @@ impl Renderer {
         let queue = self.wgpu_device.core.queue.clone();
 
         let mask_format = wgpu::TextureFormat::Rgba8Unorm;
-        let clip_pipe = self.wgpu_device.ensure_clip_rectangle(mask_format, true);
+        // `invert` builds a `1 - coverage` mask (the inset-shadow primitive); blur
+        // is linear so the blurred inverted mask equals `1 - blurred coverage`.
+        let clip_pipe = self.wgpu_device.ensure_clip_rectangle(mask_format, true, invert);
         let blur_pipe = self.wgpu_device.ensure_brush_blur(mask_format);
         let sampler = make_bilinear_sampler(&device);
 

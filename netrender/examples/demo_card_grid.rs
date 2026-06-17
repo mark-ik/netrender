@@ -520,6 +520,7 @@ fn main() {
         [r5[0], r5[1], r5[2], r5[3]],
         RADIUS,
         12.0,
+        false,
     );
 
     // Scene build: image_sources is on the Scene, the shadow is a

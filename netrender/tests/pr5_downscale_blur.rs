@@ -34,7 +34,7 @@ mod gpu_smoke {
         let inset = (DIM as f32 - 96.0) * 0.5;
         let bounds = [inset, inset, DIM as f32 - inset, DIM as f32 - inset];
 
-        renderer.build_box_shadow_mask(1, DIM, bounds, 0.0, blur_radius);
+        renderer.build_box_shadow_mask(1, DIM, bounds, 0.0, blur_radius, false);
 
         // Pull the registered mask out via vello's atlas isn't
         // straightforward; instead, render the mask through a Scene

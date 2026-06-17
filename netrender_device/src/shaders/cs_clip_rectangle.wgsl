@@ -24,6 +24,13 @@
 
 override HAS_ROUNDED_CORNERS: bool = true;
 
+// When true, output `1 - coverage` instead of `coverage`. An inverted mask of a
+// rect is the inset-box-shadow primitive: blurred (blur is linear, so
+// `blur(1 - coverage) == 1 - blur(coverage)`), then composited tinted and
+// clipped to the box, it paints the shadow everywhere except the rect (the
+// shadow's unshadowed "hole").
+override INVERT: bool = false;
+
 struct ClipParams {
     /// Rect bounds in target-pixel space: `(x0, y0, x1, y1)`.
     bounds: vec4<f32>,
@@ -82,5 +89,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         coverage = clamp(0.5 - d, 0.0, 1.0);
     }
 
-    return vec4<f32>(coverage, coverage, coverage, coverage);
+    let out = select(coverage, 1.0 - coverage, INVERT);
+    return vec4<f32>(out, out, out, out);
 }

@@ -73,10 +73,15 @@ pub struct BoxShadowMaskRequest {
     /// Square mask texture side length (covers the scene; the shadow
     /// box is drawn at `bounds` within it, in absolute scene coords).
     pub dim: u32,
-    /// Shadow box in absolute scene coords `[x0, y0, x1, y1]`.
+    /// Shadow box in absolute scene coords `[x0, y0, x1, y1]`. For an outset
+    /// shadow this is the offset/spread box; for an inset shadow it is the
+    /// unshadowed inner "hole".
     pub bounds: [f32; 4],
     pub corner_radius: f32,
     pub blur_radius_px: f32,
+    /// Produce a `1 - coverage` mask: the inset-box-shadow primitive (shadow
+    /// everywhere except `bounds`). `false` for the normal outset mask.
+    pub invert: bool,
 }
 
 /// The full translator output: a [`netrender::Scene`] plus the side
@@ -642,8 +647,46 @@ pub fn translate_paint_cmd_stream(
                         }
                     } else {
                         // Blurred inset: an inverse Gaussian mask of the hole,
-                        // composited tinted and clipped to the box (next step).
-                        warn!("[paint translator] blurred inset box-shadow deferred");
+                        // composited tinted over the box and clipped to it. The
+                        // inverted mask is `1 - blurred coverage(hole)`: full shadow
+                        // at the box edge, fading across the hole boundary, empty
+                        // inside the hole. Lift box + hole to absolute coords (the
+                        // mask lives in absolute scene space).
+                        let m = transform_at(&scene, tid).m;
+                        let (bax0, bay0) = apply_transform_2d(&m, bx0, by0);
+                        let (bax1, bay1) = apply_transform_2d(&m, bx1, by1);
+                        let (box_x0, box_x1) = (bax0.min(bax1), bax0.max(bax1));
+                        let (box_y0, box_y1) = (bay0.min(bay1), bay0.max(bay1));
+                        let (hax0, hay0) = apply_transform_2d(&m, hx0, hy0);
+                        let (hax1, hay1) = apply_transform_2d(&m, hx1, hy1);
+                        let (hole_x0, hole_x1) = (hax0.min(hax1), hax0.max(hax1));
+                        let (hole_y0, hole_y1) = (hay0.min(hay1), hay0.max(hay1));
+
+                        let key = BOX_SHADOW_MASK_KEY_BASE + box_shadow_masks.len() as u64;
+                        box_shadow_masks.push(BoxShadowMaskRequest {
+                            key,
+                            dim: mask_dim,
+                            bounds: [hole_x0, hole_y0, hole_x1, hole_y1],
+                            corner_radius: 0.0,
+                            blur_radius_px: s.blur_radius,
+                            invert: true,
+                        });
+
+                        // Sample the inverted mask over the box rect, clipped to it.
+                        // The mask covers the whole scene, so box pixels read
+                        // `1 - coverage`; the clip + quad confine the shadow to the box.
+                        let dim_f = mask_dim as f32;
+                        scene.push_image_full(
+                            box_x0,
+                            box_y0,
+                            box_x1,
+                            box_y1,
+                            [box_x0 / dim_f, box_y0 / dim_f, box_x1 / dim_f, box_y1 / dim_f],
+                            color_to_array(&s.color),
+                            key,
+                            0, // absolute coords already; identity transform
+                            [box_x0, box_y0, box_x1, box_y1],
+                        );
                     }
                 } else {
                     // The offset + spread box, in element-local coords.
@@ -686,6 +729,7 @@ pub fn translate_paint_cmd_stream(
                             bounds: [sx0, sy0, sx1, sy1],
                             corner_radius: 0.0,
                             blur_radius_px: s.blur_radius,
+                            invert: false,
                         });
 
                         // The blurred halo extends ~blur_radius beyond the
