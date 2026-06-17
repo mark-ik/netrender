@@ -608,9 +608,43 @@ pub fn translate_paint_cmd_stream(
                 });
             },
             PaintCmd::DrawShadow(s) => {
-                // Inset shadows deferred (need clip-difference).
                 if matches!(s.clip_mode, ple::BoxShadowClipMode::Inset) {
-                    warn!("[paint translator] inset box-shadow deferred");
+                    // Inset: the shadow fills `box_bounds` (the padding box) MINUS
+                    // an inner "hole" — the box offset by `offset` and contracted by
+                    // `spread` — clipped to `box_bounds`. CSS Backgrounds-3 §7.2.
+                    let b = &s.box_bounds;
+                    let (bx0, by0, bx1, by1) = (b.min.x, b.min.y, b.max.x, b.max.y);
+                    let hx0 = bx0 + s.offset.x + s.spread_radius;
+                    let hy0 = by0 + s.offset.y + s.spread_radius;
+                    let hx1 = bx1 + s.offset.x - s.spread_radius;
+                    let hy1 = by1 + s.offset.y - s.spread_radius;
+                    if s.blur_radius <= 0.0 {
+                        // Hard inset: the frame between the box and the (box-clamped)
+                        // hole, as up to four solid rects in local coords + tid.
+                        let col = color_to_array(&s.color);
+                        let hcx0 = hx0.max(bx0);
+                        let hcy0 = hy0.max(by0);
+                        let hcx1 = hx1.min(bx1);
+                        let hcy1 = hy1.min(by1);
+                        let mut strip = |x0: f32, y0: f32, x1: f32, y1: f32| {
+                            if x1 > x0 && y1 > y0 {
+                                scene.push_rect_transformed(x0, y0, x1, y1, col, tid);
+                            }
+                        };
+                        if hcx1 <= hcx0 || hcy1 <= hcy0 {
+                            // Hole misses the box: the whole box is shadowed.
+                            strip(bx0, by0, bx1, by1);
+                        } else {
+                            strip(bx0, by0, bx1, hcy0); // top
+                            strip(bx0, hcy1, bx1, by1); // bottom
+                            strip(bx0, hcy0, hcx0, hcy1); // left
+                            strip(hcx1, hcy0, bx1, hcy1); // right
+                        }
+                    } else {
+                        // Blurred inset: an inverse Gaussian mask of the hole,
+                        // composited tinted and clipped to the box (next step).
+                        warn!("[paint translator] blurred inset box-shadow deferred");
+                    }
                 } else {
                     // The offset + spread box, in element-local coords.
                     let b = &s.box_bounds;
