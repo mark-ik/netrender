@@ -64,7 +64,7 @@ pub use crate::tile_cache::{TileCache, TileCoord};
 // `WgpuHandles` and run render-graph tasks (blur, clip mask) whose
 // outputs feed into vello scenes via `Renderer::insert_image_vello`.
 // `Compositor`/`LayerPresent`/`PresentedFrame` are the path-(b′)
-// trait surface; consumers (servo-wgpu, etc.) implement `Compositor`
+// trait surface; consumers (serval, etc.) implement `Compositor`
 // for native-compositor handoff.
 #[cfg(not(target_arch = "wasm32"))]
 pub use netrender_device::boot;

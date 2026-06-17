@@ -51,7 +51,7 @@ These two are the source of truth for the live architecture.
 - [`2026-05-05_compositor_handoff_path_b_prime.md`](2026-05-05_compositor_handoff_path_b_prime.md)
   — axiom-14 native-compositor handoff via path (b′). Sub-phases
   5.1–5.4 shipped on netrender side (commit `9447a852b`); 5.5
-  servo-wgpu adapter pending in separate workspace. Roadmap entry:
+  serval adapter pending in separate workspace. Roadmap entry:
   D3.
 - [`2026-05-06_webgl_over_wgpu_plan.md`](2026-05-06_webgl_over_wgpu_plan.md)
   — WebGL-over-wgpu companion lane. G0–G6 sequence, gated on
