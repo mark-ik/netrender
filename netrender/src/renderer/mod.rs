@@ -190,6 +190,15 @@ fn build_prefix_scene(scene: &Scene, cutoff_idx: usize) -> Scene {
     prefix
 }
 
+/// Sentinel `ImageKey` region for backdrop-filter results — the top of the u64
+/// space (same convention as the `u64::MAX` font sentinel), counting down.
+const BACKDROP_FILTER_KEY_BASE: ImageKey = u64::MAX - 1;
+/// Sentinel `ImageKey` region for element-filter results, counting down from the
+/// midpoint — disjoint from [`BACKDROP_FILTER_KEY_BASE`] so the two passes can't
+/// collide, and a key above this marks a backdrop image (used to keep element
+/// `filter` from filtering the backdrop).
+const ELEMENT_FILTER_KEY_BASE: ImageKey = u64::MAX / 2;
+
 /// True if any layer carries a non-empty CSS `filter` chain (element filter).
 fn has_element_filter(scene: &Scene) -> bool {
     use crate::scene::SceneOp;
@@ -233,7 +242,16 @@ fn build_layer_content_scene(scene: &Scene, push_idx: usize, pop_idx: usize) -> 
     content.image_sources = scene.image_sources.clone();
     content.root_alpha = scene.root_alpha;
     content.root_blend_mode = scene.root_blend_mode;
-    content.ops = scene.ops[push_idx + 1..pop_idx].to_vec();
+    // The layer's own content, minus any backdrop-filter image the backdrop pass
+    // injected as the first content op: CSS `filter` must affect only the
+    // element, never the backdrop. Backdrop sentinel keys sit above the element
+    // region, so a high key marks the injected backdrop image. (It stays in the
+    // outer scene, behind the element's filtered result — see the splice below.)
+    content.ops = scene.ops[push_idx + 1..pop_idx]
+        .iter()
+        .filter(|op| !matches!(op, SceneOp::Image(im) if im.key > ELEMENT_FILTER_KEY_BASE))
+        .cloned()
+        .collect();
     for op in &mut content.ops {
         if let SceneOp::PushLayer(l) = op {
             l.backdrop_filter = None;
@@ -729,6 +747,17 @@ impl Renderer {
     /// do (the fast path). Backdrop filters run first (they read the unfiltered
     /// prefix), then element CSS `filter` on the result (the layer's own output).
     /// Shared by every render entry so filters apply on all paths.
+    ///
+    /// Note on the per-frame `register_texture`: the filter passes mint a fresh
+    /// GPU texture under a deterministic sentinel key each frame and never
+    /// `unregister` it. This is deliberate, matching the backdrop pass: the tile
+    /// cache bakes the vello image handle into cached per-tile Scenes, so a clean
+    /// (reused) tile must still resolve its filter image next frame — which
+    /// requires the prior handle to stay alive. Freeing it would break tile reuse
+    /// for static filtered content. The cost is a slow growth of vello's
+    /// paint-texture table on heavily-animated filtered pages; a tile-cache-aware
+    /// key/handle reuse scheme is the proper fix and a shared follow-up with
+    /// backdrop-filter.
     fn preprocess_filters(
         &self,
         scene: &Scene,
@@ -890,11 +919,10 @@ impl Renderer {
             })
             .collect();
 
-        // Pick an ImageKey range that's unlikely to collide with
-        // consumer-assigned keys. Top of the u64 space is the
-        // convention here — same shape as the sentinel font's
-        // `u64::MAX` id.
-        let mut next_key: ImageKey = u64::MAX - 1;
+        // ImageKey region unlikely to collide with consumer keys (top of the u64
+        // space, same shape as the `u64::MAX` font sentinel), disjoint from the
+        // element-filter region.
+        let mut next_key: ImageKey = BACKDROP_FILTER_KEY_BASE;
 
         // Each backdrop filter shifts subsequent op indices by +1
         // (the injected SceneImage). Track the running offset.
@@ -1197,10 +1225,9 @@ impl Renderer {
             }
         }
 
-        // Image-key region disjoint from the backdrop pass (which counts down
-        // from the top of the u64 space). Element filters count down from the
-        // midpoint, so the two regions cannot realistically collide.
-        let mut next_key: ImageKey = u64::MAX / 2;
+        // Image-key region disjoint from the backdrop pass; both count down from
+        // their bases (see ELEMENT_FILTER_KEY_BASE).
+        let mut next_key: ImageKey = ELEMENT_FILTER_KEY_BASE;
 
         // Replacing an interior of `inner_len` ops with one image shifts later
         // indices by `1 - inner_len`. Track the running (signed) offset.
@@ -1220,7 +1247,15 @@ impl Renderer {
 
             let cur_push = (push_idx as isize + offset) as usize;
             let cur_pop = (pop_idx as isize + offset) as usize;
-            let inner_len = cur_pop - cur_push - 1;
+            // Keep a backdrop-filter image (the layer's first content op, marked
+            // by a sentinel key above the element region) behind the filtered
+            // result, so `backdrop-filter` + `filter` on one layer composites the
+            // unfiltered backdrop under the element's filtered content.
+            let content_start = match processed.ops.get(cur_push + 1) {
+                Some(SceneOp::Image(im)) if im.key > ELEMENT_FILTER_KEY_BASE => cur_push + 2,
+                _ => cur_push + 1,
+            };
+            let inner_len = cur_pop - content_start;
 
             let image = SceneOp::Image(SceneImage {
                 x0: bounds[0],
@@ -1238,8 +1273,8 @@ impl Renderer {
                 // CPU crop path can't run on it.
                 clamp_to_uv: false,
             });
-            // Replace the strict interior with the single filtered image.
-            processed.ops.splice(cur_push + 1..cur_pop, std::iter::once(image));
+            // Replace the (non-backdrop) interior with the single filtered image.
+            processed.ops.splice(content_start..cur_pop, std::iter::once(image));
             // Clear the layer's filters so it re-enters the no-filter fast path,
             // applying alpha/blend/clip over the filtered image.
             if let SceneOp::PushLayer(l) = &mut processed.ops[cur_push] {
