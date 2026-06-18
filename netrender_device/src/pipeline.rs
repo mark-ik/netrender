@@ -180,3 +180,63 @@ pub fn build_brush_blur(
 
     BrushBlurPipeline { pipeline, layout }
 }
+
+/// CSS `filter` color-matrix pipeline. Like `brush_blur`: off-screen
+/// intermediate, no depth, no blend (each pass writes the transformed pixel).
+#[derive(Clone)]
+pub struct ColorMatrixPipeline {
+    pub pipeline: wgpu::RenderPipeline,
+    pub layout: wgpu::BindGroupLayout,
+}
+
+/// Build the `cs_color_matrix` pipeline for `target_format`. Mirrors
+/// `build_brush_blur`; the per-filter matrix is supplied per-pass via the
+/// `ColorMatrixParams` uniform, so one pipeline serves every color filter.
+pub fn build_color_matrix(
+    device: &wgpu::Device,
+    target_format: wgpu::TextureFormat,
+) -> ColorMatrixPipeline {
+    let layout = crate::binding::cs_color_matrix_layout(device);
+
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("cs_color_matrix"),
+        source: wgpu::ShaderSource::Wgsl(crate::shader::CS_COLOR_MATRIX_WGSL.into()),
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("cs_color_matrix pipeline layout"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("cs_color_matrix"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+
+    ColorMatrixPipeline { pipeline, layout }
+}

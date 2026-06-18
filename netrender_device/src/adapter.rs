@@ -20,7 +20,8 @@ use std::sync::Mutex;
 
 use crate::core::{self, REQUIRED_FEATURES, WgpuHandles};
 use crate::pipeline::{
-    BrushBlurPipeline, ClipRectanglePipeline, build_brush_blur, build_clip_rectangle,
+    BrushBlurPipeline, ClipRectanglePipeline, ColorMatrixPipeline, build_brush_blur,
+    build_clip_rectangle, build_color_matrix,
 };
 use crate::readback;
 
@@ -38,6 +39,8 @@ pub struct WgpuDevice {
     // Cache key: (target_format, has_rounded_corners). Phase 9A/9C
     // rounded-rect clip mask coverage.
     clip_rectangle: Mutex<HashMap<(wgpu::TextureFormat, bool, bool), ClipRectanglePipeline>>,
+    // Cache key: target_format. CSS `filter` color-matrix pass.
+    color_matrix: Mutex<HashMap<wgpu::TextureFormat, ColorMatrixPipeline>>,
 }
 
 impl WgpuDevice {
@@ -55,6 +58,7 @@ impl WgpuDevice {
             core: handles,
             brush_blur: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
+            color_matrix: Mutex::new(HashMap::new()),
         })
     }
 
@@ -68,6 +72,7 @@ impl WgpuDevice {
             core: core::boot()?,
             brush_blur: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
+            color_matrix: Mutex::new(HashMap::new()),
         })
     }
 
@@ -78,6 +83,7 @@ impl WgpuDevice {
             core: core::boot_async().await?,
             brush_blur: Mutex::new(HashMap::new()),
             clip_rectangle: Mutex::new(HashMap::new()),
+            color_matrix: Mutex::new(HashMap::new()),
         })
     }
 
@@ -108,6 +114,15 @@ impl WgpuDevice {
         cache
             .entry(format)
             .or_insert_with(|| build_brush_blur(&self.core.device, format))
+            .clone()
+    }
+
+    /// Lazily build + cache the `cs_color_matrix` pipeline for `format`.
+    pub fn ensure_color_matrix(&self, format: wgpu::TextureFormat) -> ColorMatrixPipeline {
+        let mut cache = self.color_matrix.lock().expect("color_matrix lock");
+        cache
+            .entry(format)
+            .or_insert_with(|| build_color_matrix(&self.core.device, format))
             .clone()
     }
 

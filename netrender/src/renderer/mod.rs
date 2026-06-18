@@ -190,6 +190,160 @@ fn build_prefix_scene(scene: &Scene, cutoff_idx: usize) -> Scene {
     prefix
 }
 
+/// True if any layer carries a non-empty CSS `filter` chain (element filter).
+fn has_element_filter(scene: &Scene) -> bool {
+    use crate::scene::SceneOp;
+    scene
+        .ops
+        .iter()
+        .any(|op| matches!(op, SceneOp::PushLayer(l) if !l.filters.is_empty()))
+}
+
+/// Index of the `PopLayer` that matches the `PushLayer` at `push_idx` (depth
+/// counting). `None` if the scene is unbalanced (a consumer bug).
+fn matching_pop(ops: &[crate::scene::SceneOp], push_idx: usize) -> Option<usize> {
+    use crate::scene::SceneOp;
+    let mut depth: i32 = 0;
+    for (i, op) in ops.iter().enumerate().skip(push_idx) {
+        match op {
+            SceneOp::PushLayer(_) => depth += 1, // counts push_idx itself -> depth 1
+            SceneOp::PopLayer => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            },
+            _ => {},
+        }
+    }
+    None
+}
+
+/// The layer's *own content* — the ops strictly between `push_idx` and
+/// `pop_idx` — as a flat sub-scene (the same palette clones as
+/// [`build_prefix_scene`], so inner `transform_id`/`font_id`/`key` indices stay
+/// valid). The outer `PushLayer`/`PopLayer` are excluded: the layer's
+/// alpha/blend/clip get re-applied when the filtered image composites back.
+/// Nested filters/backdrops are stripped so this first cut does not recurse.
+fn build_layer_content_scene(scene: &Scene, push_idx: usize, pop_idx: usize) -> Scene {
+    use crate::scene::SceneOp;
+    let mut content = Scene::new(scene.viewport_width, scene.viewport_height);
+    content.transforms = scene.transforms.clone();
+    content.fonts = scene.fonts.clone();
+    content.image_sources = scene.image_sources.clone();
+    content.root_alpha = scene.root_alpha;
+    content.root_blend_mode = scene.root_blend_mode;
+    content.ops = scene.ops[push_idx + 1..pop_idx].to_vec();
+    for op in &mut content.ops {
+        if let SceneOp::PushLayer(l) = op {
+            l.backdrop_filter = None;
+            l.filters.clear();
+        }
+    }
+    // The interior is already balanced; this is a defensive no-op.
+    let mut depth: i32 = 0;
+    for op in &content.ops {
+        match op {
+            SceneOp::PushLayer(_) => depth += 1,
+            SceneOp::PopLayer => depth -= 1,
+            _ => {},
+        }
+    }
+    for _ in 0..depth.max(0) {
+        content.ops.push(SceneOp::PopLayer);
+    }
+    content
+}
+
+/// Identity color matrix (row-major 4x5; out RGBA = M * [r,g,b,a,1]).
+const FILTER_IDENTITY: [f32; 20] = [
+    1.0, 0.0, 0.0, 0.0, 0.0, //
+    0.0, 1.0, 0.0, 0.0, 0.0, //
+    0.0, 0.0, 1.0, 0.0, 0.0, //
+    0.0, 0.0, 0.0, 1.0, 0.0,
+];
+
+/// CSS Filter Effects L1 shorthand color functions as a 4x5 color matrix
+/// (row-major; out RGBA = M * [r,g,b,a,1]). Operates on **sRGB-encoded**,
+/// **straight** (non-premultiplied) color — the `cs_color_matrix` shader does
+/// the unpremultiply/clamp/re-premultiply around it. `Blur` is a spatial pass
+/// (not a matrix); the caller dispatches it separately, so it maps to identity
+/// here. Coefficients per the spec: saturate/hue-rotate use 0.213/0.715/0.072;
+/// grayscale uses the BT.709 0.2126/0.7152/0.0722; identity amounts are 1.0 for
+/// brightness/contrast/saturate and 0.0 for grayscale/sepia/invert/hue-rotate.
+fn scene_filter_to_matrix(f: crate::scene::SceneFilter) -> [f32; 20] {
+    use crate::scene::SceneFilter as F;
+    match f {
+        F::Blur(_) => FILTER_IDENTITY,
+        F::Grayscale(a) => {
+            let s = 1.0 - a.clamp(0.0, 1.0);
+            [
+                0.2126 + 0.7874 * s, 0.7152 - 0.7152 * s, 0.0722 - 0.0722 * s, 0.0, 0.0, //
+                0.2126 - 0.2126 * s, 0.7152 + 0.2848 * s, 0.0722 - 0.0722 * s, 0.0, 0.0, //
+                0.2126 - 0.2126 * s, 0.7152 - 0.7152 * s, 0.0722 + 0.9278 * s, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::Sepia(a) => {
+            let s = 1.0 - a.clamp(0.0, 1.0);
+            [
+                0.393 + 0.607 * s, 0.769 - 0.769 * s, 0.189 - 0.189 * s, 0.0, 0.0, //
+                0.349 - 0.349 * s, 0.686 + 0.314 * s, 0.168 - 0.168 * s, 0.0, 0.0, //
+                0.272 - 0.272 * s, 0.534 - 0.534 * s, 0.131 + 0.869 * s, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::Saturate(a) => {
+            let s = a.max(0.0);
+            [
+                0.213 + 0.787 * s, 0.715 - 0.715 * s, 0.072 - 0.072 * s, 0.0, 0.0, //
+                0.213 - 0.213 * s, 0.715 + 0.285 * s, 0.072 - 0.072 * s, 0.0, 0.0, //
+                0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::HueRotate(deg) => {
+            let t = deg.to_radians();
+            let (c, n) = (t.cos(), t.sin());
+            [
+                0.213 + c * 0.787 - n * 0.213, 0.715 - c * 0.715 - n * 0.715, 0.072 - c * 0.072 + n * 0.928, 0.0, 0.0, //
+                0.213 - c * 0.213 + n * 0.143, 0.715 + c * 0.285 + n * 0.140, 0.072 - c * 0.072 - n * 0.283, 0.0, 0.0, //
+                0.213 - c * 0.213 - n * 0.787, 0.715 - c * 0.715 + n * 0.715, 0.072 + c * 0.928 + n * 0.072, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::Brightness(a) => {
+            let m = a.max(0.0);
+            [
+                m, 0.0, 0.0, 0.0, 0.0, //
+                0.0, m, 0.0, 0.0, 0.0, //
+                0.0, 0.0, m, 0.0, 0.0, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::Contrast(a) => {
+            let m = a.max(0.0);
+            let b = 0.5 * (1.0 - m);
+            [
+                m, 0.0, 0.0, 0.0, b, //
+                0.0, m, 0.0, 0.0, b, //
+                0.0, 0.0, m, 0.0, b, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+        F::Invert(a) => {
+            let a = a.clamp(0.0, 1.0);
+            let d = 1.0 - 2.0 * a;
+            [
+                d, 0.0, 0.0, 0.0, a, //
+                0.0, d, 0.0, 0.0, a, //
+                0.0, 0.0, d, 0.0, a, //
+                0.0, 0.0, 0.0, 1.0, 0.0,
+            ]
+        },
+    }
+}
+
 /// Roadmap R5 — upgraded planner that introduces a downscale level
 /// for blurs beyond what the cascade alone can reach.
 ///
@@ -570,6 +724,31 @@ impl Renderer {
     /// (which always overwrites the entire target) and is treated
     /// as `Clear(transparent)` for API compatibility.
     ///
+    /// Apply backdrop + element `filter` preprocessing to `scene` if any filter
+    /// is present, returning the rewritten scene; `None` when there is nothing to
+    /// do (the fast path). Backdrop filters run first (they read the unfiltered
+    /// prefix), then element CSS `filter` on the result (the layer's own output).
+    /// Shared by every render entry so filters apply on all paths.
+    fn preprocess_filters(
+        &self,
+        scene: &Scene,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+    ) -> Option<Scene> {
+        if !has_backdrop_filter(scene) && !has_element_filter(scene) {
+            return None;
+        }
+        let mut pre = if has_backdrop_filter(scene) {
+            self.preprocess_backdrop_filters(scene, rast, tc)
+        } else {
+            scene.clone()
+        };
+        if has_element_filter(&pre) {
+            pre = self.preprocess_element_filters(&pre, rast, tc);
+        }
+        Some(pre)
+    }
+
     /// # Panics
     ///
     /// - If `enable_vello` was false at construction.
@@ -601,13 +780,10 @@ impl Renderer {
         // inject a SceneImage covering the layer's bounds so the
         // layer paints over the blurred backdrop. Falls through to
         // the no-backdrop fast path when no filters are present.
-        let scene_to_render: std::borrow::Cow<'_, Scene> = if has_backdrop_filter(scene) {
-            std::borrow::Cow::Owned(self.preprocess_backdrop_filters(scene, &mut rast, &mut tc))
-        } else {
-            std::borrow::Cow::Borrowed(scene)
-        };
+        let processed = self.preprocess_filters(scene, &mut rast, &mut tc);
+        let scene_to_render = processed.as_ref().unwrap_or(scene);
 
-        rast.render(&scene_to_render, &mut tc, target_view, base)
+        rast.render(scene_to_render, &mut tc, target_view, base)
             .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
     }
 
@@ -917,6 +1093,166 @@ impl Renderer {
         outputs.remove(&prev).expect("D1 final blur output")
     }
 
+    /// Apply one CSS color-matrix filter to `input` (a premultiplied
+    /// `Rgba8Unorm` texture), returning a fresh `dim x dim` texture via a single
+    /// `cs_color_matrix` pass. `dim` is the square work size (matches
+    /// `build_blurred_image`; a non-square viewport is a shared limitation).
+    fn build_color_matrix_image(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        matrix: [f32; 20],
+    ) -> wgpu::Texture {
+        use crate::filter::{color_matrix_callback, make_bilinear_sampler};
+        use crate::render_graph::{RenderGraph, Task, TaskId};
+        use std::collections::HashMap;
+
+        let device = self.wgpu_device.core.device.clone();
+        let queue = self.wgpu_device.core.queue.clone();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let pipe = self.wgpu_device.ensure_color_matrix(format);
+        let sampler = make_bilinear_sampler(&device);
+        let extent = wgpu::Extent3d { width: dim, height: dim, depth_or_array_layers: 1 };
+
+        const INPUT: TaskId = 1;
+        const CM: TaskId = 2;
+        let mut graph = RenderGraph::new();
+        graph.push(Task {
+            id: CM,
+            extent,
+            format,
+            inputs: vec![INPUT],
+            encode: color_matrix_callback(pipe, sampler, matrix),
+        });
+        let mut externals = HashMap::new();
+        externals.insert(INPUT, input);
+        let mut outputs = graph.execute(&device, &queue, externals);
+        outputs.remove(&CM).expect("color_matrix output")
+    }
+
+    /// Apply a CSS `filter` chain to a rendered layer-content texture, in order:
+    /// `Blur` via the separable blur cascade, the color functions via
+    /// `cs_color_matrix`. Each pass feeds the next; returns the final texture.
+    fn apply_filter_chain(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        filters: &[crate::scene::SceneFilter],
+    ) -> wgpu::Texture {
+        use crate::scene::SceneFilter;
+        let mut tex = input;
+        for f in filters {
+            tex = match f {
+                SceneFilter::Blur(r) => self.build_blurred_image(tex, dim, *r),
+                other => self.build_color_matrix_image(tex, dim, scene_filter_to_matrix(*other)),
+            };
+        }
+        tex
+    }
+
+    /// Element CSS `filter`: for every outermost layer carrying a non-empty
+    /// `filters` chain, render that layer's own content to a texture, apply the
+    /// chain, and replace the content ops with one image so the surviving
+    /// `PushLayer`/`PopLayer` composite the filtered result with the layer's
+    /// alpha/blend/clip. Mirrors [`Self::preprocess_backdrop_filters`]. Nested
+    /// element filters are deferred (outermost-only), and the image-key region is
+    /// disjoint from the backdrop pass's.
+    fn preprocess_element_filters(
+        &self,
+        scene: &Scene,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+    ) -> Scene {
+        use crate::scene::{SceneClip, SceneFilter, SceneImage, SceneOp, NO_CLIP, SHARP_CLIP};
+
+        let mut processed = scene.clone();
+
+        // Collect (push_idx, pop_idx, filters, bounds) for outermost filtered
+        // layers in painter order; skip any layer nested inside an
+        // already-collected one (nested element filters are a follow-up).
+        let mut covered_until = 0usize;
+        let mut elements: Vec<(usize, usize, Vec<SceneFilter>, [f32; 4])> = Vec::new();
+        for (i, op) in scene.ops.iter().enumerate() {
+            if let SceneOp::PushLayer(l) = op {
+                if l.filters.is_empty() || i < covered_until {
+                    continue;
+                }
+                let Some(pop_idx) = matching_pop(&scene.ops, i) else {
+                    continue;
+                };
+                let bounds = match &l.clip {
+                    SceneClip::None => {
+                        [0.0, 0.0, scene.viewport_width as f32, scene.viewport_height as f32]
+                    },
+                    SceneClip::Rect { rect, .. } => *rect,
+                    SceneClip::Path(path) => path.local_aabb().unwrap_or([
+                        0.0,
+                        0.0,
+                        scene.viewport_width as f32,
+                        scene.viewport_height as f32,
+                    ]),
+                };
+                elements.push((i, pop_idx, l.filters.clone(), bounds));
+                covered_until = pop_idx;
+            }
+        }
+
+        // Image-key region disjoint from the backdrop pass (which counts down
+        // from the top of the u64 space). Element filters count down from the
+        // midpoint, so the two regions cannot realistically collide.
+        let mut next_key: ImageKey = u64::MAX / 2;
+
+        // Replacing an interior of `inner_len` ops with one image shifts later
+        // indices by `1 - inner_len`. Track the running (signed) offset.
+        let mut offset: isize = 0;
+
+        for (push_idx, pop_idx, filters, bounds) in elements {
+            // Render the layer's own content (flat) to a viewport texture, then
+            // run the filter chain over it.
+            let content = build_layer_content_scene(scene, push_idx, pop_idx);
+            let content_tex = self.render_scene_to_texture(rast, tc, &content);
+            let filtered = self.apply_filter_chain(content_tex, scene.viewport_width, &filters);
+            rast.register_texture(next_key, filtered);
+
+            let vw = scene.viewport_width as f32;
+            let vh = scene.viewport_height as f32;
+            let uv = [bounds[0] / vw, bounds[1] / vh, bounds[2] / vw, bounds[3] / vh];
+
+            let cur_push = (push_idx as isize + offset) as usize;
+            let cur_pop = (pop_idx as isize + offset) as usize;
+            let inner_len = cur_pop - cur_push - 1;
+
+            let image = SceneOp::Image(SceneImage {
+                x0: bounds[0],
+                y0: bounds[1],
+                x1: bounds[2],
+                y1: bounds[3],
+                uv,
+                color: [1.0, 1.0, 1.0, 1.0],
+                key: next_key,
+                transform_id: 0,
+                clip_rect: NO_CLIP,
+                clip_corner_radii: SHARP_CLIP,
+                // `false` like the backdrop path: the filtered result is a
+                // GPU-texture override (no CPU `ImageData`), so the `clamp_to_uv`
+                // CPU crop path can't run on it.
+                clamp_to_uv: false,
+            });
+            // Replace the strict interior with the single filtered image.
+            processed.ops.splice(cur_push + 1..cur_pop, std::iter::once(image));
+            // Clear the layer's filters so it re-enters the no-filter fast path,
+            // applying alpha/blend/clip over the filtered image.
+            if let SceneOp::PushLayer(l) = &mut processed.ops[cur_push] {
+                l.filters.clear();
+            }
+
+            offset += 1 - inner_len as isize;
+            next_key = next_key.wrapping_sub(1);
+        }
+
+        processed
+    }
+
     /// Number of times the path-(b′) master-texture pool has
     /// allocated a fresh `wgpu::Texture` over this Renderer's
     /// lifetime. Returns `None` if `enable_vello` was false.
@@ -1036,8 +1372,15 @@ impl Renderer {
         let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
         let mut tc = tc_mutex.lock().expect("tile_cache lock");
 
+        // Apply backdrop + element CSS `filter` preprocessing (same as the
+        // `render_vello` path). External-texture boundaries below still index the
+        // original `scene` (filters + interleaved external textures is a
+        // follow-up); the common no-external-texture path is unaffected.
+        let processed = self.preprocess_filters(scene, &mut rast, &mut tc);
+        let render_scene = processed.as_ref().unwrap_or(scene);
+
         // 1. Render the scene into the rasterizer's pool-allocated master.
-        rast.render_to_internal_master(scene, &mut tc, master_format, base_color)
+        rast.render_to_internal_master(render_scene, &mut tc, master_format, base_color)
             .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
 
         if !external_textures.is_empty() {

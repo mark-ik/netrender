@@ -54,5 +54,6 @@ pub use crate::compositor::{Compositor, LayerPresent, PresentedFrame, SurfaceKey
 pub use crate::core::boot;
 pub use crate::core::{BootError, REQUIRED_FEATURES, WgpuHandles, boot_async};
 pub use crate::pipeline::{
-    BrushBlurPipeline, ClipRectanglePipeline, GradientKind, build_brush_blur, build_clip_rectangle,
+    BrushBlurPipeline, ClipRectanglePipeline, ColorMatrixPipeline, GradientKind, build_brush_blur,
+    build_clip_rectangle, build_color_matrix,
 };

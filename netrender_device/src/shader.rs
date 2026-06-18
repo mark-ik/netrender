@@ -14,3 +14,8 @@ pub(crate) const BRUSH_BLUR_WGSL: &str = include_str!("shaders/brush_blur.wgsl")
 /// override toggles the SDF (Phase 9A) vs. the axis-aligned fast
 /// path (Phase 9C).
 pub(crate) const CS_CLIP_RECTANGLE_WGSL: &str = include_str!("shaders/cs_clip_rectangle.wgsl");
+
+/// CSS `filter` color-matrix pass. Fullscreen-quad VS (no vertex buffer);
+/// applies a 4x5 affine color matrix (unpremultiply -> M -> clamp ->
+/// re-premultiply) in sRGB-encoded space.
+pub(crate) const CS_COLOR_MATRIX_WGSL: &str = include_str!("shaders/cs_color_matrix.wgsl");
