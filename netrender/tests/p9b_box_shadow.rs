@@ -66,7 +66,7 @@ fn render_box_shadow_mask(
 
     let clip_pipe = renderer
         .wgpu_device
-        .ensure_clip_rectangle(MASK_FORMAT, true);
+        .ensure_clip_rectangle(MASK_FORMAT, true, false);
     let blur_pipe = renderer.wgpu_device.ensure_brush_blur(MASK_FORMAT);
     let sampler = make_bilinear_sampler(&device);
     let step = 1.0 / extent as f32;

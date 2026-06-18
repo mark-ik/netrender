@@ -118,7 +118,7 @@ fn render_clip_mask(
 
     let pipe = renderer
         .wgpu_device
-        .ensure_clip_rectangle(MASK_FORMAT, true);
+        .ensure_clip_rectangle(MASK_FORMAT, true, false);
 
     const MASK_TASK: TaskId = 1;
     let mut graph = RenderGraph::new();

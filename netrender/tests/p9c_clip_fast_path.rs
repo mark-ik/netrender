@@ -52,7 +52,7 @@ fn render_mask(
 
     let pipe = renderer
         .wgpu_device
-        .ensure_clip_rectangle(MASK_FORMAT, has_rounded_corners);
+        .ensure_clip_rectangle(MASK_FORMAT, has_rounded_corners, false);
 
     const MASK: TaskId = 1;
     let mut graph = RenderGraph::new();
