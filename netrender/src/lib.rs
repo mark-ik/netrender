@@ -40,7 +40,7 @@ pub mod vello_rasterizer;
 pub mod vello_tile_rasterizer;
 
 pub use crate::hit_test::{HitOpKind, HitResult, hit_test, hit_test_topmost};
-pub use crate::external_texture::{ExternalTextureComposite, ExternalTexturePlacement};
+pub use crate::external_texture::{ExternalTextureComposite, ExternalTexturePlacement, SourceAlpha};
 pub use crate::registry::{FontRegistry, ImageRegistry};
 pub use crate::render_graph::{EncodeCallback, RenderGraph, Task, TaskId};
 pub use crate::renderer::init::{NetrenderOptions, create_netrender_instance};

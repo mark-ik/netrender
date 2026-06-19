@@ -10,6 +10,22 @@
 //! `register_texture` path, this pass samples the producer texture
 //! directly; the source texture does not need `COPY_SRC` usage.
 
+/// How a producer texture's alpha is encoded, which selects the blend the
+/// composite uses over the target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceAlpha {
+    /// Color is **straight** (non-premultiplied): the composite multiplies RGB
+    /// by alpha at blend time (`ALPHA_BLENDING`). The default; correct for WebGL
+    /// canvases and netrender's own opaque / straight-alpha render targets.
+    #[default]
+    Straight,
+    /// Color is **premultiplied** (RGB already carries alpha): the composite
+    /// blends with `PREMULTIPLIED_ALPHA_BLENDING` and scales the whole tuple by
+    /// `opacity`. Use for accelerated webview output (WebView2 / CEF OSR /
+    /// WKWebView), whose composited surfaces are premultiplied.
+    Premultiplied,
+}
+
 /// One external texture draw into a target view.
 #[derive(Debug, Clone, Copy)]
 pub struct ExternalTexturePlacement {
@@ -19,6 +35,9 @@ pub struct ExternalTexturePlacement {
     pub uv: [f32; 4],
     /// Additional opacity applied while blending over the target.
     pub opacity: f32,
+    /// How the source's alpha is encoded (selects the blend). Defaults to
+    /// [`SourceAlpha::Straight`] so existing call sites are unchanged.
+    pub alpha: SourceAlpha,
 }
 
 impl ExternalTexturePlacement {
@@ -27,6 +46,7 @@ impl ExternalTexturePlacement {
             dest_rect,
             uv: [0.0, 0.0, 1.0, 1.0],
             opacity: 1.0,
+            alpha: SourceAlpha::Straight,
         }
     }
 
@@ -37,6 +57,12 @@ impl ExternalTexturePlacement {
 
     pub fn with_opacity(mut self, opacity: f32) -> Self {
         self.opacity = opacity;
+        self
+    }
+
+    /// Set the source alpha convention (default [`SourceAlpha::Straight`]).
+    pub fn with_alpha(mut self, alpha: SourceAlpha) -> Self {
+        self.alpha = alpha;
         self
     }
 }
@@ -112,13 +138,22 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let color = textureSample(source_texture, source_sampler, in.uv);
     let opacity = clamp(params.viewport_opacity.z, 0.0, 1.0);
+    // `.w` selects the source alpha convention: 0 = straight (the blend
+    // multiplies RGB by src alpha), 1 = premultiplied (RGB already carries
+    // alpha, so scale the whole tuple to apply the extra opacity).
+    if (params.viewport_opacity.w > 0.5) {
+        return vec4<f32>(color.rgb * opacity, color.a * opacity);
+    }
     return vec4<f32>(color.rgb, color.a * opacity);
 }
 "#;
 
 #[derive(Clone)]
 pub(crate) struct ExternalTexturePipeline {
-    pipeline: wgpu::RenderPipeline,
+    /// `ALPHA_BLENDING` (straight-alpha source).
+    straight: wgpu::RenderPipeline,
+    /// `PREMULTIPLIED_ALPHA_BLENDING` (premultiplied source, e.g. webview OSR).
+    premultiplied: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
@@ -170,34 +205,47 @@ pub(crate) fn build_external_texture_pipeline(
         immediate_size: 0,
     });
 
-    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("netrender external texture pipeline"),
-        layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some("fs_main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: target_format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
+    // Two pipelines that differ only in blend state; the shader branches on the
+    // packed mode value to apply opacity correctly for each. Selected per draw
+    // by the placement's `SourceAlpha`.
+    let make_pipeline = |blend: wgpu::BlendState, label: &str| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let straight = make_pipeline(
+        wgpu::BlendState::ALPHA_BLENDING,
+        "netrender external texture pipeline (straight)",
+    );
+    let premultiplied = make_pipeline(
+        wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        "netrender external texture pipeline (premultiplied)",
+    );
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("netrender external texture sampler"),
@@ -211,7 +259,8 @@ pub(crate) fn build_external_texture_pipeline(
     });
 
     ExternalTexturePipeline {
-        pipeline,
+        straight,
+        premultiplied,
         layout,
         sampler,
     }
@@ -222,6 +271,10 @@ fn params_bytes(
     viewport_height: u32,
     placement: ExternalTexturePlacement,
 ) -> [u8; 48] {
+    let mode = match placement.alpha {
+        SourceAlpha::Straight => 0.0,
+        SourceAlpha::Premultiplied => 1.0,
+    };
     let values = [
         placement.dest_rect[0],
         placement.dest_rect[1],
@@ -234,7 +287,7 @@ fn params_bytes(
         viewport_width as f32,
         viewport_height as f32,
         placement.opacity,
-        0.0,
+        mode,
     ];
     let mut bytes = [0u8; 48];
     for (index, value) in values.iter().enumerate() {
@@ -314,7 +367,11 @@ pub(crate) fn compose_external_texture(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&pipe.pipeline);
+        let pipeline = match placement.alpha {
+            SourceAlpha::Straight => &pipe.straight,
+            SourceAlpha::Premultiplied => &pipe.premultiplied,
+        };
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..6, 0..1);
     }
