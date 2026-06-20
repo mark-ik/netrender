@@ -51,8 +51,8 @@ pub(crate) mod shader;
 pub use crate::adapter::WgpuDevice;
 pub use crate::compositor::{Compositor, LayerPresent, PresentedFrame, SurfaceKey};
 #[cfg(not(target_arch = "wasm32"))]
-pub use crate::core::boot;
-pub use crate::core::{BootError, REQUIRED_FEATURES, WgpuHandles, boot_async};
+pub use crate::core::{boot, boot_with};
+pub use crate::core::{BootError, REQUIRED_FEATURES, WgpuHandles, boot_async, boot_async_with};
 pub use crate::pipeline::{
     BrushBlurPipeline, ClipRectanglePipeline, ColorMatrixPipeline, GradientKind, build_brush_blur,
     build_clip_rectangle, build_color_matrix,

@@ -78,7 +78,27 @@ impl From<wgpu::RequestDeviceError> for BootError {
 /// this boots cleanly on Lavapipe / WARP / SwiftShader software
 /// adapters.
 pub async fn boot_async() -> Result<WgpuHandles, BootError> {
-    let instance = wgpu::Instance::default();
+    boot_async_with(default_backends()).await
+}
+
+/// The backend set, honoring `WGPU_BACKEND` (`dx12` / `vulkan` / `gl` / …) when
+/// set, else all available. `wgpu::Instance::default()` ignores the env, which is
+/// why a bare boot lands on the adapter wgpu prefers (Vulkan on Windows+NVIDIA);
+/// this restores the env override.
+fn default_backends() -> wgpu::Backends {
+    wgpu::Backends::from_env().unwrap_or_else(wgpu::Backends::all)
+}
+
+/// Boot with an explicit backend set (e.g. a host that wants D3D12 for same-API
+/// system-WebView texture import). `WgpuHandles` is otherwise identical.
+pub async fn boot_async_with(backends: wgpu::Backends) -> Result<WgpuHandles, BootError> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends,
+        flags: wgpu::InstanceFlags::default(),
+        memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+        backend_options: wgpu::BackendOptions::default(),
+        display: None,
+    });
 
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -126,6 +146,12 @@ pub async fn boot_async() -> Result<WgpuHandles, BootError> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn boot() -> Result<WgpuHandles, BootError> {
     pollster::block_on(boot_async())
+}
+
+/// Blocking [`boot_async_with`] — boot with an explicit backend set.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn boot_with(backends: wgpu::Backends) -> Result<WgpuHandles, BootError> {
+    pollster::block_on(boot_async_with(backends))
 }
 
 #[cfg(test)]

@@ -40,6 +40,13 @@ pub struct NetrenderOptions {
     /// reasonable preset (~30 frames ≈ 0.5s at 60 Hz) when
     /// `enable_tile_dirty_overlay` is on; set to override.
     pub tile_dirty_overlay_window_frames: u32,
+    /// Backend selection for the wgpu device boot. `Some(_)` forces a backend
+    /// (e.g. `wgpu::Backends::DX12` so a host that imports system-WebView D3D12
+    /// textures stays same-API); `None` honors `WGPU_BACKEND`, else all available.
+    /// Only consulted by host boot paths that create the device from these options
+    /// (e.g. `serval_winit_host::RenderCore::boot`), not embedder-supplied
+    /// (`with_external`) devices.
+    pub backends: Option<wgpu::Backends>,
 }
 
 /// Construct a wgpu-only `Renderer`. The embedder owns the wgpu

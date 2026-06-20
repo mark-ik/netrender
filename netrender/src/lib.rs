@@ -67,8 +67,9 @@ pub use crate::tile_cache::{TileCache, TileCoord};
 // trait surface; consumers (serval, etc.) implement `Compositor`
 // for native-compositor handoff.
 #[cfg(not(target_arch = "wasm32"))]
-pub use netrender_device::boot;
+pub use netrender_device::{boot, boot_with};
 pub use netrender_device::{
     BrushBlurPipeline, ClipRectanglePipeline, Compositor, LayerPresent, PresentedFrame,
-    REQUIRED_FEATURES, WgpuDevice, WgpuHandles, boot_async, build_brush_blur, build_clip_rectangle,
+    REQUIRED_FEATURES, WgpuDevice, WgpuHandles, boot_async, boot_async_with, build_brush_blur,
+    build_clip_rectangle,
 };
