@@ -1,0 +1,278 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+//! Element CSS `filter` pass: per-layer content render, the blur/color-matrix
+//! filter chain, and the single-pass color-matrix helper. See [`super`].
+
+use std::sync::Arc;
+
+use crate::scene::{ImageKey, Scene};
+use crate::tile_cache::TileCache;
+
+use super::filters::{
+    blur_kernel_plan_with_downscale, build_layer_content_scene, matching_pop,
+    scene_filter_to_matrix, ELEMENT_FILTER_KEY_BASE,
+};
+use super::Renderer;
+
+impl Renderer {
+    /// Roadmap D1 — blur an arbitrary input texture using the
+    /// existing render-graph cascade machinery (and R5's downscale
+    /// path for large radii). Returns a fresh `Rgba8Unorm` texture
+    /// of size `dim × dim`.
+    pub(super) fn build_blurred_image(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        blur_radius_px: f32,
+    ) -> wgpu::Texture {
+        use crate::filter::{blur_pass_callback, make_bilinear_sampler};
+        use crate::render_graph::{RenderGraph, Task, TaskId};
+        use std::collections::HashMap;
+
+        let device = self.wgpu_device.core.device.clone();
+        let queue = self.wgpu_device.core.queue.clone();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let blur_pipe = self.wgpu_device.ensure_brush_blur(format);
+        let sampler = make_bilinear_sampler(&device);
+
+        let (level, passes, step_px) = blur_kernel_plan_with_downscale(blur_radius_px);
+        let scaled_dim = (dim / level).max(1);
+        let scaled_extent = wgpu::Extent3d {
+            width: scaled_dim,
+            height: scaled_dim,
+            depth_or_array_layers: 1,
+        };
+        let full_extent = wgpu::Extent3d {
+            width: dim,
+            height: dim,
+            depth_or_array_layers: 1,
+        };
+        let step_uv = step_px / scaled_dim as f32;
+
+        const INPUT: TaskId = 1;
+        let mut graph = RenderGraph::new();
+        let mut prev: TaskId = INPUT;
+        let mut next_id: TaskId = INPUT + 1;
+
+        if level > 1 {
+            let down_id = next_id;
+            graph.push(Task {
+                id: down_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = down_id;
+            next_id += 1;
+        }
+
+        for _ in 0..passes {
+            let h_id = next_id;
+            graph.push(Task {
+                id: h_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), step_uv, 0.0),
+            });
+            let v_id = h_id + 1;
+            graph.push(Task {
+                id: v_id,
+                extent: scaled_extent,
+                format,
+                inputs: vec![h_id],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, step_uv),
+            });
+            prev = v_id;
+            next_id = v_id + 1;
+        }
+
+        if level > 1 {
+            let up_id = next_id;
+            graph.push(Task {
+                id: up_id,
+                extent: full_extent,
+                format,
+                inputs: vec![prev],
+                encode: blur_pass_callback(blur_pipe.clone(), Arc::clone(&sampler), 0.0, 0.0),
+            });
+            prev = up_id;
+        }
+
+        let mut externals = HashMap::new();
+        externals.insert(INPUT, input);
+
+        let mut outputs = graph.execute(&device, &queue, externals);
+        outputs.remove(&prev).expect("D1 final blur output")
+    }
+
+    /// Apply one CSS color-matrix filter to `input` (a premultiplied
+    /// `Rgba8Unorm` texture), returning a fresh `dim x dim` texture via a single
+    /// `cs_color_matrix` pass. `dim` is the square work size (matches
+    /// `build_blurred_image`; a non-square viewport is a shared limitation).
+    fn build_color_matrix_image(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        matrix: [f32; 20],
+    ) -> wgpu::Texture {
+        use crate::filter::{color_matrix_callback, make_bilinear_sampler};
+        use crate::render_graph::{RenderGraph, Task, TaskId};
+        use std::collections::HashMap;
+
+        let device = self.wgpu_device.core.device.clone();
+        let queue = self.wgpu_device.core.queue.clone();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let pipe = self.wgpu_device.ensure_color_matrix(format);
+        let sampler = make_bilinear_sampler(&device);
+        let extent = wgpu::Extent3d { width: dim, height: dim, depth_or_array_layers: 1 };
+
+        const INPUT: TaskId = 1;
+        const CM: TaskId = 2;
+        let mut graph = RenderGraph::new();
+        graph.push(Task {
+            id: CM,
+            extent,
+            format,
+            inputs: vec![INPUT],
+            encode: color_matrix_callback(pipe, sampler, matrix),
+        });
+        let mut externals = HashMap::new();
+        externals.insert(INPUT, input);
+        let mut outputs = graph.execute(&device, &queue, externals);
+        outputs.remove(&CM).expect("color_matrix output")
+    }
+
+    /// Apply a CSS `filter` chain to a rendered layer-content texture, in order:
+    /// `Blur` via the separable blur cascade, the color functions via
+    /// `cs_color_matrix`. Each pass feeds the next; returns the final texture.
+    fn apply_filter_chain(
+        &self,
+        input: wgpu::Texture,
+        dim: u32,
+        filters: &[crate::scene::SceneFilter],
+    ) -> wgpu::Texture {
+        use crate::scene::SceneFilter;
+        let mut tex = input;
+        for f in filters {
+            tex = match f {
+                SceneFilter::Blur(r) => self.build_blurred_image(tex, dim, *r),
+                other => self.build_color_matrix_image(tex, dim, scene_filter_to_matrix(*other)),
+            };
+        }
+        tex
+    }
+
+    /// Element CSS `filter`: for every outermost layer carrying a non-empty
+    /// `filters` chain, render that layer's own content to a texture, apply the
+    /// chain, and replace the content ops with one image so the surviving
+    /// `PushLayer`/`PopLayer` composite the filtered result with the layer's
+    /// alpha/blend/clip. Mirrors [`Self::preprocess_backdrop_filters`]. Nested
+    /// element filters are deferred (outermost-only), and the image-key region is
+    /// disjoint from the backdrop pass's.
+    pub(super) fn preprocess_element_filters(
+        &self,
+        scene: &Scene,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+    ) -> Scene {
+        use crate::scene::{SceneClip, SceneFilter, SceneImage, SceneOp, NO_CLIP, SHARP_CLIP};
+
+        let mut processed = scene.clone();
+
+        // Collect (push_idx, pop_idx, filters, bounds) for outermost filtered
+        // layers in painter order; skip any layer nested inside an
+        // already-collected one (nested element filters are a follow-up).
+        let mut covered_until = 0usize;
+        let mut elements: Vec<(usize, usize, Vec<SceneFilter>, [f32; 4])> = Vec::new();
+        for (i, op) in scene.ops.iter().enumerate() {
+            if let SceneOp::PushLayer(l) = op {
+                if l.filters.is_empty() || i < covered_until {
+                    continue;
+                }
+                let Some(pop_idx) = matching_pop(&scene.ops, i) else {
+                    continue;
+                };
+                let bounds = match &l.clip {
+                    SceneClip::None => {
+                        [0.0, 0.0, scene.viewport_width as f32, scene.viewport_height as f32]
+                    },
+                    SceneClip::Rect { rect, .. } => *rect,
+                    SceneClip::Path(path) => path.local_aabb().unwrap_or([
+                        0.0,
+                        0.0,
+                        scene.viewport_width as f32,
+                        scene.viewport_height as f32,
+                    ]),
+                };
+                elements.push((i, pop_idx, l.filters.clone(), bounds));
+                covered_until = pop_idx;
+            }
+        }
+
+        // Image-key region disjoint from the backdrop pass; both count down from
+        // their bases (see ELEMENT_FILTER_KEY_BASE).
+        let mut next_key: ImageKey = ELEMENT_FILTER_KEY_BASE;
+
+        // Replacing an interior of `inner_len` ops with one image shifts later
+        // indices by `1 - inner_len`. Track the running (signed) offset.
+        let mut offset: isize = 0;
+
+        for (push_idx, pop_idx, filters, bounds) in elements {
+            // Render the layer's own content (flat) to a viewport texture, then
+            // run the filter chain over it.
+            let content = build_layer_content_scene(scene, push_idx, pop_idx);
+            let content_tex = self.render_scene_to_texture(rast, tc, &content);
+            let filtered = self.apply_filter_chain(content_tex, scene.viewport_width, &filters);
+            rast.register_texture(next_key, filtered);
+
+            let vw = scene.viewport_width as f32;
+            let vh = scene.viewport_height as f32;
+            let uv = [bounds[0] / vw, bounds[1] / vh, bounds[2] / vw, bounds[3] / vh];
+
+            let cur_push = (push_idx as isize + offset) as usize;
+            let cur_pop = (pop_idx as isize + offset) as usize;
+            // Keep a backdrop-filter image (the layer's first content op, marked
+            // by a sentinel key above the element region) behind the filtered
+            // result, so `backdrop-filter` + `filter` on one layer composites the
+            // unfiltered backdrop under the element's filtered content.
+            let content_start = match processed.ops.get(cur_push + 1) {
+                Some(SceneOp::Image(im)) if im.key > ELEMENT_FILTER_KEY_BASE => cur_push + 2,
+                _ => cur_push + 1,
+            };
+            let inner_len = cur_pop - content_start;
+
+            let image = SceneOp::Image(SceneImage {
+                x0: bounds[0],
+                y0: bounds[1],
+                x1: bounds[2],
+                y1: bounds[3],
+                uv,
+                color: [1.0, 1.0, 1.0, 1.0],
+                key: next_key,
+                transform_id: 0,
+                clip_rect: NO_CLIP,
+                clip_corner_radii: SHARP_CLIP,
+                // `false` like the backdrop path: the filtered result is a
+                // GPU-texture override (no CPU `ImageData`), so the `clamp_to_uv`
+                // CPU crop path can't run on it.
+                clamp_to_uv: false,
+            });
+            // Replace the (non-backdrop) interior with the single filtered image.
+            processed.ops.splice(content_start..cur_pop, std::iter::once(image));
+            // Clear the layer's filters so it re-enters the no-filter fast path,
+            // applying alpha/blend/clip over the filtered image.
+            if let SceneOp::PushLayer(l) = &mut processed.ops[cur_push] {
+                l.filters.clear();
+            }
+
+            offset += 1 - inner_len as isize;
+            next_key = next_key.wrapping_sub(1);
+        }
+
+        processed
+    }
+}
