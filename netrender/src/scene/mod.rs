@@ -23,7 +23,6 @@ pub use netrender_device::GradientKind;
 pub use netrender_device::SurfaceKey;
 
 mod build;
-mod build2;
 mod debug;
 mod elements;
 mod fragment;
