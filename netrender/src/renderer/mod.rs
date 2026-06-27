@@ -154,6 +154,20 @@ impl Renderer {
     /// - If a vello render error occurs (mirrors the existing
     ///   `render()` shape, which doesn't return a Result).
     pub fn render_vello(&self, scene: &Scene, target_view: &wgpu::TextureView, clear: ColorLoad) {
+        self.render_vello_scaled(scene, target_view, clear, 1.0);
+    }
+
+    /// Like [`render_vello`](Self::render_vello) but rasterizes a logical-coord scene
+    /// into a `scale`×-larger target via a root scale affine — the device-pixel-ratio
+    /// path for crisp content on HiDPI displays. The `target_view` must be `scale`× the
+    /// scene's viewport. (Auto-DPI D2.)
+    pub fn render_vello_scaled(
+        &self,
+        scene: &Scene,
+        target_view: &wgpu::TextureView,
+        clear: ColorLoad,
+        scale: f32,
+    ) {
         let rast_mutex = self
             .vello_rasterizer
             .as_ref()
@@ -181,7 +195,7 @@ impl Renderer {
         let processed = self.preprocess_filters(scene, &mut rast, &mut tc);
         let scene_to_render = processed.as_ref().unwrap_or(scene);
 
-        rast.render(scene_to_render, &mut tc, target_view, base)
+        rast.render_scaled(scene_to_render, &mut tc, target_view, base, scale)
             .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
     }
 

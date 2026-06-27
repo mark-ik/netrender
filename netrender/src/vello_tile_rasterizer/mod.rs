@@ -401,22 +401,53 @@ impl VelloTileRasterizer {
         target_view: &wgpu::TextureView,
         base_color: Color,
     ) -> Result<(), vello::Error> {
+        self.render_scaled(scene, tile_cache, target_view, base_color, 1.0)
+    }
+
+    /// Like [`render`](Self::render) but rasterizes the (logical-coord) scene into a
+    /// `scale`×-larger target, applying `scale` as a root affine on the vector master
+    /// scene — so a scene laid out at logical (DIP) coordinates fills a physical-pixel
+    /// texture crisply (vello rasterizes the scaled vectors at the target resolution).
+    /// `scale == 1.0` is the plain path. The target view must be `scale`× the scene's
+    /// viewport. (Auto-DPI D2 — content device-pixel-ratio.)
+    pub fn render_scaled(
+        &mut self,
+        scene: &Scene,
+        tile_cache: &mut TileCache,
+        target_view: &wgpu::TextureView,
+        base_color: Color,
+        scale: f32,
+    ) -> Result<(), vello::Error> {
         use crate::profiling::{FrameTimings, Span};
         let total_span = Span::start("total");
         let mut timings = FrameTimings::empty();
 
         let master = self.build_master_scene_timed(scene, tile_cache, &mut timings);
 
+        // At DPR > 1 the master (in logical coords) is appended into a fresh scene under
+        // a scale affine; vello then rasterizes the scaled vectors crisply at the
+        // physical target size. At 1.0 the master renders directly.
+        let scaled_master = if (scale - 1.0).abs() >= 1e-3 {
+            let mut s = vello::Scene::new();
+            s.append(&master, Some(vello::kurbo::Affine::scale(scale as f64)));
+            Some(s)
+        } else {
+            None
+        };
+        let to_render = scaled_master.as_ref().unwrap_or(&master);
+        let render_w = ((scene.viewport_width as f32) * scale).round().max(1.0) as u32;
+        let render_h = ((scene.viewport_height as f32) * scale).round().max(1.0) as u32;
+
         let vello_span = Span::start("vello_render");
         let result = self.vello_renderer.render_to_texture(
             &self.handles.device,
             &self.handles.queue,
-            &master,
+            to_render,
             target_view,
             &RenderParams {
                 base_color,
-                width: scene.viewport_width,
-                height: scene.viewport_height,
+                width: render_w,
+                height: render_h,
                 antialiasing_method: AaConfig::Area,
             },
         );
