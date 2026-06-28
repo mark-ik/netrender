@@ -195,8 +195,38 @@ impl Renderer {
         let processed = self.preprocess_filters(scene, &mut rast, &mut tc);
         let scene_to_render = processed.as_ref().unwrap_or(scene);
 
-        rast.render_scaled(scene_to_render, &mut tc, target_view, base, scale)
-            .unwrap_or_else(|e| panic!("vello render_to_texture failed: {:?}", e));
+        // Per-frame paint instrumentation. DEBUG (quiet by default; the app
+        // raises it) on the load-bearing render op; one structured event per
+        // frame with timing + the scene size. NOTE: this is a HOT per-frame
+        // path — it needs sampling later (emit every Nth frame); not added now.
+        let render_start = std::time::Instant::now();
+        let result = rast.render_scaled(scene_to_render, &mut tc, target_view, base, scale);
+        let elapsed_us = render_start.elapsed().as_micros();
+        match result {
+            Ok(()) => {
+                tracing::debug!(
+                    target: "netrender",
+                    elapsed_us,
+                    op_count = scene_to_render.ops.len(),
+                    viewport_w = scene_to_render.viewport_width,
+                    viewport_h = scene_to_render.viewport_height,
+                    scale,
+                    "frame rendered"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "netrender",
+                    elapsed_us,
+                    op_count = scene_to_render.ops.len(),
+                    viewport_w = scene_to_render.viewport_width,
+                    viewport_h = scene_to_render.viewport_height,
+                    error = ?e,
+                    "frame render failed"
+                );
+                panic!("vello render_to_texture failed: {:?}", e);
+            }
+        }
     }
 
     /// Compose a same-device external texture directly into an

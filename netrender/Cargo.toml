@@ -30,6 +30,10 @@ linear-light-canary = []
 
 [dependencies]
 log.workspace = true
+# Host-neutral tracing FACADE. The library only EMITS one span/event on the
+# load-bearing per-frame render op; the consuming app (e.g. meerkat) installs
+# the subscriber and chooses the level. netrender never depends on the app.
+tracing = "0.1"
 wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
 netrender_device = { path = "../netrender_device" }
 vello = { workspace = true, features = ["wgpu"] }
