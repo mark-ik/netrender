@@ -84,6 +84,7 @@ fn make_kitchen_sink_scene() -> Scene {
         transform_id: 0,
         compose: Default::default(),
         backdrop_filter: None,
+        filters: Vec::new(),
     }));
     scene.push_rect(50.0, 50.0, 150.0, 150.0, [0.0, 0.0, 1.0, 1.0]);
     scene.ops.push(SceneOp::PopLayer);

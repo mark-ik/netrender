@@ -229,3 +229,93 @@ impl Scene {
         serde_json::from_str(s)
     }
 }
+
+/// Roadmap A2 follow-on — serialization cost of a representative page band, to size the
+/// worker -> main Scene transfer the substrate/parallelism brief weighs (transfer a flat
+/// postcard buffer vs structured-clone the whole Scene). Prints a table; not an assertion
+/// test. Run with:
+/// `cargo test -p netrender --features serde serialize_cost -- --nocapture`.
+#[cfg(all(test, feature = "serde"))]
+mod serialize_cost {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    /// A deterministic representative scene: `runs` glyph runs of `glyphs_per_run` glyphs each
+    /// (a text page band), interleaved row-rule rects, one registered font of `font_bytes`
+    /// (the amortizable asset payload), and `images` small RGBA images. No RNG, so the bytes
+    /// are reproducible across runs.
+    fn page_band(runs: usize, glyphs_per_run: usize, font_bytes: usize, images: usize) -> Scene {
+        let mut s = Scene::new(1200, 1600);
+        let blob = vello::peniko::Blob::new(Arc::new(vec![0xABu8; font_bytes]));
+        let font = s.push_font(FontBlob { data: blob, index: 0 });
+        s.push_rect(0.0, 0.0, 1200.0, 1600.0, [1.0, 1.0, 1.0, 1.0]);
+        let line_h = 1600.0 / runs.max(1) as f32;
+        for i in 0..runs {
+            let y = i as f32 * line_h;
+            if i % 3 == 0 {
+                s.push_rect(0.0, y, 1200.0, y + 1.0, [0.9, 0.9, 0.9, 1.0]);
+            }
+            let glyphs: Vec<Glyph> = (0..glyphs_per_run)
+                .map(|g| Glyph { id: (g as u32 % 120) + 4, x: g as f32 * 9.0, y })
+                .collect();
+            s.push_glyph_run(font, 16.0, glyphs, [0.1, 0.1, 0.1, 1.0]);
+        }
+        for k in 0..images {
+            let data = ImageData::from_bytes(32, 32, vec![0x80u8; 32 * 32 * 4]);
+            let (y0, y1) = (10.0 + k as f32 * 40.0, 42.0 + k as f32 * 40.0);
+            s.push_image(10.0, y0, 42.0, y1, k as u64 + 1, data);
+        }
+        s
+    }
+
+    /// Mean microseconds per call over `iters` (one warmup, result black-boxed).
+    fn us_per<F: FnMut()>(iters: u32, mut f: F) -> f64 {
+        f();
+        let t = Instant::now();
+        for _ in 0..iters {
+            f();
+        }
+        t.elapsed().as_secs_f64() * 1e6 / iters as f64
+    }
+
+    #[test]
+    fn serialize_cost_report() {
+        let cases = [
+            ("band, ops only", page_band(60, 70, 0, 0)),
+            ("band +40KB font +4img", page_band(60, 70, 40 * 1024, 4)),
+            ("heavy, ops only", page_band(300, 70, 0, 0)),
+            ("heavy +40KB font +4img", page_band(300, 70, 40 * 1024, 4)),
+        ];
+        println!(
+            "\n{:<26} {:>6} {:>9} {:>9} {:>9} {:>8} {:>8}",
+            "scene", "ops", "clone us", "enc us", "dec us", "pc KB", "json KB"
+        );
+        for (name, scene) in &cases {
+            let ops = scene.ops.len();
+            let pc = scene.snapshot_postcard();
+            let json = scene.snapshot_json();
+            assert!(!pc.is_empty());
+            let clone_us = us_per(200, || {
+                let _ = std::hint::black_box(scene.clone());
+            });
+            let enc_us = us_per(200, || {
+                let _ = std::hint::black_box(scene.snapshot_postcard());
+            });
+            let dec_us = us_per(200, || {
+                let _ = std::hint::black_box(Scene::replay_postcard(&pc).unwrap());
+            });
+            println!(
+                "{:<26} {:>6} {:>9.1} {:>9.1} {:>9.1} {:>8.1} {:>8.1}",
+                name,
+                ops,
+                clone_us,
+                enc_us,
+                dec_us,
+                pc.len() as f64 / 1024.0,
+                json.len() as f64 / 1024.0
+            );
+        }
+        println!();
+    }
+}
