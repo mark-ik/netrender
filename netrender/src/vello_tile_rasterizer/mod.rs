@@ -150,6 +150,14 @@ impl VelloTileRasterizer {
         })
     }
 
+    /// The rasterizer's own (legacy shared) per-tile scene store — the one the
+    /// unkeyed render paths pair with the renderer's shared `TileCache`. The
+    /// keyed per-surface path owns its stores instead
+    /// (`Renderer::surface_tiles`).
+    pub(crate) fn tile_scenes_mut(&mut self) -> &mut HashMap<TileCoord, vello::Scene> {
+        &mut self.tile_scenes
+    }
+
     /// Roadmap A4 — return the per-phase timings captured by the most
     /// recent render call (`render` / `render_to_internal_master` /
     /// `compose_into`). `None` until the first render call returns.
@@ -418,11 +426,43 @@ impl VelloTileRasterizer {
         base_color: Color,
         scale: f32,
     ) -> Result<(), vello::Error> {
+        // Legacy shared-store path: the rasterizer's own tile-scene map rides
+        // along (take/put — `render_scaled_with` borrows it independently of
+        // `self`).
+        let mut tile_scenes = std::mem::take(&mut self.tile_scenes);
+        let result = self.render_scaled_with(
+            scene,
+            tile_cache,
+            &mut tile_scenes,
+            target_view,
+            base_color,
+            scale,
+        );
+        self.tile_scenes = tile_scenes;
+        result
+    }
+
+    /// Like [`render_scaled`](Self::render_scaled) but with a caller-owned
+    /// per-tile scene store. One store must pair with one [`TileCache`] and one
+    /// logical SURFACE: interleaving different scenes through a single shared
+    /// (cache, store) pair — the multi-surface host shape — invalidates every
+    /// tile on every call, because each scene diffs against the previous
+    /// (unrelated) one. The keyed per-surface path
+    /// (`Renderer::render_vello_scaled_for`) passes each surface's own pair.
+    pub fn render_scaled_with(
+        &mut self,
+        scene: &Scene,
+        tile_cache: &mut TileCache,
+        tile_scenes: &mut HashMap<TileCoord, vello::Scene>,
+        target_view: &wgpu::TextureView,
+        base_color: Color,
+        scale: f32,
+    ) -> Result<(), vello::Error> {
         use crate::profiling::{FrameTimings, Span};
         let total_span = Span::start("total");
         let mut timings = FrameTimings::empty();
 
-        let master = self.build_master_scene_timed(scene, tile_cache, &mut timings);
+        let master = self.build_master_scene_timed(scene, tile_cache, tile_scenes, &mut timings);
 
         // At DPR > 1 the master (in logical coords) is appended into a fresh scene under
         // a scale affine; vello then rasterizes the scaled vectors crisply at the
@@ -525,7 +565,10 @@ impl VelloTileRasterizer {
 
         self.ensure_master_texture(scene.viewport_width, scene.viewport_height, master_format);
 
-        let master_scene = self.build_master_scene_timed(scene, tile_cache, &mut timings);
+        let mut tile_scenes = std::mem::take(&mut self.tile_scenes);
+        let master_scene =
+            self.build_master_scene_timed(scene, tile_cache, &mut tile_scenes, &mut timings);
+        self.tile_scenes = tile_scenes;
 
         // The master_pool entry is guaranteed by ensure_master_texture above.
         let entry = self

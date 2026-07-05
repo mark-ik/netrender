@@ -90,6 +90,8 @@ pub fn create_netrender_instance(
     Ok(Renderer {
         wgpu_device,
         tile_cache,
+        tile_cache_tile_size: options.tile_cache_size,
+        surface_tiles: Mutex::new(Default::default()),
         vello_rasterizer,
         external_texture_pipelines: Mutex::new(HashMap::new()),
     })

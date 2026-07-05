@@ -62,6 +62,19 @@ pub struct Renderer {
     /// `render_vello` (the vello rasterizer holds its per-tile
     /// `vello::Scene` cache against this tile cache's coords).
     pub(crate) tile_cache: Option<Mutex<TileCache>>,
+    /// Tile size `tile_cache` was built with; per-surface caches
+    /// ([`Self::render_vello_scaled_for`]) mint theirs to match.
+    pub(crate) tile_cache_tile_size: Option<u32>,
+    /// Per-SURFACE tile state for hosts that rasterize several retained
+    /// surfaces through one renderer (P4, shell paint plan 2026-07-03). Tile
+    /// invalidation is a diff against the PREVIOUS scene, so interleaving
+    /// different surfaces through the one shared `tile_cache` dirtied every
+    /// tile on every call (measured: 234/234 tiles rebuilt per settled frame,
+    /// and a small card render spending 90-150ms diffing against foreign tile
+    /// state). Keyed by a host-chosen surface id; each entry pairs a
+    /// `TileCache` with its per-tile scene store so a surface only ever diffs
+    /// against itself. LRU-capped.
+    pub(crate) surface_tiles: Mutex<SurfaceTiles>,
     /// Phase 7' — vello-backed tile rasterizer. Constructed at init
     /// when `NetrenderOptions::enable_vello` is true.
     pub(crate) vello_rasterizer: Option<Mutex<crate::vello_tile_rasterizer::VelloTileRasterizer>>,
@@ -70,6 +83,27 @@ pub struct Renderer {
     pub(crate) external_texture_pipelines:
         Mutex<HashMap<wgpu::TextureFormat, ExternalTexturePipeline>>,
 }
+
+/// See [`Renderer::surface_tiles`]: the per-surface tile states plus a
+/// monotonic use counter for LRU eviction.
+#[derive(Default)]
+pub(crate) struct SurfaceTiles {
+    pub(crate) clock: u64,
+    pub(crate) map: HashMap<u64, SurfaceTileState>,
+}
+
+/// One retained surface's tile state: its own invalidation cache and the
+/// per-tile `vello::Scene` store that pairs with it.
+pub(crate) struct SurfaceTileState {
+    pub(crate) tile_cache: TileCache,
+    pub(crate) tile_scenes: HashMap<crate::tile_cache::TileCoord, vello::Scene>,
+    pub(crate) last_used: u64,
+}
+
+/// Cap on distinct surfaces holding tile state. Above it the least-recently
+/// used entry is evicted (its next render simply rebuilds cold). Sized for a
+/// shell's surfaces plus a healthy set of card tiles.
+const MAX_SURFACE_TILE_STATES: usize = 64;
 
 /// Per-frame load policy on the color attachment for `render_vello`.
 /// `Clear(c)` maps to vello's `RenderParams::base_color`. `Load` is
@@ -177,6 +211,92 @@ impl Renderer {
             .as_ref()
             .expect("Renderer::render_vello requires NetrenderOptions::tile_cache_size = Some(_)");
 
+        let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        let mut tc = tc_mutex.lock().expect("tile_cache lock");
+        // Legacy shared path: the rasterizer's own tile-scene store rides with
+        // the shared tile cache (one-surface hosts; multi-surface hosts should
+        // use `render_vello_scaled_for` so surfaces stop cross-invalidating).
+        let mut tile_scenes = std::mem::take(rast.tile_scenes_mut());
+        self.render_vello_inner(
+            &mut rast,
+            &mut tc,
+            &mut tile_scenes,
+            scene,
+            target_view,
+            clear,
+            scale,
+        );
+        *rast.tile_scenes_mut() = tile_scenes;
+    }
+
+    /// Like [`render_vello_scaled`](Self::render_vello_scaled) but with
+    /// per-SURFACE tile state: `surface` names one retained surface (a shell
+    /// partition texture, a canvas, one content card), and its scene diffs
+    /// only against ITS OWN previous frame. Hosts that rasterize several
+    /// surfaces through one renderer must use this — through the shared-cache
+    /// entry every call diffs against a different surface's scene, so every
+    /// tile is dirty every call (see [`Self::surface_tiles`]).
+    pub fn render_vello_scaled_for(
+        &self,
+        surface: u64,
+        scene: &Scene,
+        target_view: &wgpu::TextureView,
+        clear: ColorLoad,
+        scale: f32,
+    ) {
+        let rast_mutex = self
+            .vello_rasterizer
+            .as_ref()
+            .expect("Renderer::render_vello_scaled_for requires NetrenderOptions::enable_vello");
+        let tile_size = self.tile_cache_tile_size.expect(
+            "Renderer::render_vello_scaled_for requires NetrenderOptions::tile_cache_size = Some(_)",
+        );
+        let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
+        let mut surfaces = self.surface_tiles.lock().expect("surface_tiles lock");
+        surfaces.clock += 1;
+        let clock = surfaces.clock;
+        if !surfaces.map.contains_key(&surface) && surfaces.map.len() >= MAX_SURFACE_TILE_STATES {
+            if let Some((&evict, _)) = surfaces.map.iter().min_by_key(|(_, s)| s.last_used) {
+                surfaces.map.remove(&evict);
+            }
+        }
+        let entry = surfaces
+            .map
+            .entry(surface)
+            .or_insert_with(|| SurfaceTileState {
+                tile_cache: TileCache::new(tile_size),
+                tile_scenes: HashMap::new(),
+                last_used: 0,
+            });
+        entry.last_used = clock;
+        // Destructure so the borrows of the two halves stay disjoint.
+        let SurfaceTileState {
+            tile_cache,
+            tile_scenes,
+            ..
+        } = entry;
+        self.render_vello_inner(
+            &mut rast,
+            tile_cache,
+            tile_scenes,
+            scene,
+            target_view,
+            clear,
+            scale,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_vello_inner(
+        &self,
+        rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
+        tc: &mut TileCache,
+        tile_scenes: &mut HashMap<crate::tile_cache::TileCoord, vello::Scene>,
+        scene: &Scene,
+        target_view: &wgpu::TextureView,
+        clear: ColorLoad,
+        scale: f32,
+    ) {
         let base = match clear {
             ColorLoad::Clear(c) => {
                 vello::peniko::Color::new([c.r as f32, c.g as f32, c.b as f32, c.a as f32])
@@ -184,15 +304,12 @@ impl Renderer {
             ColorLoad::Load => vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]),
         };
 
-        let mut rast = rast_mutex.lock().expect("vello_rasterizer lock");
-        let mut tc = tc_mutex.lock().expect("tile_cache lock");
-
         // Roadmap D1 — if any layer carries a `backdrop_filter`,
         // pre-render the scene-prefix to a texture, blur it, and
         // inject a SceneImage covering the layer's bounds so the
         // layer paints over the blurred backdrop. Falls through to
         // the no-backdrop fast path when no filters are present.
-        let processed = self.preprocess_filters(scene, &mut rast, &mut tc);
+        let processed = self.preprocess_filters(scene, rast, tc);
         let scene_to_render = processed.as_ref().unwrap_or(scene);
 
         // Per-frame paint instrumentation. DEBUG (quiet by default; the app
@@ -204,7 +321,8 @@ impl Renderer {
         #[cfg(target_arch = "wasm32")]
         use web_time::Instant;
         let render_start = Instant::now();
-        let result = rast.render_scaled(scene_to_render, &mut tc, target_view, base, scale);
+        let result =
+            rast.render_scaled_with(scene_to_render, tc, tile_scenes, target_view, base, scale);
         let elapsed_us = render_start.elapsed().as_micros();
         match result {
             Ok(()) => {

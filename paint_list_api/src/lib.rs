@@ -130,8 +130,12 @@ pub trait PaintList: Clone + std::fmt::Debug + Serialize + for<'de> Deserialize<
 pub struct FontResource {
     /// The key `TextRunItem::font_instance` references.
     pub key: FontInstanceKey,
-    /// TTF / OTF / TTC font bytes.
-    pub data: Vec<u8>,
+    /// TTF / OTF / TTC font bytes, shared. Font files run 100KB-20MB, and a
+    /// producer emits the same faces every frame — the `Arc` makes carrying
+    /// one in a per-frame list a refcount bump instead of a memcpy, and gives
+    /// the renderer a stable identity to cache its own font handle against.
+    /// Serialization (IPC / capture-replay) writes the bytes inline as before.
+    pub data: std::sync::Arc<Vec<u8>>,
     /// Index within a font collection (TTC); `0` for single-font files.
     pub index: u32,
 }

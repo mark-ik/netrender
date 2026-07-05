@@ -145,16 +145,48 @@ fn remap_cmd_keys(
 
 /// Register a paint list's font side-table into the scene's font
 /// palette, returning the `FontInstanceKey → FontId` map that
-/// `DrawText` lowering resolves through. Each `FontResource`'s bytes
-/// are wrapped in a fresh `peniko::Blob` (mints a vello-dedup id) and
-/// pushed via `Scene::push_font`.
+/// `DrawText` lowering resolves through.
+///
+/// The `peniko::Blob` per font is cached process-wide, keyed by the byte
+/// identity of the producer's shared `Arc` (the entry holds the `Arc`, so the
+/// allocation is pinned and the pointer can't be reused while the entry
+/// lives). Rewrapping in a fresh `Blob` per translate minted a fresh
+/// vello-dedup id per FRAME, so every downstream font/glyph cache missed on
+/// every frame; a stable `Blob` (its id survives clones) lets them hit.
+/// Keying on byte identity rather than `FontInstanceKey` keeps the composite
+/// path sound — it re-mints keys per merge, but reuses the producers' `Arc`s.
 pub(crate) fn register_fonts(scene: &mut Scene, fonts: &[FontResource]) -> HashMap<FontInstanceKey, FontId> {
+    static BLOB_CACHE: std::sync::Mutex<
+        Option<HashMap<(usize, usize, u32), (FontBlob, Arc<Vec<u8>>)>>,
+    > = std::sync::Mutex::new(None);
     let mut map = HashMap::new();
     for fr in fonts {
-        let blob = FontBlob {
-            data: peniko::Blob::new(Arc::new(fr.data.clone())),
-            index: fr.index,
-        };
+        let identity = (
+            Arc::as_ptr(&fr.data) as *const u8 as usize,
+            fr.data.len(),
+            fr.index,
+        );
+        let mut cache = BLOB_CACHE.lock().expect("font blob cache poisoned");
+        let cache = cache.get_or_insert_with(HashMap::new);
+        // A producer that re-allocates its font bytes per emit would grow a
+        // pointer-keyed cache without bound; real faces number in the dozens,
+        // so past this bound just reset (costs dedup quality, never bytes).
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        let (blob, _pin) = cache
+            .entry(identity)
+            .or_insert_with(|| {
+                (
+                    FontBlob {
+                        data: peniko::Blob::new(fr.data.clone()),
+                        index: fr.index,
+                    },
+                    fr.data.clone(),
+                )
+            });
+        let blob = blob.clone();
+        drop(cache);
         let font_id = scene.push_font(blob);
         map.insert(fr.key, font_id);
     }

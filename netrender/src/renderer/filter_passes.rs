@@ -205,7 +205,7 @@ impl Renderer {
         &self,
         scene: &Scene,
         rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
-        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+        tc: &mut TileCache,
     ) -> Option<Scene> {
         if !has_backdrop_filter(scene) && !has_element_filter(scene) {
             return None;
@@ -236,7 +236,7 @@ impl Renderer {
         &self,
         scene: &Scene,
         rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
-        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+        tc: &mut TileCache,
     ) -> Scene {
         use crate::scene::{SceneClip, SceneFilter, SceneImage, SceneOp, NO_CLIP, SHARP_CLIP};
 
@@ -353,7 +353,7 @@ impl Renderer {
     pub(super) fn render_scene_to_texture(
         &self,
         rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
-        tc: &mut std::sync::MutexGuard<'_, TileCache>,
+        tc: &mut TileCache,
         scene: &Scene,
     ) -> wgpu::Texture {
         let device = &self.wgpu_device.core.device;

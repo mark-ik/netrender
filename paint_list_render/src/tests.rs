@@ -120,7 +120,11 @@ fn merge_namespaces_colliding_font_keys() {
 
     let collide = FontInstanceKey::new(IdNamespace(0), 0);
     let mk = |face: u8| {
-        let fonts = vec![FontResource { key: collide, data: vec![face], index: 0 }];
+        let fonts = vec![FontResource {
+            key: collide,
+            data: std::sync::Arc::new(vec![face]),
+            index: 0,
+        }];
         let cmds = vec![PaintCmd::DrawText(TextRunItem {
             placement: placement_at(box2d(0.0, 0.0, 10.0, 10.0)),
             font_instance: collide,
@@ -142,8 +146,8 @@ fn merge_namespaces_colliding_font_keys() {
     assert!(images.is_empty());
     assert_eq!(fonts.len(), 2, "both fonts survive the merge");
     assert_ne!(fonts[0].key, fonts[1].key, "colliding keys made distinct");
-    assert_eq!(fonts[0].data, vec![0xAA], "font bytes paired to the right new key");
-    assert_eq!(fonts[1].data, vec![0xBB]);
+    assert_eq!(*fonts[0].data, vec![0xAA], "font bytes paired to the right new key");
+    assert_eq!(*fonts[1].data, vec![0xBB]);
     let text_keys: Vec<_> = commands
         .iter()
         .filter_map(|c| match c {

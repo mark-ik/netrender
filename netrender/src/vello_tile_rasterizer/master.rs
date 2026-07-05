@@ -101,7 +101,10 @@ impl VelloTileRasterizer {
         let total_span = Span::start("total");
         let mut timings = FrameTimings::empty();
 
-        let local_master = self.build_master_scene_timed(scene, tile_cache, &mut timings);
+        let mut tile_scenes = std::mem::take(&mut self.tile_scenes);
+        let local_master =
+            self.build_master_scene_timed(scene, tile_cache, &mut tile_scenes, &mut timings);
+        self.tile_scenes = tile_scenes;
 
         let append_span = Span::start("master_append");
         let xform = if transform == Affine::IDENTITY {
@@ -126,6 +129,7 @@ impl VelloTileRasterizer {
         &mut self,
         scene: &Scene,
         tile_cache: &mut TileCache,
+        tile_scenes: &mut std::collections::HashMap<crate::tile_cache::TileCoord, vello::Scene>,
         timings: &mut crate::profiling::FrameTimings,
     ) -> vello::Scene {
         use crate::profiling::Span;
@@ -156,18 +160,17 @@ impl VelloTileRasterizer {
                 .expect("dirty tile must be in tile_cache");
             let filtered = filter_scene_to_tile(scene, world_rect);
             let tile_scene = scene_to_vello_with_overrides(&filtered, &merged_images);
-            self.tile_scenes.insert(coord, tile_scene);
+            tile_scenes.insert(coord, tile_scene);
         }
 
         // Drop tile-Scenes whose coords were evicted from the tile
         // cache (e.g., scrolled out of viewport for RETAIN_FRAMES
         // frames).
-        self.tile_scenes
-            .retain(|coord, _| tile_cache.tile_world_rect(*coord).is_some());
+        tile_scenes.retain(|coord, _| tile_cache.tile_world_rect(*coord).is_some());
         rebuild_span.stop_recording(timings);
 
         let compose_span = Span::start("master_compose");
-        let master = self.compose_master(tile_cache, scene);
+        let master = self.compose_master(tile_cache, scene, tile_scenes);
         compose_span.stop_recording(timings);
         master
     }
@@ -214,7 +217,12 @@ impl VelloTileRasterizer {
         self.image_data.get(&key).map(|img| img.data.id())
     }
 
-    fn compose_master(&self, tile_cache: &TileCache, scene: &Scene) -> vello::Scene {
+    fn compose_master(
+        &self,
+        tile_cache: &TileCache,
+        scene: &Scene,
+        tile_scenes: &std::collections::HashMap<crate::tile_cache::TileCoord, vello::Scene>,
+    ) -> vello::Scene {
         let mut master = vello::Scene::new();
 
         // Phase 12a' scene-level alpha + blend mode wrap. Skip the
@@ -240,7 +248,7 @@ impl VelloTileRasterizer {
             );
         }
 
-        for (coord, tile_scene) in &self.tile_scenes {
+        for (coord, tile_scene) in tile_scenes {
             // Get the world rect from the tile cache. If it's not
             // present (race with eviction), skip — the retain pass
             // above should have already pruned, so this is purely
