@@ -199,7 +199,11 @@ impl Renderer {
         // raises it) on the load-bearing render op; one structured event per
         // frame with timing + the scene size. NOTE: this is a HOT per-frame
         // path — it needs sampling later (emit every Nth frame); not added now.
-        let render_start = std::time::Instant::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        use std::time::Instant;
+        #[cfg(target_arch = "wasm32")]
+        use web_time::Instant;
+        let render_start = Instant::now();
         let result = rast.render_scaled(scene_to_render, &mut tc, target_view, base, scale);
         let elapsed_us = render_start.elapsed().as_micros();
         match result {

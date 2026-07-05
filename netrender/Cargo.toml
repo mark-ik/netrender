@@ -58,6 +58,10 @@ wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgpu"] }
+# std::time::Instant panics on wasm32-unknown-unknown; web-time is the
+# drop-in replacement backed by performance.now(). Used by the frame
+# profiling spans and the per-frame render diagnostic.
+web-time = "1"
 
 [dev-dependencies]
 png = "0.17"

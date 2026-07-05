@@ -26,7 +26,13 @@
 //! - **`&'static str` names.** No allocation per span; names are
 //!   compile-time constants chosen by the recorder.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+// std::time::Instant panics on wasm32-unknown-unknown; web-time is the
+// drop-in backed by performance.now().
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 /// One named timing span captured during a render call.
 #[derive(Debug, Clone)]
