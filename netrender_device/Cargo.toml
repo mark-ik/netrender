@@ -15,6 +15,16 @@ serde = ["dep:serde"]
 
 [dependencies]
 log.workspace = true
-wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
-pollster = "0.4"
+wgpu = { workspace = true, features = ["std", "parking_lot", "wgsl"] }
 serde = { workspace = true, optional = true }
+
+# Backend features are per-target: native gets the platform backends,
+# wasm32 gets the WebGPU backend. The blocking `boot()` wrappers (and
+# their pollster dep) are native-only; wasm consumers drive `boot_async`
+# from a browser executor.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }
+pollster = "0.4"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu"] }

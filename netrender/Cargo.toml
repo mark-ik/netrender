@@ -34,7 +34,7 @@ log.workspace = true
 # load-bearing per-frame render op; the consuming app (e.g. meerkat) installs
 # the subscriber and chooses the level. netrender never depends on the app.
 tracing = "0.1"
-wgpu = { workspace = true, features = ["std", "parking_lot", "dx12", "metal", "vulkan", "wgsl"] }
+wgpu = { workspace = true, features = ["std", "parking_lot", "wgsl"] }
 netrender_device = { path = "../netrender_device" }
 vello = { workspace = true, features = ["wgpu"] }
 # Roadmap R1 — per-glyph hit testing uses skrifa::metrics::GlyphMetrics
@@ -50,6 +50,14 @@ peniko = { workspace = true, features = ["serde"], optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { version = "1", optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
+
+# Backend features are per-target (mirrors netrender_device): native
+# gets the platform backends, wasm32 gets the WebGPU backend.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu"] }
 
 [dev-dependencies]
 png = "0.17"
