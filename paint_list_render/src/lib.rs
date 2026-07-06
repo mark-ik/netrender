@@ -35,7 +35,7 @@ use std::collections::HashMap;
 
 use log::warn;
 use netrender::{
-    ExternalTexturePlacement, Glyph as NrGlyph, ImageKey as NrImageKey, NO_CLIP, SHARP_CLIP, Scene, SceneOp, ScenePathStroke, ScenePattern,
+    ExternalTexturePlacement, Glyph as NrGlyph, ImageKey as NrImageKey, NO_CLIP, SHARP_CLIP, Scene, SceneImage, SceneOp, ScenePathStroke, ScenePattern,
     SceneShape, Transform,
 };
 use paint_list_api::{
@@ -303,17 +303,22 @@ pub fn translate_paint_cmd_stream(
             PaintCmd::DrawImage(img) => {
                 if let Some(&nr_key) = image_map.get(&img.image_key) {
                     let (x0, y0, x1, y1) = rect_corners(&img.placement.bounds);
-                    scene.push_image_full(
+                    scene.ops.push(SceneOp::Image(SceneImage {
                         x0,
                         y0,
                         x1,
                         y1,
-                        [0.0, 0.0, 1.0, 1.0], // full-image UV
-                        color_to_array(&img.color),
-                        nr_key,
-                        tid,
-                        NO_CLIP,
-                    );
+                        uv: [0.0, 0.0, 1.0, 1.0], // full-image UV
+                        color: color_to_array(&img.color),
+                        key: nr_key,
+                        transform_id: tid,
+                        clip_rect: NO_CLIP,
+                        clip_corner_radii: SHARP_CLIP,
+                        clamp_to_uv: false,
+                        // `crisp-edges` and `pixelated` both lower to the
+                        // nearest-neighbor sampler at this backend.
+                        nearest: !matches!(img.image_rendering, ple::ImageRendering::Auto),
+                    }));
                 } else {
                     warn!(
                         "[paint translator] DrawImage references unregistered image {:?}; skipping",
@@ -347,6 +352,7 @@ pub fn translate_paint_cmd_stream(
                         transform_id: tid,
                         clip_rect: NO_CLIP,
                         clip_corner_radii: [0.0; 4],
+                        nearest: !matches!(ri.image_rendering, ple::ImageRendering::Auto),
                     }));
                 } else {
                     warn!(

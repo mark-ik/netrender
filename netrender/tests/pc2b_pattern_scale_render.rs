@@ -111,6 +111,7 @@ fn pc2b_scaled_pattern_tile_is_image_times_scale() {
         transform_id: 0,
         clip_rect: NO_CLIP,
         clip_corner_radii: [0.0; 4],
+        nearest: false,
     }));
 
     let b = render_scene(&scene);
@@ -144,6 +145,7 @@ fn pc2b_scaled_pattern_under_world_translate() {
         transform_id: tid,
         clip_rect: NO_CLIP,
         clip_corner_radii: [0.0; 4],
+        nearest: false,
     }));
 
     let b = render_scene(&scene);

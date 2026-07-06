@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use vello::kurbo::{Affine, Point, Rect};
 use vello::peniko::{
     self, BlendMode, Color, ColorStop, Compose, Extend, Fill, Gradient, ImageBrush,
-    ImageData, ImageFormat, Mix,
+    ImageData, ImageFormat, ImageQuality, Mix,
 };
 
 use crate::scene::{
@@ -154,16 +154,26 @@ pub(super) fn emit_image(
     // bilinear filtering cannot bleed in neighbouring source pixels at a seam
     // (nine-patch slices, sprite cells). Otherwise sample the whole image, mapping
     // the `uv` sub-region onto the target via the brush transform.
+    // CSS `image-rendering: pixelated` / `crisp-edges` selects the
+    // nearest-neighbor sampler; the default stays bilinear.
+    let quality = if image.nearest {
+        ImageQuality::Low
+    } else {
+        ImageQuality::Medium
+    };
     let (brush, brush_xform) = if image.clamp_to_uv {
         let sub = crop_to_uv(img, image.uv);
         let (sw, sh) = (sub.width, sub.height);
         (
-            ImageBrush::new(sub).with_alpha(alpha).with_extend(Extend::Pad),
+            ImageBrush::new(sub)
+                .with_alpha(alpha)
+                .with_extend(Extend::Pad)
+                .with_quality(quality),
             uv_to_target_affine([0.0, 0.0, 1.0, 1.0], target, sw, sh),
         )
     } else {
         (
-            ImageBrush::new(img.clone()).with_alpha(alpha),
+            ImageBrush::new(img.clone()).with_alpha(alpha).with_quality(quality),
             uv_to_target_affine(image.uv, target, img.width, img.height),
         )
     };
@@ -229,7 +239,13 @@ pub(super) fn emit_pattern(
         pattern.extent[3] as f64,
     );
 
-    let brush = ImageBrush::new(img.clone()).with_extend(Extend::Repeat);
+    let brush = ImageBrush::new(img.clone())
+        .with_extend(Extend::Repeat)
+        .with_quality(if pattern.nearest {
+            ImageQuality::Low
+        } else {
+            ImageQuality::Medium
+        });
     // Brush-space (image pixels) → scene-space: scale each axis (a tile spans
     // `image_w * sx` by `image_h * sy`) AND translate so the first tile's origin
     // is the extent's top-left — otherwise the repeat phase is anchored at the

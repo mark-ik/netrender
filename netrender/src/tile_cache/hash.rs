@@ -155,6 +155,10 @@ fn hash_image(h: &mut DefaultHasher, i: &SceneImage) {
     for c in i.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
+    // Sampling state changes the rendered pixels; both flags must
+    // dirty the tile.
+    h.write_u8(i.clamp_to_uv as u8);
+    h.write_u8(i.nearest as u8);
 }
 
 fn hash_glyph_run(h: &mut DefaultHasher, r: &SceneGlyphRun) {
@@ -201,6 +205,7 @@ fn hash_pattern(h: &mut DefaultHasher, p: &ScenePattern) {
     for c in p.clip_corner_radii {
         h.write_u32(c.to_bits());
     }
+    h.write_u8(p.nearest as u8);
 }
 
 fn hash_shape(h: &mut DefaultHasher, s: &SceneShape) {

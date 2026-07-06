@@ -332,6 +332,7 @@ impl Renderer {
                     clip_rect: NO_CLIP,
                     clip_corner_radii: SHARP_CLIP,
                     clamp_to_uv: false,
+                    nearest: false,
                 }),
             );
 

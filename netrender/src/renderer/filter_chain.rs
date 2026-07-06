@@ -260,6 +260,7 @@ impl Renderer {
                 // GPU-texture override (no CPU `ImageData`), so the `clamp_to_uv`
                 // CPU crop path can't run on it.
                 clamp_to_uv: false,
+                nearest: false,
             });
             // Replace the (non-backdrop) interior with the single filtered image.
             processed.ops.splice(content_start..cur_pop, std::iter::once(image));

@@ -163,6 +163,7 @@ impl Scene {
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
             clamp_to_uv: false,
+            nearest: false,
         }));
     }
 
@@ -351,6 +352,7 @@ impl Scene {
             transform_id: 0,
             clip_rect: NO_CLIP,
             clip_corner_radii: SHARP_CLIP,
+            nearest: false,
         }));
     }
 
@@ -380,6 +382,7 @@ impl Scene {
             clip_rect,
             clip_corner_radii: SHARP_CLIP,
             clamp_to_uv: false,
+            nearest: false,
         }));
     }
 
@@ -412,6 +415,7 @@ impl Scene {
             clip_rect,
             clip_corner_radii: SHARP_CLIP,
             clamp_to_uv: true,
+            nearest: false,
         }));
     }
 
@@ -919,6 +923,7 @@ impl Scene {
             clip_rect,
             clip_corner_radii,
             clamp_to_uv: false,
+            nearest: false,
         }));
     }
 

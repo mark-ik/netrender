@@ -281,6 +281,10 @@ pub struct ScenePattern {
     pub clip_rect: [f32; 4],
     /// Per-corner clip radii (see `SceneRect::clip_corner_radii`).
     pub clip_corner_radii: [f32; 4],
+    /// Sample with nearest-neighbor instead of the default bilinear
+    /// filtering (CSS `image-rendering: pixelated` / `crisp-edges`).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub nearest: bool,
 }
 
 /// One textured rectangle. UV corners map the image onto the rect;
@@ -316,6 +320,10 @@ pub struct SceneImage {
     /// (default) samples the whole image with the brush's extend mode.
     #[cfg_attr(feature = "serde", serde(default))]
     pub clamp_to_uv: bool,
+    /// Sample with nearest-neighbor instead of the default bilinear
+    /// filtering (CSS `image-rendering: pixelated` / `crisp-edges`).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub nearest: bool,
 }
 
 /// Phase 11' stroked rect / rounded-rect primitive — for borders,
