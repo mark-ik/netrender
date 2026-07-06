@@ -130,22 +130,15 @@ pub(super) fn emit_image(
     image: &SceneImage,
     transforms: &[Transform],
     cache: &HashMap<ImageKey, ImageData>,
-) {
+) -> Option<ImageKey> {
     let Some(img) = cache.get(&image.key) else {
         // A content scene (a fetched web page) must never crash the whole renderer:
-        // skip an image whose source is missing rather than panic. This was a hard
-        // `.expect()` until a real page (ycombinator.com) tripped it. The diagnostic
-        // names the missing key and how many sources the scene did carry, so the
-        // upstream inconsistency (the translator emitting a SceneImage it did not
-        // register) can be root-caused.
-        log::warn!(
-            "scene_to_vello: SceneImage references unknown ImageKey {:?}; skipping it \
-             (scene carried {} image sources; rect {:?})",
-            image.key,
-            cache.len(),
-            [image.x0, image.y0, image.x1, image.y1],
-        );
-        return;
+        // skip an image whose source is missing rather than panic (a real page,
+        // ycombinator.com, tripped the old `.expect()`). Return the missing key so
+        // the caller reports one aggregated warn per rasterize — a systemic drop
+        // (e.g. unbuilt box-shadow masks) is thousands of ops, and a per-op warn
+        // floods the log into noise instead of a signal. (Diagnostics — aggregated.)
+        return Some(image.key);
     };
 
     let (alpha, chromatic) = split_tint(image.color);
@@ -204,6 +197,7 @@ pub(super) fn emit_image(
     if needs_clip {
         vscene.pop_layer();
     }
+    None
 }
 
 /// Roadmap C2 — emit a tiling [`ScenePattern`] op. Repeats the
@@ -215,17 +209,12 @@ pub(super) fn emit_pattern(
     pattern: &ScenePattern,
     transforms: &[Transform],
     cache: &HashMap<ImageKey, ImageData>,
-) {
+) -> Option<ImageKey> {
     let Some(img) = cache.get(&pattern.tile) else {
         // Same content-robustness as `emit_image`: skip a tiling pattern (a CSS
-        // background) whose source is missing rather than panic the whole renderer.
-        log::warn!(
-            "scene_to_vello: ScenePattern references unknown ImageKey {:?}; skipping it \
-             (scene carried {} image sources)",
-            pattern.tile,
-            cache.len(),
-        );
-        return;
+        // background) whose source is missing rather than panic. Return the key so
+        // the caller aggregates the report. (Diagnostics — aggregated.)
+        return Some(pattern.tile);
     };
 
     // Per-axis tile scale (CSS background-size). Non-positive on an axis is
@@ -257,6 +246,7 @@ pub(super) fn emit_pattern(
     if needs_clip {
         vscene.pop_layer();
     }
+    None
 }
 
 /// Map UV `[u0, v0, u1, v1]` (normalized to `[0, 1]`) of a `(W, H)`

@@ -109,14 +109,24 @@ pub fn scene_to_vello_with_cache(
     // an unbalanced PopLayer with no live layer is silently skipped
     // (vello would panic on underflow).
     let mut layer_depth: u32 = 0;
+    // Missing-source image/pattern keys, aggregated so a systemic drop (e.g. unbuilt
+    // box-shadow masks) reports one warn per rasterize instead of a per-op flood —
+    // the difference between a signal and thousands of noise lines. (Diagnostics.)
+    let mut missing_images: Vec<ImageKey> = Vec::new();
     for op in &scene.ops {
         match op {
             SceneOp::Rect(rect) => emit_rect(&mut vscene, rect, &scene.transforms),
             SceneOp::Stroke(stroke) => emit_stroke(&mut vscene, stroke, &scene.transforms),
             SceneOp::Gradient(gradient) => emit_gradient(&mut vscene, gradient, &scene.transforms),
-            SceneOp::Image(image) => emit_image(&mut vscene, image, &scene.transforms, images),
+            SceneOp::Image(image) => {
+                if let Some(key) = emit_image(&mut vscene, image, &scene.transforms, images) {
+                    missing_images.push(key);
+                }
+            }
             SceneOp::Pattern(pattern) => {
-                emit_pattern(&mut vscene, pattern, &scene.transforms, images)
+                if let Some(key) = emit_pattern(&mut vscene, pattern, &scene.transforms, images) {
+                    missing_images.push(key);
+                }
             }
             SceneOp::Shape(shape) => emit_shape(&mut vscene, shape, &scene.transforms),
             SceneOp::GlyphRun(run) => {
@@ -137,6 +147,24 @@ pub fn scene_to_vello_with_cache(
                 }
             }
         }
+    }
+    if !missing_images.is_empty() {
+        // One report per rasterize, deduped. Keys >= 0xFFFF_0000_0000_0000
+        // (`BOX_SHADOW_MASK_KEY_BASE`) are box-shadow masks the host must build via
+        // `build_box_shadow_mask` before rasterizing; lower keys are content images
+        // the paint translator emitted without registering a source. Either way the
+        // op is skipped (paints nothing / black), so a divergence is a real bug.
+        let unique: std::collections::HashSet<_> = missing_images.iter().copied().collect();
+        log::warn!(
+            "scene_to_vello: {} image/pattern op(s) referenced {} unregistered image key(s) \
+             and were skipped (scene carried {} sources). Keys >= {:#x} are unbuilt box-shadow \
+             masks; lower keys are content images with no registered source. Missing: {:?}",
+            missing_images.len(),
+            unique.len(),
+            images.len(),
+            0xFFFF_0000_0000_0000u64,
+            unique,
+        );
     }
     debug_assert_eq!(
         layer_depth, 0,
