@@ -225,10 +225,18 @@ pub fn translate_paint_cmd_stream(
                 // polyline). `ScenePathStroke` is `{color, width}` today, so
                 // cap/join/dash (`s.cap`/`s.join`/`s.dash`) are not yet honored —
                 // a solid butt stroke. Empty paths produce an empty shape (no-op).
+                let (dash_pattern, dash_offset) = dash_to_scene(&s.dash);
                 scene.push_shape(SceneShape {
                     path: path_data_to_scene_path(&s.path),
                     fill_color: None,
-                    stroke: Some(ScenePathStroke { color: color_to_array(&s.color), width: s.width }),
+                    stroke: Some(ScenePathStroke {
+                        color: color_to_array(&s.color),
+                        width: s.width,
+                        cap: stroke_cap_to_scene(s.cap),
+                        join: stroke_join_to_scene(s.join),
+                        dash_pattern,
+                        dash_offset,
+                    }),
                     transform_id: tid,
                     clip_rect: NO_CLIP,
                     clip_corner_radii: SHARP_CLIP,
@@ -247,10 +255,17 @@ pub fn translate_paint_cmd_stream(
                 // `{color, width}`, so a stroke's cap/join/dash are not yet
                 // honored. A path with neither fill nor stroke is a no-op.
                 let fill_color = p.fill.as_ref().map(color_to_array);
-                let stroke = p
-                    .stroke
-                    .as_ref()
-                    .map(|st| ScenePathStroke { color: color_to_array(&st.color), width: st.width });
+                let stroke = p.stroke.as_ref().map(|st| {
+                    let (dash_pattern, dash_offset) = dash_to_scene(&st.dash);
+                    ScenePathStroke {
+                        color: color_to_array(&st.color),
+                        width: st.width,
+                        cap: stroke_cap_to_scene(st.cap),
+                        join: stroke_join_to_scene(st.join),
+                        dash_pattern,
+                        dash_offset,
+                    }
+                });
                 if fill_color.is_some() || stroke.is_some() {
                     scene.push_shape(SceneShape {
                         path: path_data_to_scene_path(&p.path),

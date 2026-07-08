@@ -268,7 +268,7 @@ pub(crate) fn world_aabb_shape(s: &SceneShape, scene: &Scene) -> Option<[f32; 4]
     let local = s.path.local_aabb()?;
     // Inflate by half stroke width if a stroke is present, same
     // reasoning as world_aabb_stroke.
-    let half = s.stroke.map_or(0.0, |st| st.width * 0.5);
+    let half = s.stroke.as_ref().map_or(0.0, |st| st.width * 0.5);
     let inflated = [
         local[0] - half,
         local[1] - half,

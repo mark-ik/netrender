@@ -750,6 +750,10 @@ impl Scene {
             stroke: Some(ScenePathStroke {
                 color,
                 width: stroke_width,
+                cap: SceneStrokeCap::default(),
+                join: SceneStrokeJoin::default(),
+                dash_pattern: Vec::new(),
+                dash_offset: 0.0,
             }),
             transform_id: 0,
             clip_rect: NO_CLIP,

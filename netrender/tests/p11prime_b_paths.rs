@@ -184,6 +184,10 @@ fn p11b_03_filled_and_stroked() {
         stroke: Some(ScenePathStroke {
             color: [0.0, 0.0, 0.0, 1.0],
             width: 2.0,
+            cap: netrender::SceneStrokeCap::default(),
+            join: netrender::SceneStrokeJoin::default(),
+            dash_pattern: Vec::new(),
+            dash_offset: 0.0,
         }),
         transform_id: 0,
         clip_rect: netrender::NO_CLIP,

@@ -201,13 +201,22 @@ impl ScenePath {
     }
 }
 
-/// Phase 11b' stroke style. `width` in device pixels; future fields
-/// (cap / join / dash / miter limit) when consumers need them.
-#[derive(Debug, Clone, Copy)]
+/// Phase 11b' stroke style. `width` in device pixels. Carries cap / join /
+/// dash so shape strokes (`DrawPath` / `DrawStroke`) decorate the same way rect
+/// strokes (`SceneStroke`) do.
+#[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ScenePathStroke {
     pub color: [f32; 4],
     pub width: f32,
+    /// Line cap for open ends. Default `Butt`.
+    pub cap: SceneStrokeCap,
+    /// Line join at corners. Default `Miter`.
+    pub join: SceneStrokeJoin,
+    /// Alternating dash / gap lengths in device px; empty = solid.
+    pub dash_pattern: Vec<f32>,
+    /// Dash phase offset in device px.
+    pub dash_offset: f32,
 }
 
 /// Phase 11b' arbitrary-path primitive. Carries both an optional

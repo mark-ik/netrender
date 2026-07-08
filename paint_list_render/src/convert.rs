@@ -8,7 +8,7 @@
 
 use netrender::{
     GradientStop as NrGradientStop,
-    SceneBlendMode, ScenePath, Transform,
+    SceneBlendMode, ScenePath, SceneStrokeCap, SceneStrokeJoin, Transform,
 };
 use paint_list_api::{
     self as ple, ColorF,
@@ -58,6 +58,33 @@ pub(crate) fn gradient_stops(stops: &[paint_list_api::GradientStop]) -> Vec<NrGr
             color: [s.color.r, s.color.g, s.color.b, s.color.a],
         })
         .collect()
+}
+
+/// Map the vocabulary line cap to netrender's. 1:1.
+pub(crate) fn stroke_cap_to_scene(c: ple::StrokeCap) -> SceneStrokeCap {
+    match c {
+        ple::StrokeCap::Butt => SceneStrokeCap::Butt,
+        ple::StrokeCap::Round => SceneStrokeCap::Round,
+        ple::StrokeCap::Square => SceneStrokeCap::Square,
+    }
+}
+
+/// Map the vocabulary line join to netrender's. 1:1.
+pub(crate) fn stroke_join_to_scene(j: ple::StrokeJoin) -> SceneStrokeJoin {
+    match j {
+        ple::StrokeJoin::Bevel => SceneStrokeJoin::Bevel,
+        ple::StrokeJoin::Miter => SceneStrokeJoin::Miter,
+        ple::StrokeJoin::Round => SceneStrokeJoin::Round,
+    }
+}
+
+/// Split an optional `DashPattern` into netrender's `(intervals, offset)` shape;
+/// `None` → solid (empty intervals).
+pub(crate) fn dash_to_scene(dash: &Option<ple::DashPattern>) -> (Vec<f32>, f32) {
+    match dash {
+        Some(d) => (d.intervals.clone(), d.offset),
+        None => (Vec::new(), 0.0),
+    }
 }
 
 /// Rebuild a `netrender::ScenePath` from the serializable `PathData` command

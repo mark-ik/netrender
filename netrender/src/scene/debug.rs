@@ -86,7 +86,7 @@ pub(super) fn dump_op(out: &mut String, op: &SceneOp) {
             if let Some(c) = s.fill_color {
                 write!(out, "  fill={}", fmt_color(c)).ok();
             }
-            if let Some(stk) = s.stroke {
+            if let Some(stk) = &s.stroke {
                 write!(out, "  stroke={}@{}", fmt_color(stk.color), stk.width).ok();
             }
             dump_modifiers(out, s.transform_id, s.clip_rect, s.clip_corner_radii);

@@ -194,6 +194,48 @@ fn draw_stroke_emits_stroked_scene_shape() {
     assert_eq!(stroked, 1, "DrawStroke lowers to one stroked SceneShape");
 }
 
+/// A `DrawStroke` with round cap / join and a dash pattern carries those
+/// decorations onto the lowered `ScenePathStroke` (not just color + width), so a
+/// dashed, round-capped widget stroke renders instead of a solid butt one.
+#[test]
+fn draw_stroke_carries_cap_join_dash() {
+    use paint_list_api::{
+        DashPattern, LayoutPoint, PathCommand, PathData, StrokeCap, StrokeItem, StrokeJoin,
+    };
+
+    let list = list_with(
+        DeviceIntSize::new(800, 600),
+        vec![PaintCmd::DrawStroke(StrokeItem {
+            placement: placement_at(box2d(0.0, 0.0, 100.0, 100.0)),
+            path: PathData {
+                commands: vec![
+                    PathCommand::MoveTo(LayoutPoint::new(0.0, 0.0)),
+                    PathCommand::LineTo(LayoutPoint::new(100.0, 80.0)),
+                ],
+            },
+            color: ColorF { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            width: 2.0,
+            cap: StrokeCap::Round,
+            join: StrokeJoin::Round,
+            dash: Some(DashPattern { intervals: vec![5.0, 3.0], offset: 1.0 }),
+        })],
+    );
+    let scene = translate_paint_list(&list);
+    let shape = scene
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            netrender::SceneOp::Shape(s) if s.stroke.is_some() => Some(s),
+            _ => None,
+        })
+        .expect("stroked shape");
+    let stroke = shape.stroke.as_ref().unwrap();
+    assert_eq!(stroke.cap, netrender::SceneStrokeCap::Round);
+    assert_eq!(stroke.join, netrender::SceneStrokeJoin::Round);
+    assert_eq!(stroke.dash_pattern, vec![5.0, 3.0]);
+    assert_eq!(stroke.dash_offset, 1.0);
+}
+
 #[test]
 fn push_pop_layer_emits_layer_pair() {
     let list = list_with(

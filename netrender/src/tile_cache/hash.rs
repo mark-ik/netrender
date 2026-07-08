@@ -249,12 +249,19 @@ fn hash_shape(h: &mut DefaultHasher, s: &SceneShape) {
     } else {
         h.write_u8(0);
     }
-    if let Some(stroke) = s.stroke {
+    if let Some(stroke) = &s.stroke {
         h.write_u8(1);
         for v in stroke.color {
             h.write_u32(v.to_bits());
         }
         h.write_u32(stroke.width.to_bits());
+        h.write_u8(stroke.cap as u8);
+        h.write_u8(stroke.join as u8);
+        h.write_usize(stroke.dash_pattern.len());
+        for v in &stroke.dash_pattern {
+            h.write_u32(v.to_bits());
+        }
+        h.write_u32(stroke.dash_offset.to_bits());
     } else {
         h.write_u8(0);
     }

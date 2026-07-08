@@ -201,8 +201,17 @@ pub(super) fn emit_shape(vscene: &mut vello::Scene, shape: &SceneShape, transfor
         let fill = unpremultiply_color(color);
         vscene.fill(Fill::NonZero, affine, fill, None, &bp);
     }
-    if let Some(stroke) = shape.stroke {
-        let style = Stroke::new(stroke.width as f64);
+    if let Some(stroke) = &shape.stroke {
+        // Same cap / join / dash application as `emit_stroke` (rect strokes).
+        let mut style = Stroke::new(stroke.width as f64)
+            .with_caps(map_stroke_cap(stroke.cap))
+            .with_join(map_stroke_join(stroke.join));
+        if !stroke.dash_pattern.is_empty() {
+            style = style.with_dashes(
+                stroke.dash_offset as f64,
+                stroke.dash_pattern.iter().map(|&v| v as f64),
+            );
+        }
         let color = unpremultiply_color(stroke.color);
         vscene.stroke(&style, affine, color, None, &bp);
     }
