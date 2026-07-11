@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "netrender"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "log",
  "netrender_device",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "netrender_device"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "log",
  "pollster",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "netrender_text"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "netrender",
  "parley",
@@ -888,7 +888,7 @@ dependencies = [
 
 [[package]]
 name = "paint_list_api"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "euclid",
  "serde",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "paint_list_render"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "log",
  "netrender",

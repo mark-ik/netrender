@@ -1,8 +1,10 @@
 [package]
 name = "netrender"
-version = "0.0.1"
+version = "0.1.0"
 license = "MPL-2.0"
-description = "wgpu-native renderer shell (Phase 0.5 split per netrender-notes/2026-04-30_netrender_design_plan.md)"
+repository = "https://github.com/mark-ik/netrender"
+readme = "../README.md"
+description = "wgpu-native scene renderer: a retained Scene of paint ops rasterized and composited on wgpu, with external-texture composition for embedders."
 edition = "2021"
 
 [features]
@@ -35,7 +37,7 @@ log.workspace = true
 # the subscriber and chooses the level. netrender never depends on the app.
 tracing = "0.1"
 wgpu = { workspace = true, features = ["std", "parking_lot", "wgsl"] }
-netrender_device = { path = "../netrender_device" }
+netrender_device = { version = "0.1.0", path = "../netrender_device" }
 vello = { workspace = true, features = ["wgpu"] }
 # Roadmap R1 — per-glyph hit testing uses skrifa::metrics::GlyphMetrics
 # to query real font-supplied glyph bounds instead of the em-box

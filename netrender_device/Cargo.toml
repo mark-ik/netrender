@@ -1,8 +1,10 @@
 [package]
 name = "netrender_device"
-version = "0.0.1"
+version = "0.1.0"
 license = "MPL-2.0"
-description = "wgpu-native device foundation for netrender (Phase 0.5 split per netrender-notes/2026-04-30_netrender_design_plan.md)"
+repository = "https://github.com/mark-ik/netrender"
+readme = "../README.md"
+description = "wgpu-native device foundation for the netrender paint engine: adapter/device/queue ownership, surface and texture plumbing."
 edition = "2021"
 
 [features]
