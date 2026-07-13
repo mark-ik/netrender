@@ -12,12 +12,12 @@
 //! [`netrender::Scene`] the renderer can rasterize.
 //!
 //! It depends only on `netrender` + `paint_list_api`, so any engine on
-//! either side of the path-dep boundary (serval, nematic, inker, …) can
-//! reuse it. The serval-specific glue that *consumes* the translator
+//! either side of the path-dep boundary (genet, nematic, inker, …) can
+//! reuse it. The genet-specific glue that *consumes* the translator
 //! output — building blurred box-shadow masks on the GPU, compositing
-//! external textures, the painter message loop — stays in serval's
+//! external textures, the painter message loop — stays in genet's
 //! `components/paint` crate; see
-//! `serval/docs/2026-05-20_paintlist_extraction_plan.md`.
+//! `genet/docs/2026-05-20_paintlist_extraction_plan.md`.
 //!
 //! ## Mapping summary
 //!

@@ -24,7 +24,7 @@ struct StubPaintList {
 
 impl PaintList for StubPaintList {
     fn engine_id(&self) -> EngineId {
-        EngineId::SERVAL
+        EngineId::GENET
     }
     fn viewport(&self) -> DeviceIntSize {
         self.viewport

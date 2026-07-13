@@ -4,14 +4,14 @@
 
 //! `paint_list_api` — the trait + common vocabulary every engine emits
 //! into and NetRender renders from. See
-//! `serval/docs/2026-05-17_paintlist_polyglot_renderer.md` (design,
-//! PM-3 resolution) and `serval/docs/2026-05-20_paintlist_extraction_plan.md`
+//! `genet/docs/2026-05-17_paintlist_polyglot_renderer.md` (design,
+//! PM-3 resolution) and `genet/docs/2026-05-20_paintlist_extraction_plan.md`
 //! (the move into this neutral netrender-workspace crate).
 //!
 //! ## Shape
 //!
 //! - [`PaintList`] is the producer-facing trait engines implement.
-//!   Concrete impls (`ServalPaintList`, `NematicPaintList`,
+//!   Concrete impls (`GenetPaintList`, `NematicPaintList`,
 //!   `ScryingPaintList`, inker's document list) live in their respective
 //!   engine crates and carry richer internal state (palettes, spatial
 //!   trees) behind the trait's [`PaintList::commands`] view.
@@ -180,8 +180,8 @@ pub struct ImageResource {
 pub struct EngineId(pub u32);
 
 impl EngineId {
-    /// Serval — HTML/CSS engine for full-web content.
-    pub const SERVAL: Self = Self(0);
+    /// Genet — HTML/CSS engine for full-web content.
+    pub const GENET: Self = Self(0);
     /// Nematic — smolweb (Gemini, Gopher, Scroll, Markdown, feeds,
     /// Finger).
     pub const NEMATIC: Self = Self(1);
@@ -276,7 +276,7 @@ pub enum PaintCmd {
 /// Wire shape for transporting a `PaintList` across IPC, fixture
 /// files, or any boundary where the producer's concrete `PaintList`
 /// impl can't be carried by name. PM-3 doc proposed
-/// `enum { Serval(ServalPaintList), Nematic(...), Scrying(...) }`;
+/// `enum { Genet(GenetPaintList), Nematic(...), Scrying(...) }`;
 /// implementation went with a flat struct + `EngineId` discriminant
 /// because none of the concrete impls carry engine-specific extra
 /// fields beyond what the trait already exposes, and the enum shape
@@ -391,7 +391,7 @@ impl std::ops::BitOrAssign for PrimitiveFlags {
 /// PaintList model the clip and transform state come from compositor
 /// primitives (`PushClip`/`PopClip`, `PushTransform`/`PopTransform`),
 /// **not** from per-item references — so this is lighter than the
-/// `ServalDisplayList::CommonItemPlacement` it descends from.
+/// `GenetDisplayList::CommonItemPlacement` it descends from.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CommonPlacement {
     /// Item bounds in local (post-transform/clip) coordinates. Used
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn paint_envelope_round_trips_through_serde() {
         let envelope = PaintEnvelope {
-            engine: EngineId::SERVAL,
+            engine: EngineId::GENET,
             viewport: DeviceIntSize::new(1024, 768),
             generation: 7,
             commands: vec![PaintCmd::PopLayer],
@@ -532,7 +532,7 @@ mod tests {
         };
         let json = serde_json::to_string(&envelope).expect("serialize");
         let parsed: PaintEnvelope = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed.engine, EngineId::SERVAL);
+        assert_eq!(parsed.engine, EngineId::GENET);
         assert_eq!(parsed.viewport, envelope.viewport);
         assert_eq!(parsed.generation, 7);
         assert_eq!(parsed.commands.len(), 1);
@@ -541,7 +541,7 @@ mod tests {
     #[test]
     fn engine_id_sentinels_are_stable() {
         // These values cross IPC; renumbering them is a wire-break.
-        assert_eq!(EngineId::SERVAL.0, 0);
+        assert_eq!(EngineId::GENET.0, 0);
         assert_eq!(EngineId::NEMATIC.0, 1);
         assert_eq!(EngineId::SCRYING.0, 2);
         assert_eq!(EngineId::INKER.0, 3);

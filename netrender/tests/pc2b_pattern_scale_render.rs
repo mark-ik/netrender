@@ -129,7 +129,7 @@ fn pc2b_scaled_pattern_tile_is_image_times_scale() {
 }
 
 /// The same scaled pattern under a non-identity `world` transform (a
-/// translate, as serval emits for a positioned box). Reproduces the serval
+/// translate, as genet emits for a positioned box). Reproduces the genet
 /// reftest exactly: extent is box-local `[0,0,16,64]`, `world` translates it
 /// down by 20. The tile must still be 16×64 (band boundary at world y≈52),
 /// proving `world` doesn't corrupt the per-axis brush scale.

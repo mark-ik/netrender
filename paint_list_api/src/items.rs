@@ -369,7 +369,7 @@ pub struct ShadowItem {
 pub struct HitTestItem {
     pub placement: CommonPlacement,
     /// Producer-defined tag. Returned from hit-tests against this
-    /// region. Interpretation is producer-side (e.g., serval encodes
+    /// region. Interpretation is producer-side (e.g., genet encodes
     /// a `(spatial_id, hit_tag)` pair into the high/low halves).
     pub tag: u64,
 }

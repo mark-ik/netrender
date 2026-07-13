@@ -21,7 +21,7 @@ crate-level MPL headers.
 A small Cargo workspace (5 member crates) that takes engine display lists,
 lowers them to a renderer-internal `Scene`, and rasterizes them with vello.
 It is the leaf of a larger stack: it depends only on crates.io and on its
-own internal path dependencies. Consumers (the `serval` web-engine
+own internal path dependencies. Consumers (the `genet` web-engine
 multiplexer and other siblings) depend on netrender; netrender depends on
 none of them.
 
@@ -119,7 +119,7 @@ independently (this avoids the wgpu version-skew risk flagged in the
 | `peniko` | 0.6 | shared paint/color types; re-exported as `netrender::peniko` |
 | `parley` | 0.10 | text layout (used by `netrender_text`) |
 | `skrifa` | 0.42 | per-glyph metrics for hit testing; matches vello's transitive pull |
-| `euclid` | 0.22 | `serde` feature on; geometry types shared with serval + inker |
+| `euclid` | 0.22 | `serde` feature on; geometry types shared with genet + inker |
 | `log` | 0.4 | |
 | `serde` | 1 | `derive` feature |
 
@@ -159,14 +159,14 @@ software fallbacks); no per-platform CI matrix is wired in this repo yet.
 
 ## Relationship to sibling repos
 
-netrender is the rendering leaf consumed by the `serval` web-engine
+netrender is the rendering leaf consumed by the `genet` web-engine
 multiplexer (formerly referenced as `servo-wgpu` in this repo's history;
-renamed to `serval` in commit `ac34ba908`). Engine-specific glue that
+renamed to `genet` in commit `ac34ba908`). Engine-specific glue that
 consumes the translator output (building blurred box-shadow masks on the
 GPU, compositing external textures, the painter message loop) lives in
-serval's `components/paint` crate, not here. The `paint_list_api` /
+genet's `components/paint` crate, not here. The `paint_list_api` /
 `paint_list_render` split is the extraction boundary that lets any engine
-(serval, nematic, inker) emit a `PaintList` and reuse the translator.
+(genet, nematic, inker) emit a `PaintList` and reuse the translator.
 
 ## License
 

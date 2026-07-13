@@ -39,7 +39,7 @@ and G5–G6 are sibling-crate or test-infra work.
 ### G0. Ownership and crate boundary
 
 *Shape:* create a sibling WebGL-over-wgpu adapter crate under the
-Serval/Pelt side, with NetRender only seeing a produced
+Genet/Pelt side, with NetRender only seeing a produced
 `wgpu::Texture` / `TextureView` / surface handle plus size, format,
 alpha mode, generation, and damage metadata.
 
@@ -168,7 +168,7 @@ shader rendering oracle.
 *Shape:* define when a canvas texture is ready for NetRender to
 sample, how resize reallocates, how framebuffer writes become visible
 to the compositor, how readPixels maps/stages data, and how context
-loss tears down GPU resources. This should be a plain Pelt/Serval
+loss tears down GPU resources. This should be a plain Pelt/Genet
 contract, not an implicit side effect of a GL context.
 
 *Done condition:* tests cover canvas resize, multiple frames,
@@ -406,7 +406,7 @@ working code, documented receipts, no external dependency.
 ## 4. First work lane: same-device canvas texture slice
 
 Added 2026-05-11 after reviewing the roadmap, vello rasterizer plan,
-path-(b′) compositor surface API, Serval's `RenderingContextCore` /
+path-(b′) compositor surface API, Genet's `RenderingContextCore` /
 `WgpuCapability` seam, and the existing netrender `insert_image_vello`
 Path B hook.
 
@@ -415,7 +415,7 @@ not try to clear full WebGL correctness. The point is to prove the
 ownership boundary and texture handoff first, then grow the WebGL state
 machine and shader translator behind that boundary.
 
-Status as of 2026-05-11: W0 is repaired locally. W1's Serval-side
+Status as of 2026-05-11: W0 is repaired locally. W1's Genet-side
 adapter crate shell and W2's netrender-side zero-copy composition
 receipt are implemented. W3, W4, and the broader W5 gate remain
 pending.
@@ -439,14 +439,14 @@ that exists locally.
 
 ### W1. Adapter crate shell and texture contract
 
-**CLEARED 2026-05-11.** Serval now has `servo-webgl-wgpu` under
+**CLEARED 2026-05-11.** Genet now has `servo-webgl-wgpu` under
 `components/webgl-wgpu`. It depends on `paint_api`'s `wgpu_backend`
 capability and `wgpu`, exposes `WebGlCanvasTexture`, allocates on the
 shared device, supports resize and clear, and has a focused
 `webgl_canvas_to_netrender_texture_allocates_resizes_and_clears` smoke.
 
-*Shape:* create the sibling WebGL-over-wgpu crate on the Serval/Pelt
-side, not in netrender. Preferred first home is `serval/components/`
+*Shape:* create the sibling WebGL-over-wgpu crate on the Genet/Pelt
+side, not in netrender. Preferred first home is `genet/components/`
 unless the Pelt integration work needs it under `ports/` temporarily.
 The crate exposes a narrow canvas output type, roughly:
 
@@ -516,7 +516,7 @@ the producer texture.
 
 ### W3. Minimal WebGL-shaped render path
 
-**FIRST SERVAL ADAPTER SLICE CLEARED 2026-05-11.**
+**FIRST GENET ADAPTER SLICE CLEARED 2026-05-11.**
 `components/webgl-wgpu` now has a `WebGlContext` wrapper over the W1
 canvas texture with context attributes by construction, default
 framebuffer clear/draw/readback, buffer creation/binding/data upload,
@@ -576,12 +576,12 @@ texture, `readPixels` matches expected RGBA bytes, `getError` reports
 the WebGL-mandated errors for at least one invalid bind/draw case, and
 the resulting texture still composes through W2's netrender smoke.
 
-### W4. Pelt/Serval integration smoke
+### W4. Pelt/Genet integration smoke
 
 **NON-PRESENTING PAINT-PATH RECEIPT CLEARED 2026-05-12.**
 `components/paint/tests/webgl_canvas_texture_e2e.rs` now drives a
 synthetic `servo-webgl-wgpu` triangle texture through the painter's
-external-texture registry, Serval display-list emission,
+external-texture registry, Genet display-list emission,
 `Paint::render`, NetRender's ordered compositor handoff, and final
 readback. The receipt includes ordinary 2D content both below and above
 the canvas so the painter-order contract is exercised end to end.

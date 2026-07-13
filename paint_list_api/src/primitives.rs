@@ -4,9 +4,9 @@
 
 //! Engine-facing primitive vocabulary for the PaintList layer.
 //!
-//! This is the subset of serval's `servo-paint-types` that the PaintList
+//! This is the subset of genet's `servo-paint-types` that the PaintList
 //! command stream actually references, lifted into the neutral
-//! netrender-workspace crate so `paint_list_api` carries no serval
+//! netrender-workspace crate so `paint_list_api` carries no genet
 //! dependency. These are deliberately **display-list / CSS-shaped**
 //! types (border styles, line styles, blend modes, euclid-based
 //! geometry) — distinct from `netrender`'s renderer primitives (bare

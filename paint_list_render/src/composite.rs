@@ -19,7 +19,7 @@ use crate::translate_paint_cmd_stream;
 use crate::TranslatedDisplayList;
 
 /// First `IdNamespace` the compositor remaps layers into. Far above the small
-/// per-producer namespaces (serval fonts 0, images 1; nematic/inker likewise low)
+/// per-producer namespaces (genet fonts 0, images 1; nematic/inker likewise low)
 /// so a remapped key never aliases a value a producer might also be using in the
 /// same merged stream. Layer `i` is remapped into `IdNamespace(BASE + i)`.
 const COMPOSITE_NAMESPACE_BASE: u32 = 0xC000_0000;

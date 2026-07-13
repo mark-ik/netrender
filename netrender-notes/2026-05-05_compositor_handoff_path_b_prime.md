@@ -1,6 +1,6 @@
 # Compositor Handoff Path B Prime (2026-05-05)
 
-Status: active design note. NetRender-side sub-phases 5.1-5.4 are shipped; the Serval adapter smoke remains pending.
+Status: active design note. NetRender-side sub-phases 5.1-5.4 are shipped; the Genet adapter smoke remains pending.
 
 ## 1. Purpose
 
@@ -108,6 +108,6 @@ The trait object-safety and literal construction checks live in `netrender_devic
 
 ## 7. Remaining Work
 
-5.5 is the consumer-side adapter smoke. Serval should implement `Compositor`, allocate native destination textures keyed by `SurfaceKey`, copy dirty regions from `PresentedFrame::master`, and route those textures to the platform compositor. That smoke should verify both visible composition and skipped blits for clean surfaces.
+5.5 is the consumer-side adapter smoke. Genet should implement `Compositor`, allocate native destination textures keyed by `SurfaceKey`, copy dirty regions from `PresentedFrame::master`, and route those textures to the platform compositor. That smoke should verify both visible composition and skipped blits for clean surfaces.
 
 This path is also the surface-lifecycle sibling for later WebGL-over-wgpu work: if a WebGL canvas is promoted to a compositor surface, reuse `CompositorSurface` / `SurfaceKey` rather than creating a parallel lifecycle.

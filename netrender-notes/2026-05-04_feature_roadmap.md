@@ -205,7 +205,7 @@ Order within Phase A is by value-to-cost ratio, smallest first.
 ## Phase B — Consumer-pull-imminent
 
 Things nematic (Gemini, Gopher, Scroll, Markdown, feeds, Finger) and
-serval (full web) will surface as parley wiring stabilizes and
+genet (full web) will surface as parley wiring stabilizes and
 graphshell-shaped consumers wire in. Nematic is the smolweb engine in
 the Mere workspace (`mere/crates/nematic`); each protocol surfaces
 slightly different demands on the renderer (selection in viewers,
@@ -340,16 +340,16 @@ Items that need real design conversation, not just implementation.
   applies transform / clip / opacity at 60Hz without re-rasterizing.
   *Status:* see
   [`2026-05-05_compositor_handoff_path_b_prime.md` §5](2026-05-05_compositor_handoff_path_b_prime.md).
-  Sub-phases 5.1–5.4 shipped; 5.5 (serval adapter) lives in the
-  `serval` repo. **Do not duplicate sub-phase status here — the
+  Sub-phases 5.1–5.4 shipped; 5.5 (genet adapter) lives in the
+  `genet` repo. **Do not duplicate sub-phase status here — the
   compositor plan is canonical.**
-  Sub-phase 5.5 has hit **cut milestone** in serval (master path
+  Sub-phase 5.5 has hit **cut milestone** in genet (master path
   through `Paint::render` against the `WgpuMasterCaptureBackend`,
   `WindowsDxgiBackend` real on Windows with a working pelt smoke,
   CALayer + Wayland backends skeletoned). Full done-condition
   (per-platform OS handoff installed by default + per-`SurfaceKey`
   declared-surface presents wired) is the remaining 5.5 work.
-  *Trigger:* 5.5 done-condition lands in serval (not just cut milestone).
+  *Trigger:* 5.5 done-condition lands in genet (not just cut milestone).
   *Done condition:* mark complete and migrate to a `§11.x — CLEARED`
   finding in the rasterizer plan.
 
@@ -421,7 +421,7 @@ renderer reaches.
 
 ## Phase G — WebGL-over-wgpu companion lane
 
-The OpenGL-content path for Serval/Pelt. Web pages do not get raw
+The OpenGL-content path for Genet/Pelt. Web pages do not get raw
 OpenGL; they get WebGL/WebGL2. The target architecture is **WebGL API
 compatibility over wgpu**, sitting beside NetRender — not inside
 NetRender core. NetRender's job is the final composition surface
@@ -432,7 +432,7 @@ resource-lifetime semantics.
 
 - [ ] **G. WebGL-over-wgpu adapter crate** — full sub-plan in
   [`2026-05-06_webgl_over_wgpu_plan.md`](2026-05-06_webgl_over_wgpu_plan.md).
-  *Trigger:* Serval/Pelt commits to a canvas-bearing demo, or a
+  *Trigger:* Genet/Pelt commits to a canvas-bearing demo, or a
   WebGL-using site enters the test set.
   *Done condition:* covered by the sub-plan's G0–G6 sequence; the
   netrender-side hook lands as part of G4 (texture compositing). The
@@ -446,7 +446,7 @@ resource-lifetime semantics.
     [`netrender/tests/pg4_webgl_canvas_texture.rs`](../netrender/tests/pg4_webgl_canvas_texture.rs)
     — including `pg4_webgl_canvas_texture_preserves_scene_order` for
     the new ordered path. G0–G3 / G5 / G6 remain as sibling-crate work
-    in serval/pelt; the netrender library surface that G needs is
+    in genet/pelt; the netrender library surface that G needs is
     complete.
 
 ---

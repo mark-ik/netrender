@@ -88,7 +88,7 @@ pub struct PresentedFrame<'a> {
 }
 
 /// Native-compositor handoff hook. Implemented by consumers
-/// (serval, eventually others) to receive the per-frame master
+/// (genet, eventually others) to receive the per-frame master
 /// texture + per-surface metadata, copy dirty surface regions into
 /// their own native textures, and route those textures to the OS
 /// compositor.

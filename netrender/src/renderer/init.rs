@@ -44,7 +44,7 @@ pub struct NetrenderOptions {
     /// (e.g. `wgpu::Backends::DX12` so a host that imports system-WebView D3D12
     /// textures stays same-API); `None` honors `WGPU_BACKEND`, else all available.
     /// Only consulted by host boot paths that create the device from these options
-    /// (e.g. `serval_winit_host::RenderCore::boot`), not embedder-supplied
+    /// (e.g. `genet_winit_host::RenderCore::boot`), not embedder-supplied
     /// (`with_external`) devices.
     pub backends: Option<wgpu::Backends>,
 }
