@@ -498,6 +498,7 @@ fn main() {
             enable_vello: true,
             enable_tile_dirty_overlay: false,
             tile_dirty_overlay_window_frames: 0,
+            backends: None,
         },
     )
     .expect("create_netrender_instance");
