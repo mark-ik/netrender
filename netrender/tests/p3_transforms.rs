@@ -15,6 +15,9 @@
 //! instead of comparing them. On the initial run (no oracle PNG),
 //! the PNG is written automatically.
 //!
+//! Rotated scenes use Metal-specific goldens because Vello's edge
+//! quantization is stable on Metal but differs from the original capture.
+//!
 //! Tolerance: 2/255 per channel. Axis-aligned opaque cases match
 //! the original (batched-path-captured) oracle byte-exactly. Rotated
 //! and scaled cases were re-captured against the vello path during
@@ -66,12 +69,24 @@ fn should_regen() -> bool {
     std::env::var("NETRENDER_REGEN").is_ok_and(|v| v == "1")
 }
 
+fn oracle_path(name: &str, backend: wgpu::Backend) -> PathBuf {
+    let backend_suffix = if backend == wgpu::Backend::Metal
+        && matches!(name, "p3_04_rotate_45_diamond" | "p3_05_chain_trs")
+    {
+        ".metal"
+    } else {
+        ""
+    };
+    oracle_dir().join(format!("{name}{backend_suffix}.png"))
+}
+
 // ── Core test runner ───────────────────────────────────────────────
 
 fn run_scene_golden(name: &str, scene: Scene) {
     let [vw, vh] = [scene.viewport_width, scene.viewport_height];
 
     let handles = boot().expect("wgpu boot");
+    let backend = handles.adapter.get_info().backend;
     let device = handles.device.clone();
     let renderer = create_netrender_instance(
         handles,
@@ -114,7 +129,7 @@ fn run_scene_golden(name: &str, scene: Scene) {
 
     let actual = renderer.wgpu_device.read_rgba8_texture(&target_tex, vw, vh);
 
-    let oracle_path = oracle_dir().join(format!("{name}.png"));
+    let oracle_path = oracle_path(name, backend);
     if should_regen() || !oracle_path.exists() {
         write_png(&oracle_path, vw, vh, &actual);
         println!("  captured oracle: {}", oracle_path.display());

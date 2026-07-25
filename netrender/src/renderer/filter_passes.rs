@@ -354,7 +354,7 @@ impl Renderer {
     pub(super) fn render_scene_to_texture(
         &self,
         rast: &mut crate::vello_tile_rasterizer::VelloTileRasterizer,
-        tc: &mut TileCache,
+        tc: &TileCache,
         scene: &Scene,
     ) -> wgpu::Texture {
         let device = &self.wgpu_device.core.device;
@@ -376,7 +376,19 @@ impl Renderer {
         });
         let view = texture.create_view(&Default::default());
         let transparent = vello::peniko::Color::new([0.0, 0.0, 0.0, 0.0]);
-        rast.render(scene, tc, &view, transparent)
+        // Prefix/content renders are independent offscreen pictures. Sharing
+        // the retained frame cache here can report zero dirty tiles while the
+        // scratch scene store is empty, yielding a transparent filter input.
+        let mut scratch_cache = TileCache::new(tc.tile_size());
+        let mut scratch_scenes = std::collections::HashMap::new();
+        rast.render_scaled_with(
+            scene,
+            &mut scratch_cache,
+            &mut scratch_scenes,
+            &view,
+            transparent,
+            1.0,
+        )
             .unwrap_or_else(|e| panic!("D1 prefix render failed: {:?}", e));
         texture
     }

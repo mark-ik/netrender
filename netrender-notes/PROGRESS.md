@@ -41,6 +41,16 @@ These two are the source of truth for the live architecture.
   — Phase R (open refinements / wart fixes) + Phases A–G (new
   capability, diagnostics first).
 
+## Host verification
+
+- **2026-07-20 macOS / Metal:** the full workspace suite passes with
+  `WGPU_BACKEND=metal`, including Apple system fonts, Apple Color Emoji,
+  backdrop filters, registered textures, and compositor plumbing. The pass
+  added stable Metal goldens for the two rotated Phase 3 scenes, bounded the
+  small cross-submission AA variance in `compose_into`, and fixed offscreen
+  filter renders incorrectly sharing retained frame tile-cache state. The
+  `demo_card_grid` example also renders successfully through Metal.
+
 ## Active follow-up plans (small scope)
 
 - [`2026-05-04_feature_roadmap.md`](2026-05-04_feature_roadmap.md)

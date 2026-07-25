@@ -166,27 +166,28 @@ pub(crate) fn register_fonts(scene: &mut Scene, fonts: &[FontResource]) -> HashM
             fr.data.len(),
             fr.index,
         );
-        let mut cache = BLOB_CACHE.lock().expect("font blob cache poisoned");
-        let cache = cache.get_or_insert_with(HashMap::new);
-        // A producer that re-allocates its font bytes per emit would grow a
-        // pointer-keyed cache without bound; real faces number in the dozens,
-        // so past this bound just reset (costs dedup quality, never bytes).
-        if cache.len() > 256 {
-            cache.clear();
-        }
-        let (blob, _pin) = cache
-            .entry(identity)
-            .or_insert_with(|| {
-                (
-                    FontBlob {
-                        data: peniko::Blob::new(fr.data.clone()),
-                        index: fr.index,
-                    },
-                    fr.data.clone(),
-                )
-            });
-        let blob = blob.clone();
-        drop(cache);
+        let blob = {
+            let mut cache = BLOB_CACHE.lock().expect("font blob cache poisoned");
+            let cache = cache.get_or_insert_with(HashMap::new);
+            // A producer that re-allocates its font bytes per emit would grow a
+            // pointer-keyed cache without bound; real faces number in the dozens,
+            // so past this bound just reset (costs dedup quality, never bytes).
+            if cache.len() > 256 {
+                cache.clear();
+            }
+            let (blob, _pin) = cache
+                .entry(identity)
+                .or_insert_with(|| {
+                    (
+                        FontBlob {
+                            data: peniko::Blob::new(fr.data.clone()),
+                            index: fr.index,
+                        },
+                        fr.data.clone(),
+                    )
+                });
+            blob.clone()
+        };
         let font_id = scene.push_font(blob);
         map.insert(fr.key, font_id);
     }
