@@ -2,7 +2,7 @@
 name = "netrender"
 version = "0.1.0"
 license = "MPL-2.0"
-repository = "https://github.com/mark-ik/netrender"
+repository = "https://github.com/merely-made/netrender"
 readme = "../README.md"
 description = "wgpu-native scene renderer: a retained Scene of paint ops rasterized and composited on wgpu, with external-texture composition for embedders."
 edition = "2021"

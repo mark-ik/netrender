@@ -2,7 +2,7 @@
 name = "paint_list_render"
 version = "0.1.0"
 license = "MPL-2.0"
-repository = "https://github.com/mark-ik/netrender"
+repository = "https://github.com/merely-made/netrender"
 readme = "../README.md"
 description = "Translator from the paint_list_api PaintCmd vocabulary into netrender::Scene (the impedance bridge between engine-facing display lists and renderer primitives)."
 edition = "2021"

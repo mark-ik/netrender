@@ -2,7 +2,7 @@
 name = "netrender_device"
 version = "0.1.0"
 license = "MPL-2.0"
-repository = "https://github.com/mark-ik/netrender"
+repository = "https://github.com/merely-made/netrender"
 readme = "../README.md"
 description = "wgpu-native device foundation for the netrender paint engine: adapter/device/queue ownership, surface and texture plumbing."
 edition = "2021"
