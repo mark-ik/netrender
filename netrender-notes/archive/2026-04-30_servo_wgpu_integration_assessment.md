@@ -33,7 +33,7 @@ member). Same receipt logic; no Servo dependencies.
 
 ## Where it got stuck
 
-**File:** `C:/Users/mark_/Code/repos/servo-wgpu/Cargo.toml`  
+**File:** `<workspace>/repos/servo-wgpu/Cargo.toml`
 **Line:** `webrender = { path = "../webrender-wgpu/webrender" }` (in
 `[patch.crates-io]`)  
 **Reason:** The `webrender-wgpu` repo renamed `webrender/` → `netrender/` in
@@ -42,7 +42,7 @@ fails to load the workspace before any package is compiled:
 
 ```
 error: failed to load source for dependency `webrender`
-Caused by: Unable to update C:\Users\mark_\Code\repos\webrender-wgpu\webrender
+Caused by: Unable to update <workspace>\repos\webrender-wgpu\webrender
 Caused by: failed to read `...\webrender\Cargo.toml`
 Caused by: The system cannot find the path specified. (os error 3)
 ```
