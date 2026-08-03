@@ -19,7 +19,18 @@ pub(crate) fn rect_corners(rect: &paint_list_api::LayoutRect) -> (f32, f32, f32,
 }
 
 pub(crate) fn color_to_array(color: &ColorF) -> [f32; 4] {
-    [color.r, color.g, color.b, color.a]
+    // ColorF is unpremultiplied; every netrender scene color field is
+    // premultiplied, and every consumer unpremultiplies on the way to a
+    // brush. Copying straight through made the round trip a divide by
+    // alpha, which over-brightened every translucent fill toward white
+    // while leaving opaque content untouched -- invisible in a mostly
+    // opaque DOM, glaring in a 35%-alpha HUD cell.
+    [
+        color.r * color.a,
+        color.g * color.a,
+        color.b * color.a,
+        color.a,
+    ]
 }
 
 pub(crate) fn layout_transform_to_scene(t: &paint_list_api::LayoutTransform) -> Transform {

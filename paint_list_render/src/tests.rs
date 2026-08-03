@@ -56,6 +56,34 @@ fn list_with(viewport: DeviceIntSize, cmds: Vec<PaintCmd>) -> StubPaintList {
 }
 
 #[test]
+fn translucent_colors_premultiply_at_lowering() {
+    // ColorF is unpremultiplied; scene colors are premultiplied and every
+    // consumer divides by alpha on the way back out. An unpremultiplied
+    // copy therefore over-brightened every translucent fill toward white:
+    // half-alpha pure red became (1/0.5 -> clamped) full white at half
+    // cover. Found by mesocosm's minimap, whose 35%-alpha cells rendered
+    // as a white sheet.
+    let list = list_with(
+        DeviceIntSize::new(64, 64),
+        vec![PaintCmd::DrawRect(RectItem {
+            placement: placement_at(box2d(0.0, 0.0, 32.0, 32.0)),
+            color: ColorF::new(1.0, 0.0, 0.0, 0.5),
+        })],
+    );
+    let scene = translate_paint_list(&list);
+    let rect_color = scene
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            netrender::SceneOp::Rect(r) => Some(r.color),
+            _ => None,
+        })
+        .expect("one rect");
+
+    assert_eq!(rect_color, [0.5, 0.0, 0.0, 0.5], "premultiplied, alpha intact");
+}
+
+#[test]
 fn empty_list_translates_to_empty_scene() {
     let list = list_with(DeviceIntSize::new(800, 600), Vec::new());
     let scene = translate_paint_list(&list);
